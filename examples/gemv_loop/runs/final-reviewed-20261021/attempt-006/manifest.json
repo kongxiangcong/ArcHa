@@ -1,9 +1,0 @@
-{
-  "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
-  "domain_hash": "67f8994fedb98d13d48a8c34eb46d36c124523bb51dad4c0594807d4c71b3283",
-  "files": {
-    "plan.json": "0dedf13747da39301c7b7df0f468867f37e6fe23c9eb75249b0f47791cdb2b07",
-    "candidate.py": "010da873a7086b775731fa5238f74c4161e8e12813db754b6122378bd6b3d111",
-    "experiment.json": "4bcaf0e643eba7b4cc34a736da128bd04ffcea7482fca09be1a44016aa62df0a"
-  }
-}

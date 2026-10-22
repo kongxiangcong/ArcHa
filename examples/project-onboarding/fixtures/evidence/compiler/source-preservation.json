@@ -1,9 +1,0 @@
-{
-  "project": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\compiler-project",
-  "source": "src/pipeline.py",
-  "before_sha256": "f6950633a2a8e535a8fe684f54ecbd9f9e5061a7865eefa6e8caa02709869603",
-  "after_sha256": "f6950633a2a8e535a8fe684f54ecbd9f9e5061a7865eefa6e8caa02709869603",
-  "unchanged": true,
-  "only_tool_write_root": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\compiler-project\\.opc",
-  "experiments_executed": false
-}

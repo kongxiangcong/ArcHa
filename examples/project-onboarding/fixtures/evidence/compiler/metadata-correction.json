@@ -1,8 +1,0 @@
-{
-  "changed_metadata": ".opc/context/REQUIREMENTS.md",
-  "change": "REQ-001 -> req-001 to match v0.2 identifier contract",
-  "source": "src/pipeline.py",
-  "source_sha256": "f6950633a2a8e535a8fe684f54ecbd9f9e5061a7865eefa6e8caa02709869603",
-  "unchanged_from_initial": true,
-  "experiments_executed": false
-}

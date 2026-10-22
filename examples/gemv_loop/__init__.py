@@ -1,1 +1,0 @@
-"""Offline OPC feasibility example."""

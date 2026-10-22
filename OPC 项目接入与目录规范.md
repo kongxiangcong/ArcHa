@@ -1,6 +1,6 @@
 # OPC 项目接入与目录规范
 
-版本：v0.2，2026-10-22。补充[框架实现方案](OPC%20框架实现方案.md)，约定项目接入、每次实验的存放位置与生命周期。本轮已实现接入骨架/路径规划工具和合同校验；完整派发、冻结、隔离、对账服务仍待实施。
+更新：2026-10-22。补充[框架实现方案](OPC%20框架实现方案.md)，约定项目接入、每次实验的存放位置与生命周期。可运行实现为 [opc 引擎](opc/README.md)，合同字段以[接入指南](opc/scaffold/ONBOARDING.md)为准。
 
 ## 1. 核心判断
 
@@ -157,24 +157,18 @@ artifact_root 默认在专用local子树；外置时必须位于项目外，且�
 
 脏工作区有两条明确路线：只使用用户指定的已提交版本，说明不含未提交修改；或在授权范围复制已跟踪修改和显式允许的untracked文件，生成完整快照。禁止把 `git diff` 视为全量输入，禁止默认采集secret、大数据或任意忽略文件。任何后续worktree都从记录的baseline创建，不从仓库默认分支猜测。
 
-## 7. 实际可用的接入辅助命令
+## 7. 实际可用的接入命令
 
-当前目录是框架工作目录，以下命令从这里调用，`--project-root` 指向目标项目：
-
-```powershell
-# 默认只读预览：不创建.opc、不执行测试或agent
-python tools/project_layout.py init --project-root D:/work/my-project --project-id p-example --name MyProject
-
-# 显式写入接入骨架；已有.opc立即拒绝覆盖
-python tools/project_layout.py init --project-root D:/work/my-project --project-id p-example --name MyProject --apply
-
-# 只计算本次实验路径，实际生产ID应由服务分配
-python tools/project_layout.py paths --project-root D:/work/my-project --project-id p-example --task-id t-gemv --run-id r-example-001 --attempt 1 --workspace-root D:/opc-workspaces
+```bash
+python3 -m opc init      -p <project> --project-id p-example --name MyProject --component c-main --task t-main          # 预览
+python3 -m opc init      -p <project> --project-id p-example --name MyProject --component c-main --task t-main --apply  # 写入 .opc/，已有则拒绝
+python3 -m opc check     -p <project> --task t-main     # 只校验合同
+python3 -m opc preflight -p <project> --task t-main     # 在基线上真跑一遍门
 ```
 
-这是已实现的CLI，不是尚不存在的 `opc start`。它不会安装GSD、启动模型、运行项目命令、建立Git worktree、创建ledger或接纳结果。两种目录完全不同的 fixture（`src/` 编译项目和 `rtl/` 硬件项目）已实际接入，源码hash保持不变，见[运行示例与证据](examples/project-onboarding/README.md)。
+`init` 只写 `.opc/`，不运行项目命令。完整流程见 [opc 引擎](opc/README.md) 和 [PIM 示例](examples/pim-emulator/README.md)。
 
-组件配置例子由schema约束，实际命令仅是数据；adapter将命令ID映射到已登记执行器。生产预检必须识别 `shell -c` 等绕过，不能把“argv数组”误认为安全执行边界。领域代码改动许可是项目级限制与TaskSpec限制的交集；`.opc`、`.git`、evaluator、golden、验收输入默认排除。glob可能覆盖冻结路径时，拒绝优先。
+组件合同里的门命令是 argv 数组；`opc check` 拒绝 `sh -c` 等绕过，不能把“argv数组”误认为安全执行边界。领域代码改动许可是项目级限制与TaskSpec限制的交集；`.opc`、`.git`、evaluator、golden、验收输入默认排除。glob可能覆盖冻结路径时，拒绝优先。
 
 ## 8. 不同项目怎样复用同一框架
 
@@ -186,7 +180,7 @@ python tools/project_layout.py paths --project-root D:/work/my-project --project
 | 软件服务 | 原有app/tests结构 | 接口、状态、副作用、集成测试 | 测试原件、接口调用记录、候选patch |
 | 纯研究/新工程 | 原有文档和数据引用 | 来源、可证伪假设、证据覆盖 | source refs、探针、反例、条件结论 |
 
-核心只认识合同、job、submission、review、budget，不硬编码“GEMV/RTL”。本轮GEMV示例还使用旧的demo目录，**不迁移旧原件以伪装已经接通v0.2**；新接入fixture验证的是目录与合同，不是领域功能。
+核心只认识合同、job、submission、review、budget，不硬编码“GEMV/RTL”。同一引擎已接入 PIM 模拟器与 openTPU RTL 两个领域，核心代码未改。
 
 ## 9. 保存、归档、清理与发布
 
@@ -199,8 +193,7 @@ python tools/project_layout.py paths --project-root D:/work/my-project --project
 
 本轮没有实现GC、远端存储迁移或自动worktree清理。其安全条件作为后续运行服务验收，不直接复用openTPU的force cleanup。
 
-## 10. 与合同v0.2的关系
+## 10. 合同
 
-[合同升级说明](contracts/V0.2.md)把项目身份、基线、需求追踪、关键连接和逐项证据纳入结构。项目级Project/Requirements/Decisions负责语义上下文；TaskSpec/Plan/Submission/Review的JSON负责版本化机器交接；STATE/HANDOFF/SUMMARY是有来源的视图。
+合同只有一份、不带版本号：`project.json` → `components/<id>.json` → `tasks/<task>/revisions/rNNNN/task.json`，字段与规则见[接入指南](opc/scaffold/ONBOARDING.md)。未知字段直接报错。`context/` 下的 PROJECT/REQUIREMENTS/DECISIONS 是人读语义材料；STATE.md、LESSONS.md、report.json 是从 ledger 生成的视图。合同改动用新的 rNNNN 修订并开新 run，旧修订不原地改。
 
-主链为 `ProjectConfig → ComponentConfig → TaskSpec → ExperimentPlan → Job → Submission → ReviewDecision`。**已有v0.1与GEMV历史不原地升级**。先运行迁移检查、填写来源和REQ映射，创建新的v0.2任务版本及新审核，才能进入新工作流。

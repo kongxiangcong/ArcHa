@@ -1,0 +1,133 @@
+"""Codex CLI worker: `codex exec --json`, one fresh session per role call.
+
+The expert runs read-only against the champion tree with a JSON output schema;
+the designer runs workspace-write inside its own tree. Every call records its
+thread id (the call identity) and token usage from the event stream. Codex does
+not report prices, so usd stays None (unknown) and budgets must cap tokens.
+"""
+from __future__ import annotations
+
+import json
+import os
+import signal
+import subprocess
+import time
+from pathlib import Path
+from typing import Any
+
+from ..core.model import Cost, write_json, write_text
+from .prompts import designer_prompt, expert_prompt
+from .worker import EXHAUSTED_SENTINEL, PLAN_SCHEMA, WorkerCall
+
+#: account/host conditions: retrying the attempt cannot help, the run must block
+INFRA_MARKERS = ("usage limit", "rate limit", "429", "unauthorized", "401", "not logged in",
+                 "Connection", "timed out", "network", "stream disconnected", "quota")
+
+
+def parse_events(text: str) -> dict[str, Any]:
+    thread, tokens, errors, failed, last_agent = "", 0, [], False, ""
+    for line in text.splitlines():
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        t = ev.get("type", "")
+        if t == "thread.started":
+            thread = ev.get("thread_id", "")
+        usage = ev.get("usage")
+        if isinstance(usage, dict):
+            tokens += int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
+        if t in ("turn.failed", "error"):
+            failed = failed or t == "turn.failed"
+            msg = ev.get("message") or (ev.get("error") or {}).get("message") or ""
+            errors.append(msg)
+        item = ev.get("item") or {}
+        if t == "item.completed" and item.get("type") == "agent_message":
+            last_agent = item.get("text", "")
+    return {"thread_id": thread, "tokens": tokens, "errors": errors, "failed": failed,
+            "last_agent": last_agent}
+
+
+class CodexWorker:
+    def __init__(self, options: dict[str, Any]):
+        self.model = options.get("model")
+        self.profile = options.get("profile")
+        self.timeout = float(options.get("timeout_s", 1800))
+        self.extra = list(options.get("extra_args") or [])
+        self.binary = options.get("binary") or os.environ.get("OPC_CODEX_BIN", "codex")
+
+    def _run(self, role: str, prompt: str, tree: Path, log_dir: Path, sandbox: str,
+             schema: dict | None) -> tuple[WorkerCall, str]:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        last = log_dir / ("%s-last.txt" % role)
+        argv = [self.binary, "exec", "--json", "--skip-git-repo-check", "-s", sandbox,
+                "-C", str(tree), "-o", str(last)]
+        if schema is not None:
+            write_json(log_dir / "plan.schema.json", schema)
+            argv += ["--output-schema", str(log_dir / "plan.schema.json")]
+        if self.model:
+            argv += ["-m", self.model]
+        if self.profile:
+            argv += ["-p", self.profile]
+        argv += self.extra + ["-"]
+        write_text(log_dir / ("%s-prompt.md" % role), prompt)
+        write_json(log_dir / ("%s-request.json" % role), {"argv": argv, "cwd": str(tree)})
+        t0 = time.time()
+        with open(log_dir / ("%s-events.jsonl" % role), "wb") as out, \
+                open(log_dir / ("%s-stderr.txt" % role), "wb") as err:
+            p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=out, stderr=err,
+                                 start_new_session=True)
+            try:
+                p.communicate(prompt.encode(), timeout=self.timeout)
+                timed_out = False
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(p.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                p.wait()
+                timed_out = True
+        info = parse_events((log_dir / ("%s-events.jsonl" % role)).read_text(errors="replace"))
+        cost = Cost(time.time() - t0, info["tokens"], None)
+        text = last.read_text(errors="replace") if last.exists() else info["last_agent"]
+        call = WorkerCall(role, ok=False, cost=cost, call_id=info["thread_id"],
+                          log_dir=str(log_dir))
+        if timed_out:
+            call.error, call.extra["infra"] = "codex timed out after %ss" % self.timeout, True
+        elif info["failed"] or p.returncode != 0:
+            msg = "; ".join(e for e in info["errors"] if e)[-500:] or \
+                  "codex exited %s" % p.returncode
+            call.error = msg
+            call.extra["infra"] = any(m.lower() in msg.lower() for m in INFRA_MARKERS)
+        else:
+            call.ok = True
+        return call, text
+
+    def propose(self, ctx: dict[str, Any], tree: Path, log_dir: Path) -> WorkerCall:
+        call, text = self._run("expert", expert_prompt(ctx), tree, log_dir, "read-only",
+                               PLAN_SCHEMA)
+        if call.ok:
+            # The output schema admits only a plan object, so the text sentinel dsh
+            # uses is unreachable here. The schema-valid equivalent is the optional
+            # "exhausted": true field; accept the sentinel too, because a worker that
+            # answers in prose still means the same thing.
+            if text.strip() == EXHAUSTED_SENTINEL:
+                call.exhausted = True
+                return call
+            try:
+                plan = json.loads(text)
+            except json.JSONDecodeError:
+                call.ok, call.error = False, "expert reply is not JSON: %s" % text[:200]
+                return call
+            if isinstance(plan, dict) and plan.pop("exhausted", False) is True:
+                call.exhausted = True
+                return call
+            call.output = plan
+        return call
+
+    def implement(self, plan: dict[str, Any], ctx: dict[str, Any], tree: Path,
+                  log_dir: Path) -> WorkerCall:
+        call, text = self._run("designer", designer_prompt(plan, ctx), tree, log_dir,
+                               "workspace-write", None)
+        call.output = {"summary": text[-2000:]}
+        return call

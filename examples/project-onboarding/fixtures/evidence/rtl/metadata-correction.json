@@ -1,8 +1,0 @@
-{
-  "changed_metadata": ".opc/context/REQUIREMENTS.md",
-  "change": "REQ-001 -> req-001 to match v0.2 identifier contract",
-  "source": "rtl/identity.sv",
-  "source_sha256": "54ed9b7565a7b555e6892553455ce4d35d193452efc0118648b3b7171ff6e0f3",
-  "unchanged_from_initial": true,
-  "experiments_executed": false
-}

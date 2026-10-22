@@ -1,8 +1,8 @@
 # OPC 框架实现方案：Ge 与可验证的自动研发闭环
 
-版本：v0.2，2026-10-22。输入：[原交接文档](OPC%20自主研发工作流交接.md)与用户需求。性质：可实施设计、接口草案及本地技术验证；不是已部署的自主研发平台。
+更新：2026-10-22。输入：[原交接文档](OPC%20自主研发工作流交接.md)与用户需求。性质：可实施设计、接口草案及本地技术验证；不是已部署的自主研发平台。
 
-本次新增：[项目接入与目录规范](OPC%20项目接入与目录规范.md)、[GSD参考后的合同v0.2](contracts/V0.2.md)与[接入验证](docs/integration-validation.md)。OPC引擎独立于目标项目，目标项目保留原结构，`.opc/`只存接入配置与语义材料，候选工作区和实验原件按项目/任务/run/attempt隔离。下文原GEMV结果仍是v0.1演示历史，未被新版服务接管。
+可运行实现见 [opc 引擎](opc/README.md)；合同只有一份，定义在[接入指南](opc/scaffold/ONBOARDING.md)。另见[项目接入与目录规范](OPC%20项目接入与目录规范.md)。OPC引擎独立于目标项目，目标项目保留原结构，`.opc/`只存接入配置与语义材料，候选工作区和实验原件按项目/任务/run/attempt隔离。下文 GEMV 结果是更早的 LangGraph 原型，保留作对照。
 
 ## 1. 设计判断
 
@@ -88,7 +88,7 @@ flowchart TD
 以下是**框架自身源码目录**，不要求复制到每个目标项目。目标项目使用`.opc/`、artifact_root和项目外workspace_root三层布局，具体文件与生命周期以[接入规范](OPC%20项目接入与目录规范.md)为准。
 
 ```text
-contracts/        TaskSpec/Plan/Submission/Review 等模式与模板（本轮已有）
+opc/core/config.py  合同加载与校验（project / component / task）
 opc/control/      状态转换、预算、权限、接纳（生产待实现）
 opc/adapters/     Argus / coding worker / job scheduler（待实现）
 opc/domains/      compiler、simulator、RTL 的领域插件（待实现）
@@ -136,9 +136,9 @@ Skills 可以存放领域知识、写作方式、工具用法；不负责持久�
 
 ## 6. 用户与 Ge 的合同
 
-当前模板见[v0.2模板入口](contracts/templates/v0.2/README.md)，新增PROJECT、REQUIREMENTS、CONTEXT、PLAN、SUMMARY、VERIFICATION与HANDOFF，机器模型见[models_v02.py](contracts/models_v02.py)。v0.1的两份模板和[原机器模型](contracts/models.py)保留为兼容材料，不原地修改旧合同与审核。
+合同只有一份、不带版本号：`.opc/project.json`、`components/<id>.json`、`tasks/<task>/revisions/rNNNN/task.json`，字段与规则见[接入指南](opc/scaffold/ONBOARDING.md)，由 `opc/core/config.py` 严格校验（未知字段报错）。需求用稳定 REQ-ID，可带 `check` 供晋升时判定 met / not_met；`.opc/context/` 下的 PROJECT/REQUIREMENTS/DECISIONS 是人读语义材料。任务修订用新的 rNNNN 目录，旧修订不原地改。
 
-v0.2以稳定REQ-ID连接需求、计划、预期产物、可观察行为/关键连接与审核证据；增加ProjectConfig/ComponentConfig、固定baseline、locked/delegated/deferred决策分类和逐项coverage。`文件存在`与`行为已验证`分开；遗漏真实调用链检查不能用整体pass遮盖。具体字段、校验范围和迁移规则见[升级说明](contracts/V0.2.md)。
+此前设计中的权限/网络声明、带哈希的需求溯源、产物关键连接、审核轴与证据等级，引擎尚不能执行，已从合同中移除；能执行时再加回，不保留只写不查的字段。
 
 Ge 的转换程序：读取材料 → 保存原文摘要与 locator → 抽取已确定要求 → 列显式假设 → 将方向缺口转成 DecisionRequest → 生成合同 → 结构与语义校验 → 使用已有授权或等待缺失决定 → 派发。**没有来源的假设不能悄悄变成验收标准。**
 
@@ -272,4 +272,3 @@ P1 首要实现顺序：服务端 TaskSpec 校验 → snapshot/manifest → revi
 
 本轮文档和离线验证不依赖这些选择，已先完成。进入 P1 时才需要落定：真实后端及可核查的费用限制、运行主机/隔离方式、首个可访问领域仓库、是否保留既有 P2 状态权威。已有授权继续有效；只有超出范围的决定交回用户。
 
-推荐下一步是 **选一个目标项目，按v0.2接入协议盘点baseline、组件与评价器，再用一个最小任务接真实Expert/Designer/Reviewer adapter**。GEMV可作为受限首例，openTPU只替换领域适配器与验收链；先验证实际模型遵守合同和独立审核，再扩大到跨模块工程。

@@ -1,0 +1,20 @@
+[project]
+name = "archa-opc"
+version = "0.3.0"
+description = "Domain-independent engine for automatic, budgeted, evidence-bound iteration"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+opc = "opc.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["opc*"]
+
+[tool.setuptools.package-data]
+opc = ["scaffold/*.md", "scaffold/*.py"]
+
