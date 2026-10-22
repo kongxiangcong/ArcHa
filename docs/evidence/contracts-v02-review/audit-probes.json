@@ -1,0 +1,46 @@
+{
+  "artifact_mapping_gap": {
+    "expected_artifact_ids": [
+      "kernel",
+      "runner"
+    ],
+    "actual_artifact_fields": [
+      "uri",
+      "sha256",
+      "size_bytes",
+      "media_type",
+      "producer_job_id"
+    ],
+    "actual_uris": [
+      "artifact://example-compiler/gemv-row-block-proposal/template-run/attempts/a000001/submissions/template-submission/evidence.json"
+    ],
+    "recommendation": "accept",
+    "bundle_errors": []
+  },
+  "schema_sync": {
+    "ProjectConfig": true,
+    "ComponentConfig": true,
+    "TaskSpecV02": true,
+    "ExperimentPlanV02": true,
+    "SubmissionV02": true,
+    "ReviewDecisionV02": true
+  },
+  "binding_checks": {
+    "project_id": [
+      "task/project/revision/digest mismatch"
+    ],
+    "run_id": [
+      "run mismatch"
+    ],
+    "task_revision": [
+      "task/project/revision/digest mismatch"
+    ],
+    "task_spec_sha256": [
+      "task/project/revision/digest mismatch"
+    ],
+    "submission_id": [
+      "submission binding mismatch"
+    ]
+  },
+  "omitted_link_endpoint_in_plan": []
+}

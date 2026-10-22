@@ -1,0 +1,28 @@
+{
+  "tile": 4,
+  "hypothesis": "Reuse each loaded input across more output rows; test doubled row tile.",
+  "feedback": {
+    "attempt": 2,
+    "tile": 2,
+    "accepted": true,
+    "manifest_hash": "a1f5457e3fe9a27e5a88c2443c5064a4587942a34e10fe9df36e8dcbd3effc2c",
+    "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
+    "reviewer_invocation": "834787ee-3def-4c91-91b0-d117179c2047",
+    "metrics": {
+      "scalar_transfers": 3523
+    },
+    "standards": {
+      "verdict": "pass",
+      "findings": [],
+      "scope": "AST restricted operations only; not human/LLM maintainability review"
+    },
+    "spec": {
+      "verdict": "pass",
+      "findings": []
+    },
+    "findings": [],
+    "selection": "retained"
+  },
+  "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
+  "expected_observation": "Fewer input reads, same exact output, bounded accumulator use"
+}

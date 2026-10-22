@@ -1,0 +1,120 @@
+{
+  "schema_version": "opc.taskspec.v0.1",
+  "task_id": "gemv-row-block-proposal",
+  "revision": 1,
+  "parent_task_id": null,
+  "task_kind": "optimize",
+  "objective": "在冻结GEMV访存模型下搜索合法行分块调度，保存失败与独立复核证据",
+  "source_requirements": [
+    {
+      "uri": "contracts/templates/MRD-SPEC.md",
+      "sha256": "5a059ff4b116d1adbf4a31b77c2d8df3e90a9bb0e5f19826cda0a86f03207ab5",
+      "locator": "SPEC / template only"
+    }
+  ],
+  "scope_in": [
+    "生成行分块调度",
+    "整数GEMV功能验证",
+    "模型流量比较"
+  ],
+  "scope_out": [
+    "真实硬件PPA",
+    "修改参考与评价器",
+    "外部付费模型"
+  ],
+  "deliverables": [
+    "候选代码",
+    "全部实验原件",
+    "双轴审核",
+    "条件结论"
+  ],
+  "inputs": [],
+  "research_unknowns": [
+    "给定容量下最佳已测试tile"
+  ],
+  "open_decisions": [
+    "示例占位引用必须替换为可访问冻结资产；运行授权由服务解析"
+  ],
+  "acceptance": {
+    "evaluator": {
+      "uri": "template://replace-with-frozen-evaluator",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "locator": "UNRESOLVED"
+    },
+    "workloads": [
+      {
+        "uri": "template://replace-with-workloads",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "locator": "UNRESOLVED"
+      }
+    ],
+    "hard_gates": [
+      "整数功能与独立参考一致",
+      "累加器容量约束通过",
+      "manifest完整且当前",
+      "两个审核轴均通过"
+    ],
+    "metrics": [
+      {
+        "metric_id": "element_transfers",
+        "unit": "element",
+        "direction": "minimize",
+        "evidence_level": "analytical",
+        "aggregation": "sum across frozen cases",
+        "target": null
+      }
+    ],
+    "required_review_axes": [
+      "standards",
+      "spec"
+    ],
+    "accept_conditional": true,
+    "evidence_ceiling": "analytical"
+  },
+  "budget": {
+    "max_attempts": 6,
+    "max_review_calls": 8,
+    "max_wall_seconds": 120,
+    "model_usd_cap": 0.0,
+    "model_tokens_cap": 0,
+    "max_concurrent_jobs": 1,
+    "unknown_price_policy": "block",
+    "inflight_at_limit": "drain"
+  },
+  "permissions": {
+    "readable_roots": [
+      "examples/gemv_loop"
+    ],
+    "writable_roots": [
+      "runs/gemv-proposal"
+    ],
+    "frozen_refs": [
+      {
+        "uri": "template://replace-with-frozen-evaluator",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "locator": "UNRESOLVED"
+      }
+    ],
+    "allowed_tools": [
+      "registered-offline-gemv-runner"
+    ],
+    "network": "disabled",
+    "network_allowlist": [],
+    "publish": false,
+    "modify_harness": false
+  },
+  "stop_rules": [
+    "实验次数耗尽",
+    "墙钟耗尽",
+    "用户暂停或取消",
+    "无新合法候选"
+  ],
+  "authorization_ref": null,
+  "domain": {
+    "adapter": "gemv-row-block",
+    "example_only": true,
+    "M": 8,
+    "K": 64,
+    "accumulator_capacity": 4
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "project_id": "compiler-fixture",
+  "task_id": "explore-kernel",
+  "run_id": "run-20261022-demo",
+  "attempt_id": "a000001",
+  "artifact_root": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\compiler-project\\.opc\\local\\artifacts",
+  "workspace_root": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\workspaces",
+  "run_root": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\compiler-project\\.opc\\local\\artifacts\\compiler-fixture\\explore-kernel\\run-20261022-demo",
+  "attempt_root": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\compiler-project\\.opc\\local\\artifacts\\compiler-fixture\\explore-kernel\\run-20261022-demo\\attempts\\a000001",
+  "paths": {
+    "plan": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\compiler-project\\.opc\\local\\artifacts\\compiler-fixture\\explore-kernel\\run-20261022-demo\\attempts\\a000001\\plan.json",
+    "candidate_source": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\compiler-project\\.opc\\local\\artifacts\\compiler-fixture\\explore-kernel\\run-20261022-demo\\attempts\\a000001\\candidate\\source",
+    "job_stdout": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\compiler-project\\.opc\\local\\artifacts\\compiler-fixture\\explore-kernel\\run-20261022-demo\\attempts\\a000001\\experiment\\jobs\\job-000001\\stdout.txt",
+    "job_stderr": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\compiler-project\\.opc\\local\\artifacts\\compiler-fixture\\explore-kernel\\run-20261022-demo\\attempts\\a000001\\experiment\\jobs\\job-000001\\stderr.txt",
+    "job_receipt": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\compiler-project\\.opc\\local\\artifacts\\compiler-fixture\\explore-kernel\\run-20261022-demo\\attempts\\a000001\\experiment\\jobs\\job-000001\\receipt.json",
+    "submission_manifest": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\compiler-project\\.opc\\local\\artifacts\\compiler-fixture\\explore-kernel\\run-20261022-demo\\attempts\\a000001\\submissions\\submission-000001\\manifest.json",
+    "review_standards": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\compiler-project\\.opc\\local\\artifacts\\compiler-fixture\\explore-kernel\\run-20261022-demo\\attempts\\a000001\\reviews\\review-000001\\Standards.json",
+    "review_spec": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\compiler-project\\.opc\\local\\artifacts\\compiler-fixture\\explore-kernel\\run-20261022-demo\\attempts\\a000001\\reviews\\review-000001\\Spec.json",
+    "review_decision": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\compiler-project\\.opc\\local\\artifacts\\compiler-fixture\\explore-kernel\\run-20261022-demo\\attempts\\a000001\\reviews\\review-000001\\decision.json",
+    "designer_workspace": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\workspaces\\compiler-fixture\\explore-kernel\\run-20261022-demo\\a000001\\designer",
+    "reviewer_workspace": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\workspaces\\compiler-fixture\\explore-kernel\\run-20261022-demo\\a000001\\reviewer"
+  },
+  "artifact_uris": {
+    "plan": "artifact://compiler-fixture/explore-kernel/run-20261022-demo/attempts/a000001/plan.json",
+    "candidate_source": "artifact://compiler-fixture/explore-kernel/run-20261022-demo/attempts/a000001/candidate/source",
+    "job_stdout": "artifact://compiler-fixture/explore-kernel/run-20261022-demo/attempts/a000001/experiment/jobs/job-000001/stdout.txt",
+    "job_stderr": "artifact://compiler-fixture/explore-kernel/run-20261022-demo/attempts/a000001/experiment/jobs/job-000001/stderr.txt",
+    "job_receipt": "artifact://compiler-fixture/explore-kernel/run-20261022-demo/attempts/a000001/experiment/jobs/job-000001/receipt.json",
+    "submission_manifest": "artifact://compiler-fixture/explore-kernel/run-20261022-demo/attempts/a000001/submissions/submission-000001/manifest.json",
+    "review_standards": "artifact://compiler-fixture/explore-kernel/run-20261022-demo/attempts/a000001/reviews/review-000001/Standards.json",
+    "review_spec": "artifact://compiler-fixture/explore-kernel/run-20261022-demo/attempts/a000001/reviews/review-000001/Spec.json",
+    "review_decision": "artifact://compiler-fixture/explore-kernel/run-20261022-demo/attempts/a000001/reviews/review-000001/decision.json"
+  },
+  "note": "Path plan only; no directories, jobs or acceptance decisions are created."
+}

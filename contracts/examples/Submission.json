@@ -1,0 +1,32 @@
+{
+  "task_id": "gemv-row-block-proposal",
+  "task_revision": 1,
+  "task_spec_sha256": "75e1f05ee61887a0ab4003281f419d3604e27ba02e3b42e1b0ab46df2619d6f1",
+  "schema_version": "opc.submission.v0.1",
+  "submission_id": "TEMPLATE-submission-1",
+  "attempt_id": "TEMPLATE-attempt-1",
+  "plan_id": "TEMPLATE-plan-1",
+  "producer_call_id": "TEMPLATE-runtime-issued-call",
+  "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "artifacts": [
+    {
+      "uri": "template://not-an-execution-receipt",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size_bytes": 0,
+      "media_type": "application/json",
+      "producer_job_id": "TEMPLATE-job-1"
+    }
+  ],
+  "claims": [],
+  "limitations": [
+    "仅结构示例；没有真实运行原件"
+  ],
+  "failed_checks": [],
+  "environment_ref": {
+    "uri": "template://not-an-execution-receipt",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "size_bytes": 0,
+    "media_type": "application/json",
+    "producer_job_id": "TEMPLATE-job-1"
+  }
+}

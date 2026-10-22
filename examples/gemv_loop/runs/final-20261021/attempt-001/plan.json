@@ -1,0 +1,7 @@
+{
+  "tile": 1,
+  "hypothesis": "Establish the untiled functional and transfer baseline.",
+  "feedback": null,
+  "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
+  "expected_observation": "Fewer input reads, same exact output, bounded accumulator use"
+}

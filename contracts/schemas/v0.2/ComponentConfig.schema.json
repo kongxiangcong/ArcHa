@@ -1,0 +1,163 @@
+{
+  "$defs": {
+    "SourceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "uri": {
+          "minLength": 1,
+          "title": "Uri",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "locator": {
+          "minLength": 1,
+          "title": "Locator",
+          "type": "string"
+        }
+      },
+      "required": [
+        "uri",
+        "sha256",
+        "locator"
+      ],
+      "title": "SourceRef",
+      "type": "object"
+    },
+    "ToolCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "argv": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Argv",
+          "type": "array"
+        },
+        "cwd": {
+          "minLength": 1,
+          "title": "Cwd",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        },
+        "resource_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Resource Ref"
+        }
+      },
+      "required": [
+        "command_id",
+        "argv",
+        "cwd",
+        "timeout_seconds",
+        "resource_ref"
+      ],
+      "title": "ToolCommand",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "opc.component.v0.2",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "component_id": {
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+      "title": "Component Id",
+      "type": "string"
+    },
+    "description": {
+      "minLength": 1,
+      "title": "Description",
+      "type": "string"
+    },
+    "adapter_id": {
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+      "title": "Adapter Id",
+      "type": "string"
+    },
+    "source_roots": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Source Roots",
+      "type": "array"
+    },
+    "editable_paths": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Editable Paths",
+      "type": "array"
+    },
+    "frozen_paths": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Frozen Paths",
+      "type": "array"
+    },
+    "commands": {
+      "items": {
+        "$ref": "#/$defs/ToolCommand"
+      },
+      "title": "Commands",
+      "type": "array"
+    },
+    "input_refs": {
+      "items": {
+        "$ref": "#/$defs/SourceRef"
+      },
+      "title": "Input Refs",
+      "type": "array"
+    },
+    "readiness": {
+      "enum": [
+        "draft",
+        "configured"
+      ],
+      "title": "Readiness",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "component_id",
+    "description",
+    "adapter_id",
+    "source_roots",
+    "editable_paths",
+    "frozen_paths",
+    "commands",
+    "input_refs",
+    "readiness"
+  ],
+  "title": "ComponentConfig",
+  "type": "object"
+}

@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-22",
+  "checks": [
+    {
+      "id": "contracts-v01",
+      "cmd": "python contracts/validate_examples.py",
+      "chunk_id": "973457",
+      "wall_time_seconds": 2.2437991999999998,
+      "exit_code": 0,
+      "original_token_count": 24,
+      "output": "6 examples valid; 6 schemas synchronized; 4 negative cases rejected; draft dispatch blocked\r\n"
+    },
+    {
+      "id": "contracts-v02",
+      "cmd": "python contracts/validate_v02.py",
+      "chunk_id": "e9d362",
+      "wall_time_seconds": 2.3637181,
+      "exit_code": 0,
+      "original_token_count": 32,
+      "output": "v0.2: 6 examples + 6 schemas + linked bundle valid; 10 invalid payloads and 7 invalid bundles rejected; draft stays disabled\r\n"
+    },
+    {
+      "id": "ruff",
+      "cmd": "python -m ruff check contracts tools/project_layout.py tools/tests/test_project_layout.py",
+      "chunk_id": "83c80e",
+      "wall_time_seconds": 1.7617133,
+      "exit_code": 0,
+      "original_token_count": 5,
+      "output": "All checks passed!\n"
+    },
+    {
+      "id": "mypy-contracts",
+      "cmd": "python -m mypy contracts --follow-imports=silent",
+      "chunk_id": "2c966b",
+      "wall_time_seconds": 5.3216174,
+      "exit_code": 0,
+      "original_token_count": 11,
+      "output": "Success: no issues found in 6 source files\r\n"
+    },
+    {
+      "id": "mypy-layout",
+      "cmd": "python -m mypy tools/project_layout.py --follow-imports=skip",
+      "chunk_id": "8e566e",
+      "wall_time_seconds": 3.4418451,
+      "exit_code": 0,
+      "original_token_count": 11,
+      "output": "Success: no issues found in 1 source file\r\n"
+    }
+  ]
+}

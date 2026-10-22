@@ -1,0 +1,32 @@
+{
+  "tile": 12,
+  "hypothesis": "Resource failure bounds the search; bisect between verified and rejected tile.",
+  "feedback": {
+    "attempt": 5,
+    "tile": 16,
+    "accepted": false,
+    "manifest_hash": "0978690cb8b549c51386f415c6e1c421607c82ba1ba8eb948fb49306696431dc",
+    "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
+    "reviewer_invocation": "644be8d1-bcdf-4373-b998-60a3711fd84c",
+    "metrics": {
+      "scalar_transfers": 2522
+    },
+    "standards": {
+      "verdict": "pass",
+      "findings": [],
+      "scope": "AST restricted operations only; not human/LLM maintainability review"
+    },
+    "spec": {
+      "verdict": "fail",
+      "findings": [
+        "accumulator resource limit exceeded"
+      ]
+    },
+    "findings": [
+      "accumulator resource limit exceeded"
+    ],
+    "selection": "rejected"
+  },
+  "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
+  "expected_observation": "Fewer input reads, same exact output, bounded accumulator use"
+}

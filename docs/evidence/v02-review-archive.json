@@ -1,0 +1,42 @@
+[
+  {
+    "source": ".tmp/contracts-v02-review/artifact-binding-recheck.json",
+    "archive": "docs/evidence/contracts-v02-review/artifact-binding-recheck.json",
+    "sha256": "5a314911682ece8922ef6aeb696d5a74fe47ae37a5ea32432affb1315aedad77"
+  },
+  {
+    "source": ".tmp/contracts-v02-review/artifact-mapping-review.json",
+    "archive": "docs/evidence/contracts-v02-review/artifact-mapping-review.json",
+    "sha256": "f11d5aca829b35b749873278ab05ce6d3099e1f5fb9adb787697438fbacc665c"
+  },
+  {
+    "source": ".tmp/contracts-v02-review/artifact-mapping-submission.json",
+    "archive": "docs/evidence/contracts-v02-review/artifact-mapping-submission.json",
+    "sha256": "84742752f2955df4a4ce53e13ea1cec3096ff16285cc732f88210700203e0641"
+  },
+  {
+    "source": ".tmp/contracts-v02-review/audit-probes.json",
+    "archive": "docs/evidence/contracts-v02-review/audit-probes.json",
+    "sha256": "623eb66342d64e004159dbd0585e4981bab833e69a281e53c3440c77573a2f79"
+  },
+  {
+    "source": ".tmp/contracts-v02-review/legacy-read-check.json",
+    "archive": "docs/evidence/contracts-v02-review/legacy-read-check.json",
+    "sha256": "6f3a616d9368c222a4bbba40dc0017f48ba8b9fe037e00bfc1d832a2a992a01e"
+  },
+  {
+    "source": ".tmp/contracts-v02-review/recheck-positive-submission.json",
+    "archive": "docs/evidence/contracts-v02-review/recheck-positive-submission.json",
+    "sha256": "cba36ee7414cf79cbb8d25cd91a8c6262887e0d40bfea6111517b65015b0650d"
+  },
+  {
+    "source": ".tmp/integration-layout-review/file-ancestor-probe.json",
+    "archive": "docs/evidence/integration-layout-review/file-ancestor-probe.json",
+    "sha256": "ae30dddc8220f93a5d0becaf108a69ad5c9eff80df1339e5cbeedc6471615227"
+  },
+  {
+    "source": ".tmp/integration-layout-review/path-types-recheck.json",
+    "archive": "docs/evidence/integration-layout-review/path-types-recheck.json",
+    "sha256": "1505eb23af895f42000c7d803ddd9dd80e20af19edd560e59fb63b7e68c7b93e"
+  }
+]

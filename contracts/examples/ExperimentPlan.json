@@ -1,0 +1,30 @@
+{
+  "task_id": "gemv-row-block-proposal",
+  "task_revision": 1,
+  "task_spec_sha256": "75e1f05ee61887a0ab4003281f419d3604e27ba02e3b42e1b0ab46df2619d6f1",
+  "schema_version": "opc.plan.v0.1",
+  "plan_id": "TEMPLATE-plan-1",
+  "parent_submission_id": null,
+  "evidence_refs": [],
+  "hypothesis": "增加共享输入的行块可减少输入读取",
+  "competing_explanation": "收益可能来自漏算尾块",
+  "change": "row block 1 -> 2",
+  "controlled_variables": [
+    "输入、数值语义、评价器、累加器容量"
+  ],
+  "falsification": "功能不一致或模型总流量不降则否定",
+  "measurement_commands": [
+    [
+      "registered-offline-gemv-runner",
+      "--tile",
+      "2"
+    ]
+  ],
+  "expected_artifacts": [
+    "kernel.py",
+    "measurement.json",
+    "review.json"
+  ],
+  "predicted_model_usd_upper_bound": 0.0,
+  "predicted_wall_seconds": 10
+}

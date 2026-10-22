@@ -1,0 +1,22 @@
+{
+  "attempt": 4,
+  "tile": 8,
+  "accepted": true,
+  "manifest_hash": "e0c38f80125598b0746f2219831b72f76fa1879e1c21b8fc3737dfe56240494e",
+  "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
+  "reviewer_invocation": "ca47f819-cf1c-4d8c-a270-eec5999191f2",
+  "metrics": {
+    "scalar_transfers": 2663
+  },
+  "standards": {
+    "verdict": "pass",
+    "findings": [],
+    "scope": "AST restricted operations only; not human/LLM maintainability review"
+  },
+  "spec": {
+    "verdict": "pass",
+    "findings": []
+  },
+  "findings": [],
+  "selection": "retained"
+}

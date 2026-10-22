@@ -1,0 +1,18 @@
+{
+  "legacy_unbound_payload_rejected": true,
+  "missing_artifact_pass_errors": [
+    "passed requirement lacks a concrete required artifact binding",
+    "passed requirement lacks a concrete required artifact binding"
+  ],
+  "explicit_present_positive_errors": [],
+  "draft_missing_artifacts_allowed": true,
+  "schema_sync": {
+    "ProjectConfig": true,
+    "ComponentConfig": true,
+    "TaskSpecV02": true,
+    "ExperimentPlanV02": true,
+    "SubmissionV02": true,
+    "ReviewDecisionV02": true
+  },
+  "source_sha256": "a4b4dbe2958e8120f95faeb1c3d1a05e6b3de89201bb0645c3d5010e136eca0b"
+}

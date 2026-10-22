@@ -1,0 +1,66 @@
+{
+  "project_id": "example-compiler",
+  "task_id": "gemv-row-block-proposal",
+  "task_revision": 1,
+  "task_spec_sha256": "85f6e73570483b789655a5a3325e48512c4777cf250ebcdba91e2e669e4305a2",
+  "run_id": "template-run",
+  "schema_version": "opc.review.v0.2",
+  "review_id": "template-review",
+  "review_call_id": "template-reviewer",
+  "submission_id": "template-submission",
+  "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "standards": {
+    "verdict": "pass",
+    "findings": [],
+    "checked_artifacts": [
+      {
+        "uri": "artifact://example-compiler/gemv-row-block-proposal/template-run/attempts/a000001/submissions/template-submission/evidence.json",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "size_bytes": 0,
+        "media_type": "application/json",
+        "producer_job_id": "template-job"
+      }
+    ]
+  },
+  "spec": {
+    "verdict": "pass",
+    "findings": [],
+    "checked_artifacts": [
+      {
+        "uri": "artifact://example-compiler/gemv-row-block-proposal/template-run/attempts/a000001/submissions/template-submission/evidence.json",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "size_bytes": 0,
+        "media_type": "application/json",
+        "producer_job_id": "template-job"
+      }
+    ]
+  },
+  "recommended_disposition": "accept",
+  "conclusion": "all checks pass",
+  "accepted_claims": [],
+  "coverage": [
+    {
+      "requirement_id": "req-gemv-001",
+      "status": "pass",
+      "check": "模板未执行",
+      "verified_check_ids": [
+        "check-exact-output",
+        "link-runner-kernel"
+      ],
+      "evidence": [
+        {
+          "uri": "artifact://example-compiler/gemv-row-block-proposal/template-run/attempts/a000001/submissions/template-submission/evidence.json",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "size_bytes": 0,
+          "media_type": "application/json",
+          "producer_job_id": "template-job"
+        }
+      ],
+      "human_judgment": false,
+      "limitation": null
+    }
+  ],
+  "unknowns": [],
+  "gaps": [],
+  "checked_manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+}

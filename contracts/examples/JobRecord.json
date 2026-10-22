@@ -1,0 +1,18 @@
+{
+  "task_id": "gemv-row-block-proposal",
+  "task_revision": 1,
+  "task_spec_sha256": "75e1f05ee61887a0ab4003281f419d3604e27ba02e3b42e1b0ab46df2619d6f1",
+  "schema_version": "opc.job.v0.1",
+  "job_id": "TEMPLATE-job-1",
+  "attempt_id": "TEMPLATE-attempt-1",
+  "role": "experiment",
+  "idempotency_key": "TEMPLATE-task1-attempt1-experiment",
+  "input_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "state": "intent",
+  "backend_job_id": null,
+  "runtime_call_id": null,
+  "reserved_model_usd": 0.0,
+  "actual_model_usd": null,
+  "result": null,
+  "reconcile_note": "尚未派发"
+}

@@ -1,0 +1,26 @@
+{
+  "attempt": 5,
+  "tile": 16,
+  "accepted": false,
+  "manifest_hash": "40fac73688fee25414ba710396a750954fd631076d7781dc8bf94faa6d4c988f",
+  "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
+  "reviewer_invocation": "be15bc01-cccc-4fb0-b0a6-4ec90ad40ff1",
+  "metrics": {
+    "scalar_transfers": 2522
+  },
+  "standards": {
+    "verdict": "pass",
+    "findings": [],
+    "scope": "AST restricted operations only; not human/LLM maintainability review"
+  },
+  "spec": {
+    "verdict": "fail",
+    "findings": [
+      "accumulator resource limit exceeded"
+    ]
+  },
+  "findings": [
+    "accumulator resource limit exceeded"
+  ],
+  "selection": "rejected"
+}

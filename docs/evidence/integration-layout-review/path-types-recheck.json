@@ -1,0 +1,20 @@
+{
+  "original_file_ancestor": {
+    "rejected": true,
+    "reason": "planned directory contains a non-directory path"
+  },
+  "clean_plan": {
+    "accepted": true,
+    "plan": "D:\\dsh-proj\\Ge\\.tmp\\integration-layout-review\\fresh-artifacts\\p\\t\\fresh-run\\attempts\\a000001\\plan.json",
+    "created_artifacts": false,
+    "created_workspaces": false
+  },
+  "file_leaf_is_directory": {
+    "rejected": true,
+    "reason": "planned file path is not a regular file"
+  },
+  "directory_leaf_is_file": {
+    "rejected": true,
+    "reason": "planned directory contains a non-directory path"
+  }
+}

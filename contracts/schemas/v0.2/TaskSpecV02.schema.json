@@ -1,0 +1,913 @@
+{
+  "$defs": {
+    "Acceptance": {
+      "additionalProperties": false,
+      "properties": {
+        "evaluator": {
+          "$ref": "#/$defs/SourceRef"
+        },
+        "workloads": {
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "minItems": 1,
+          "title": "Workloads",
+          "type": "array"
+        },
+        "hard_gates": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Hard Gates",
+          "type": "array"
+        },
+        "metrics": {
+          "items": {
+            "$ref": "#/$defs/Metric"
+          },
+          "title": "Metrics",
+          "type": "array"
+        },
+        "required_review_axes": {
+          "items": {
+            "enum": [
+              "standards",
+              "spec"
+            ],
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "Required Review Axes",
+          "type": "array"
+        },
+        "accept_conditional": {
+          "title": "Accept Conditional",
+          "type": "boolean"
+        },
+        "evidence_ceiling": {
+          "enum": [
+            "functional",
+            "analytical",
+            "simulation",
+            "synthesis",
+            "hardware"
+          ],
+          "title": "Evidence Ceiling",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evaluator",
+        "workloads",
+        "hard_gates",
+        "metrics",
+        "required_review_axes",
+        "accept_conditional",
+        "evidence_ceiling"
+      ],
+      "title": "Acceptance",
+      "type": "object"
+    },
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "uri": {
+          "minLength": 1,
+          "title": "Uri",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        },
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "producer_job_id": {
+          "minLength": 1,
+          "title": "Producer Job Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "uri",
+        "sha256",
+        "size_bytes",
+        "media_type",
+        "producer_job_id"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "Baseline": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "git_commit",
+            "source_snapshot"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "source_ref": {
+          "$ref": "#/$defs/SourceRef"
+        },
+        "git_commit": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Git Commit"
+        },
+        "includes_dirty_changes": {
+          "title": "Includes Dirty Changes",
+          "type": "boolean"
+        },
+        "snapshot_manifest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArtifactRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "source_ref",
+        "git_commit",
+        "includes_dirty_changes",
+        "snapshot_manifest"
+      ],
+      "title": "Baseline",
+      "type": "object"
+    },
+    "Budget": {
+      "additionalProperties": false,
+      "properties": {
+        "max_attempts": {
+          "minimum": 1,
+          "title": "Max Attempts",
+          "type": "integer"
+        },
+        "max_review_calls": {
+          "minimum": 1,
+          "title": "Max Review Calls",
+          "type": "integer"
+        },
+        "max_wall_seconds": {
+          "minimum": 1,
+          "title": "Max Wall Seconds",
+          "type": "integer"
+        },
+        "model_usd_cap": {
+          "minimum": 0,
+          "title": "Model Usd Cap",
+          "type": "number"
+        },
+        "model_tokens_cap": {
+          "minimum": 0,
+          "title": "Model Tokens Cap",
+          "type": "integer"
+        },
+        "max_concurrent_jobs": {
+          "minimum": 1,
+          "title": "Max Concurrent Jobs",
+          "type": "integer"
+        },
+        "unknown_price_policy": {
+          "const": "block",
+          "default": "block",
+          "title": "Unknown Price Policy",
+          "type": "string"
+        },
+        "inflight_at_limit": {
+          "enum": [
+            "drain",
+            "cancel_request"
+          ],
+          "title": "Inflight At Limit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "max_attempts",
+        "max_review_calls",
+        "max_wall_seconds",
+        "model_usd_cap",
+        "model_tokens_cap",
+        "max_concurrent_jobs",
+        "inflight_at_limit"
+      ],
+      "title": "Budget",
+      "type": "object"
+    },
+    "ContextDecisions": {
+      "additionalProperties": false,
+      "properties": {
+        "locked": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Locked",
+          "type": "array"
+        },
+        "delegated": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Delegated",
+          "type": "array"
+        },
+        "deferred": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Deferred",
+          "type": "array"
+        },
+        "canonical_refs": {
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "title": "Canonical Refs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "locked",
+        "delegated",
+        "deferred",
+        "canonical_refs"
+      ],
+      "title": "ContextDecisions",
+      "type": "object"
+    },
+    "Dependency": {
+      "additionalProperties": false,
+      "properties": {
+        "task_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "task_revision": {
+          "minimum": 1,
+          "title": "Task Revision",
+          "type": "integer"
+        },
+        "accepted_submission_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+          "title": "Accepted Submission Id",
+          "type": "string"
+        },
+        "manifest_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Manifest Sha256",
+          "type": "string"
+        },
+        "required_interface": {
+          "minLength": 1,
+          "title": "Required Interface",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "task_revision",
+        "accepted_submission_id",
+        "manifest_sha256",
+        "required_interface"
+      ],
+      "title": "Dependency",
+      "type": "object"
+    },
+    "ExpectedArtifact": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "requirement_ids": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Requirement Ids",
+          "type": "array"
+        },
+        "logical_path": {
+          "minLength": 1,
+          "title": "Logical Path",
+          "type": "string"
+        },
+        "purpose": {
+          "minLength": 1,
+          "title": "Purpose",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "requirement_ids",
+        "logical_path",
+        "purpose"
+      ],
+      "title": "ExpectedArtifact",
+      "type": "object"
+    },
+    "KeyLink": {
+      "additionalProperties": false,
+      "properties": {
+        "link_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+          "title": "Link Id",
+          "type": "string"
+        },
+        "requirement_ids": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Requirement Ids",
+          "type": "array"
+        },
+        "producer_artifact_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+          "title": "Producer Artifact Id",
+          "type": "string"
+        },
+        "consumer_artifact_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+          "title": "Consumer Artifact Id",
+          "type": "string"
+        },
+        "verification": {
+          "minLength": 1,
+          "title": "Verification",
+          "type": "string"
+        }
+      },
+      "required": [
+        "link_id",
+        "requirement_ids",
+        "producer_artifact_id",
+        "consumer_artifact_id",
+        "verification"
+      ],
+      "title": "KeyLink",
+      "type": "object"
+    },
+    "Metric": {
+      "additionalProperties": false,
+      "properties": {
+        "metric_id": {
+          "minLength": 1,
+          "title": "Metric Id",
+          "type": "string"
+        },
+        "unit": {
+          "minLength": 1,
+          "title": "Unit",
+          "type": "string"
+        },
+        "direction": {
+          "enum": [
+            "minimize",
+            "maximize",
+            "informational"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "evidence_level": {
+          "enum": [
+            "functional",
+            "analytical",
+            "simulation",
+            "synthesis",
+            "hardware"
+          ],
+          "title": "Evidence Level",
+          "type": "string"
+        },
+        "aggregation": {
+          "minLength": 1,
+          "title": "Aggregation",
+          "type": "string"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Target"
+        }
+      },
+      "required": [
+        "metric_id",
+        "unit",
+        "direction",
+        "evidence_level",
+        "aggregation",
+        "target"
+      ],
+      "title": "Metric",
+      "type": "object"
+    },
+    "MustHaves": {
+      "additionalProperties": false,
+      "properties": {
+        "observables": {
+          "items": {
+            "$ref": "#/$defs/Observable"
+          },
+          "minItems": 1,
+          "title": "Observables",
+          "type": "array"
+        },
+        "artifacts": {
+          "items": {
+            "$ref": "#/$defs/ExpectedArtifact"
+          },
+          "minItems": 1,
+          "title": "Artifacts",
+          "type": "array"
+        },
+        "key_links": {
+          "items": {
+            "$ref": "#/$defs/KeyLink"
+          },
+          "title": "Key Links",
+          "type": "array"
+        }
+      },
+      "required": [
+        "observables",
+        "artifacts",
+        "key_links"
+      ],
+      "title": "MustHaves",
+      "type": "object"
+    },
+    "Observable": {
+      "additionalProperties": false,
+      "properties": {
+        "check_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+          "title": "Check Id",
+          "type": "string"
+        },
+        "requirement_ids": {
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Requirement Ids",
+          "type": "array"
+        },
+        "observation": {
+          "minLength": 1,
+          "title": "Observation",
+          "type": "string"
+        },
+        "verification": {
+          "minLength": 1,
+          "title": "Verification",
+          "type": "string"
+        }
+      },
+      "required": [
+        "check_id",
+        "requirement_ids",
+        "observation",
+        "verification"
+      ],
+      "title": "Observable",
+      "type": "object"
+    },
+    "Permissions": {
+      "additionalProperties": false,
+      "properties": {
+        "readable_roots": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Readable Roots",
+          "type": "array"
+        },
+        "writable_roots": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Writable Roots",
+          "type": "array"
+        },
+        "frozen_refs": {
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "minItems": 1,
+          "title": "Frozen Refs",
+          "type": "array"
+        },
+        "allowed_tools": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Allowed Tools",
+          "type": "array"
+        },
+        "network": {
+          "enum": [
+            "disabled",
+            "allowlist"
+          ],
+          "title": "Network",
+          "type": "string"
+        },
+        "network_allowlist": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Network Allowlist",
+          "type": "array"
+        },
+        "publish": {
+          "const": false,
+          "default": false,
+          "title": "Publish",
+          "type": "boolean"
+        },
+        "modify_harness": {
+          "const": false,
+          "default": false,
+          "title": "Modify Harness",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "readable_roots",
+        "writable_roots",
+        "frozen_refs",
+        "allowed_tools",
+        "network",
+        "network_allowlist"
+      ],
+      "title": "Permissions",
+      "type": "object"
+    },
+    "Requirement": {
+      "additionalProperties": false,
+      "properties": {
+        "requirement_id": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+          "title": "Requirement Id",
+          "type": "string"
+        },
+        "statement": {
+          "minLength": 1,
+          "title": "Statement",
+          "type": "string"
+        },
+        "current_state": {
+          "minLength": 1,
+          "title": "Current State",
+          "type": "string"
+        },
+        "target_state": {
+          "minLength": 1,
+          "title": "Target State",
+          "type": "string"
+        },
+        "negative_constraints": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Negative Constraints",
+          "type": "array"
+        },
+        "category": {
+          "enum": [
+            "functional",
+            "performance",
+            "research",
+            "reproducibility",
+            "integration"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "priority": {
+          "enum": [
+            "must",
+            "should"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "source_refs": {
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "minItems": 1,
+          "title": "Source Refs",
+          "type": "array"
+        },
+        "success_criterion": {
+          "minLength": 1,
+          "title": "Success Criterion",
+          "type": "string"
+        },
+        "verification_mode": {
+          "enum": [
+            "automated",
+            "independent_review",
+            "human_judgment"
+          ],
+          "title": "Verification Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "requirement_id",
+        "statement",
+        "current_state",
+        "target_state",
+        "negative_constraints",
+        "category",
+        "priority",
+        "source_refs",
+        "success_criterion",
+        "verification_mode"
+      ],
+      "title": "Requirement",
+      "type": "object"
+    },
+    "SourceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "uri": {
+          "minLength": 1,
+          "title": "Uri",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "locator": {
+          "minLength": 1,
+          "title": "Locator",
+          "type": "string"
+        }
+      },
+      "required": [
+        "uri",
+        "sha256",
+        "locator"
+      ],
+      "title": "SourceRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "opc.taskspec.v0.2",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "project_id": {
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "component_id": {
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+      "title": "Component Id",
+      "type": "string"
+    },
+    "task_id": {
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "revision": {
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "parent_task_id": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Parent Task Id"
+    },
+    "task_kind": {
+      "enum": [
+        "research",
+        "implement",
+        "optimize"
+      ],
+      "title": "Task Kind",
+      "type": "string"
+    },
+    "objective": {
+      "minLength": 1,
+      "title": "Objective",
+      "type": "string"
+    },
+    "source_requirements": {
+      "items": {
+        "$ref": "#/$defs/SourceRef"
+      },
+      "minItems": 1,
+      "title": "Source Requirements",
+      "type": "array"
+    },
+    "scope_in": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Scope In",
+      "type": "array"
+    },
+    "scope_out": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Scope Out",
+      "type": "array"
+    },
+    "deliverables": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Deliverables",
+      "type": "array"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/SourceRef"
+      },
+      "title": "Inputs",
+      "type": "array"
+    },
+    "research_unknowns": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Research Unknowns",
+      "type": "array"
+    },
+    "open_decisions": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Open Decisions",
+      "type": "array"
+    },
+    "acceptance": {
+      "$ref": "#/$defs/Acceptance"
+    },
+    "budget": {
+      "$ref": "#/$defs/Budget"
+    },
+    "permissions": {
+      "$ref": "#/$defs/Permissions"
+    },
+    "stop_rules": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Stop Rules",
+      "type": "array"
+    },
+    "authorization_ref": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Authorization Ref"
+    },
+    "domain": {
+      "additionalProperties": true,
+      "title": "Domain",
+      "type": "object"
+    },
+    "baseline": {
+      "$ref": "#/$defs/Baseline"
+    },
+    "requirements": {
+      "items": {
+        "$ref": "#/$defs/Requirement"
+      },
+      "minItems": 1,
+      "title": "Requirements",
+      "type": "array"
+    },
+    "context": {
+      "$ref": "#/$defs/ContextDecisions"
+    },
+    "must_haves": {
+      "$ref": "#/$defs/MustHaves"
+    },
+    "dependencies": {
+      "items": {
+        "$ref": "#/$defs/Dependency"
+      },
+      "title": "Dependencies",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "project_id",
+    "component_id",
+    "task_id",
+    "revision",
+    "parent_task_id",
+    "task_kind",
+    "objective",
+    "source_requirements",
+    "scope_in",
+    "scope_out",
+    "deliverables",
+    "inputs",
+    "research_unknowns",
+    "open_decisions",
+    "acceptance",
+    "budget",
+    "permissions",
+    "stop_rules",
+    "authorization_ref",
+    "domain",
+    "baseline",
+    "requirements",
+    "context",
+    "must_haves",
+    "dependencies"
+  ],
+  "title": "TaskSpecV02",
+  "type": "object"
+}

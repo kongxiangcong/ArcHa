@@ -1,0 +1,46 @@
+{
+  "task_id": "gemv-row-block-proposal",
+  "task_revision": 1,
+  "task_spec_sha256": "75e1f05ee61887a0ab4003281f419d3604e27ba02e3b42e1b0ab46df2619d6f1",
+  "schema_version": "opc.review.v0.1",
+  "review_id": "TEMPLATE-review-1",
+  "review_call_id": "TEMPLATE-reviewer-call",
+  "submission_id": "TEMPLATE-submission-1",
+  "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "standards": {
+    "verdict": "inconclusive",
+    "findings": [
+      "模板缺少真实原件"
+    ],
+    "checked_artifacts": [
+      {
+        "uri": "template://not-an-execution-receipt",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "size_bytes": 0,
+        "media_type": "application/json",
+        "producer_job_id": "TEMPLATE-job-1"
+      }
+    ]
+  },
+  "spec": {
+    "verdict": "inconclusive",
+    "findings": [
+      "模板缺少真实原件"
+    ],
+    "checked_artifacts": [
+      {
+        "uri": "template://not-an-execution-receipt",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "size_bytes": 0,
+        "media_type": "application/json",
+        "producer_job_id": "TEMPLATE-job-1"
+      }
+    ]
+  },
+  "recommended_disposition": "blocked",
+  "conclusion": "结构示例，不构成审核结论",
+  "accepted_claims": [],
+  "unknowns": [
+    "实际执行与身份待核验"
+  ]
+}

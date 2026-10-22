@@ -1,0 +1,17 @@
+{
+  "operation": "initialize_draft",
+  "applied": true,
+  "project_root": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\rtl-project",
+  "control_root": "D:\\dsh-proj\\Ge\\examples\\project-onboarding\\fixtures\\rtl-project\\.opc",
+  "files": [
+    ".gitignore",
+    "README.md",
+    "components/README.md",
+    "context/DECISIONS.md",
+    "context/PROJECT.md",
+    "context/REQUIREMENTS.md",
+    "project.json",
+    "tasks/README.md"
+  ],
+  "execution_enabled": false
+}

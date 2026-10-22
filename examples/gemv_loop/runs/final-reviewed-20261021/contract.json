@@ -1,0 +1,28 @@
+{
+  "schema": "opc.demo.gemv.v1",
+  "shapes": [
+    [
+      1,
+      1
+    ],
+    [
+      5,
+      7
+    ],
+    [
+      17,
+      13
+    ],
+    [
+      32,
+      64
+    ]
+  ],
+  "seed": 19,
+  "integer_semantics": "Python exact signed integers; no hardware overflow model",
+  "accumulator_slots": 12,
+  "metric": "scalar_transfers = weight_reads + input_reads + output_writes",
+  "memory_model": "No cache; each row tile retains one x scalar and tile accumulators",
+  "selection": "correctness and resource gates, then strictly fewer scalar_transfers",
+  "claim_scope": "These four workloads and this analytical memory model only"
+}

@@ -1,0 +1,77 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "opc.decision.v0.1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "decision_id": {
+      "minLength": 1,
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "task_id": {
+      "minLength": 1,
+      "title": "Task Id",
+      "type": "string"
+    },
+    "expected_revision": {
+      "minimum": 1,
+      "title": "Expected Revision",
+      "type": "integer"
+    },
+    "reason": {
+      "enum": [
+        "scope",
+        "budget",
+        "acceptance",
+        "resource",
+        "authorization"
+      ],
+      "title": "Reason",
+      "type": "string"
+    },
+    "question": {
+      "minLength": 1,
+      "title": "Question",
+      "type": "string"
+    },
+    "options": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 2,
+      "title": "Options",
+      "type": "array"
+    },
+    "recommendation": {
+      "minLength": 1,
+      "title": "Recommendation",
+      "type": "string"
+    },
+    "blocked_actions": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Blocked Actions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "decision_id",
+    "task_id",
+    "expected_revision",
+    "reason",
+    "question",
+    "options",
+    "recommendation",
+    "blocked_actions"
+  ],
+  "title": "DecisionRequest",
+  "type": "object"
+}

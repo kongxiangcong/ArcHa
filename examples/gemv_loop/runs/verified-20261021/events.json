@@ -1,0 +1,134 @@
+[
+  {
+    "seq": 1,
+    "at": 1792596744.1021218,
+    "kind": "created",
+    "body": "{\"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\"}"
+  },
+  {
+    "seq": 2,
+    "at": 1792596744.1307716,
+    "kind": "phase:expert",
+    "body": "{\"phase\": \"design\", \"attempts\": 1, \"max_attempts\": 8, \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"history\": [], \"best\": null, \"reason\": null, \"manifest_hash\": null, \"domain_hash\": \"6e03d5b49429511b864a684696d8882ed5ad908e084843e6d3fd943000425709\", \"provider\": \"offline_deterministic\", \"model_cost\": \"not_applicable_no_model_calls\", \"tile\": 1, \"review_retries\": 0}"
+  },
+  {
+    "seq": 3,
+    "at": 1792596744.1372597,
+    "kind": "phase:design",
+    "body": "{\"phase\": \"experiment\", \"attempts\": 1, \"max_attempts\": 8, \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"history\": [], \"best\": null, \"reason\": null, \"manifest_hash\": null, \"domain_hash\": \"6e03d5b49429511b864a684696d8882ed5ad908e084843e6d3fd943000425709\", \"provider\": \"offline_deterministic\", \"model_cost\": \"not_applicable_no_model_calls\", \"tile\": 1, \"review_retries\": 0}"
+  },
+  {
+    "seq": 4,
+    "at": 1792596744.1459892,
+    "kind": "job_intent",
+    "body": "{\"key\": \"1:experiment\", \"role\": \"experiment\", \"invocation\": \"c2c8811f-6ba4-42fa-8726-d51df8d3563b\"}"
+  },
+  {
+    "seq": 5,
+    "at": 1792596744.5410576,
+    "kind": "job_receipt",
+    "body": "{\"key\": \"1:experiment\", \"invocation\": \"c2c8811f-6ba4-42fa-8726-d51df8d3563b\", \"exit_code\": 0}"
+  },
+  {
+    "seq": 6,
+    "at": 1792596744.5450332,
+    "kind": "phase:experiment",
+    "body": "{\"phase\": \"freeze\", \"attempts\": 1, \"max_attempts\": 8, \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"history\": [], \"best\": null, \"reason\": null, \"manifest_hash\": null, \"domain_hash\": \"6e03d5b49429511b864a684696d8882ed5ad908e084843e6d3fd943000425709\", \"provider\": \"offline_deterministic\", \"model_cost\": \"not_applicable_no_model_calls\", \"tile\": 1, \"review_retries\": 0}"
+  },
+  {
+    "seq": 7,
+    "at": 1792596744.5704882,
+    "kind": "phase:freeze",
+    "body": "{\"phase\": \"review\", \"attempts\": 1, \"max_attempts\": 8, \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"history\": [], \"best\": null, \"reason\": null, \"manifest_hash\": \"559cf631407bc7a9a4e467278f68c084006452647979d580e862c1bb6bfe554c\", \"domain_hash\": \"6e03d5b49429511b864a684696d8882ed5ad908e084843e6d3fd943000425709\", \"provider\": \"offline_deterministic\", \"model_cost\": \"not_applicable_no_model_calls\", \"tile\": 1, \"review_retries\": 0}"
+  },
+  {
+    "seq": 8,
+    "at": 1792596744.5980058,
+    "kind": "job_intent",
+    "body": "{\"key\": \"1:reviewer:retry0\", \"role\": \"reviewer\", \"invocation\": \"145c5b67-048a-4873-87d2-08267760ec36\"}"
+  },
+  {
+    "seq": 9,
+    "at": 1792596745.0084083,
+    "kind": "job_receipt",
+    "body": "{\"key\": \"1:reviewer:retry0\", \"invocation\": \"145c5b67-048a-4873-87d2-08267760ec36\", \"exit_code\": 0}"
+  },
+  {
+    "seq": 10,
+    "at": 1792596745.0140781,
+    "kind": "phase:review",
+    "body": "{\"phase\": \"decide\", \"attempts\": 1, \"max_attempts\": 8, \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"history\": [], \"best\": null, \"reason\": null, \"manifest_hash\": \"559cf631407bc7a9a4e467278f68c084006452647979d580e862c1bb6bfe554c\", \"domain_hash\": \"6e03d5b49429511b864a684696d8882ed5ad908e084843e6d3fd943000425709\", \"provider\": \"offline_deterministic\", \"model_cost\": \"not_applicable_no_model_calls\", \"tile\": 1, \"review_retries\": 0}"
+  },
+  {
+    "seq": 11,
+    "at": 1792596745.0221837,
+    "kind": "phase:decide",
+    "body": "{\"phase\": \"expert\", \"attempts\": 1, \"max_attempts\": 8, \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"history\": [{\"attempt\": 1, \"tile\": 1, \"accepted\": true, \"manifest_hash\": \"559cf631407bc7a9a4e467278f68c084006452647979d580e862c1bb6bfe554c\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"145c5b67-048a-4873-87d2-08267760ec36\", \"metrics\": {\"scalar_transfers\": 4665}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}], \"best\": {\"attempt\": 1, \"tile\": 1, \"accepted\": true, \"manifest_hash\": \"559cf631407bc7a9a4e467278f68c084006452647979d580e862c1bb6bfe554c\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"145c5b67-048a-4873-87d2-08267760ec36\", \"metrics\": {\"scalar_transfers\": 4665}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}, \"reason\": null, \"manifest_hash\": \"559cf631407bc7a9a4e467278f68c084006452647979d580e862c1bb6bfe554c\", \"domain_hash\": \"6e03d5b49429511b864a684696d8882ed5ad908e084843e6d3fd943000425709\", \"provider\": \"offline_deterministic\", \"model_cost\": \"not_applicable_no_model_calls\", \"tile\": 1, \"review_retries\": 0}"
+  },
+  {
+    "seq": 12,
+    "at": 1792596745.0283146,
+    "kind": "phase:expert",
+    "body": "{\"phase\": \"design\", \"attempts\": 2, \"max_attempts\": 8, \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"history\": [{\"attempt\": 1, \"tile\": 1, \"accepted\": true, \"manifest_hash\": \"559cf631407bc7a9a4e467278f68c084006452647979d580e862c1bb6bfe554c\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"145c5b67-048a-4873-87d2-08267760ec36\", \"metrics\": {\"scalar_transfers\": 4665}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}], \"best\": {\"attempt\": 1, \"tile\": 1, \"accepted\": true, \"manifest_hash\": \"559cf631407bc7a9a4e467278f68c084006452647979d580e862c1bb6bfe554c\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"145c5b67-048a-4873-87d2-08267760ec36\", \"metrics\": {\"scalar_transfers\": 4665}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}, \"reason\": null, \"manifest_hash\": null, \"domain_hash\": \"6e03d5b49429511b864a684696d8882ed5ad908e084843e6d3fd943000425709\", \"provider\": \"offline_deterministic\", \"model_cost\": \"not_applicable_no_model_calls\", \"tile\": 2, \"review_retries\": 0}"
+  },
+  {
+    "seq": 13,
+    "at": 1792596745.0332522,
+    "kind": "phase:design",
+    "body": "{\"phase\": \"experiment\", \"attempts\": 2, \"max_attempts\": 8, \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"history\": [{\"attempt\": 1, \"tile\": 1, \"accepted\": true, \"manifest_hash\": \"559cf631407bc7a9a4e467278f68c084006452647979d580e862c1bb6bfe554c\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"145c5b67-048a-4873-87d2-08267760ec36\", \"metrics\": {\"scalar_transfers\": 4665}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}], \"best\": {\"attempt\": 1, \"tile\": 1, \"accepted\": true, \"manifest_hash\": \"559cf631407bc7a9a4e467278f68c084006452647979d580e862c1bb6bfe554c\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"145c5b67-048a-4873-87d2-08267760ec36\", \"metrics\": {\"scalar_transfers\": 4665}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}, \"reason\": null, \"manifest_hash\": null, \"domain_hash\": \"6e03d5b49429511b864a684696d8882ed5ad908e084843e6d3fd943000425709\", \"provider\": \"offline_deterministic\", \"model_cost\": \"not_applicable_no_model_calls\", \"tile\": 2, \"review_retries\": 0}"
+  },
+  {
+    "seq": 14,
+    "at": 1792596745.0412416,
+    "kind": "job_intent",
+    "body": "{\"key\": \"2:experiment\", \"role\": \"experiment\", \"invocation\": \"053eab27-7a12-4f12-a1d0-240561dab5fe\"}"
+  },
+  {
+    "seq": 15,
+    "at": 1792596745.4686487,
+    "kind": "job_receipt",
+    "body": "{\"key\": \"2:experiment\", \"invocation\": \"053eab27-7a12-4f12-a1d0-240561dab5fe\", \"exit_code\": 0}"
+  },
+  {
+    "seq": 16,
+    "at": 1792596745.4734657,
+    "kind": "phase:experiment",
+    "body": "{\"phase\": \"freeze\", \"attempts\": 2, \"max_attempts\": 8, \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"history\": [{\"attempt\": 1, \"tile\": 1, \"accepted\": true, \"manifest_hash\": \"559cf631407bc7a9a4e467278f68c084006452647979d580e862c1bb6bfe554c\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"145c5b67-048a-4873-87d2-08267760ec36\", \"metrics\": {\"scalar_transfers\": 4665}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}], \"best\": {\"attempt\": 1, \"tile\": 1, \"accepted\": true, \"manifest_hash\": \"559cf631407bc7a9a4e467278f68c084006452647979d580e862c1bb6bfe554c\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"145c5b67-048a-4873-87d2-08267760ec36\", \"metrics\": {\"scalar_transfers\": 4665}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}, \"reason\": null, \"manifest_hash\": null, \"domain_hash\": \"6e03d5b49429511b864a684696d8882ed5ad908e084843e6d3fd943000425709\", \"provider\": \"offline_deterministic\", \"model_cost\": \"not_applicable_no_model_calls\", \"tile\": 2, \"review_retries\": 0}"
+  },
+  {
+    "seq": 17,
+    "at": 1792596745.5117989,
+    "kind": "phase:freeze",
+    "body": "{\"phase\": \"review\", \"attempts\": 2, \"max_attempts\": 8, \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"history\": [{\"attempt\": 1, \"tile\": 1, \"accepted\": true, \"manifest_hash\": \"559cf631407bc7a9a4e467278f68c084006452647979d580e862c1bb6bfe554c\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"145c5b67-048a-4873-87d2-08267760ec36\", \"metrics\": {\"scalar_transfers\": 4665}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}], \"best\": {\"attempt\": 1, \"tile\": 1, \"accepted\": true, \"manifest_hash\": \"559cf631407bc7a9a4e467278f68c084006452647979d580e862c1bb6bfe554c\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"145c5b67-048a-4873-87d2-08267760ec36\", \"metrics\": {\"scalar_transfers\": 4665}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}, \"reason\": null, \"manifest_hash\": \"dddf156eec35cd6f5b9b93eb1fcf758fd39a97d8bd87aa5751cf137074d65f74\", \"domain_hash\": \"6e03d5b49429511b864a684696d8882ed5ad908e084843e6d3fd943000425709\", \"provider\": \"offline_deterministic\", \"model_cost\": \"not_applicable_no_model_calls\", \"tile\": 2, \"review_retries\": 0}"
+  },
+  {
+    "seq": 18,
+    "at": 1792596745.5322366,
+    "kind": "job_intent",
+    "body": "{\"key\": \"2:reviewer:retry0\", \"role\": \"reviewer\", \"invocation\": \"3a4cb357-b5f8-48eb-99e2-56676e6ee4d0\"}"
+  },
+  {
+    "seq": 19,
+    "at": 1792596745.9374948,
+    "kind": "job_receipt",
+    "body": "{\"key\": \"2:reviewer:retry0\", \"invocation\": \"3a4cb357-b5f8-48eb-99e2-56676e6ee4d0\", \"exit_code\": 0}"
+  },
+  {
+    "seq": 20,
+    "at": 1792596745.9420462,
+    "kind": "phase:review",
+    "body": "{\"phase\": \"decide\", \"attempts\": 2, \"max_attempts\": 8, \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"history\": [{\"attempt\": 1, \"tile\": 1, \"accepted\": true, \"manifest_hash\": \"559cf631407bc7a9a4e467278f68c084006452647979d580e862c1bb6bfe554c\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"145c5b67-048a-4873-87d2-08267760ec36\", \"metrics\": {\"scalar_transfers\": 4665}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}], \"best\": {\"attempt\": 1, \"tile\": 1, \"accepted\": true, \"manifest_hash\": \"559cf631407bc7a9a4e467278f68c084006452647979d580e862c1bb6bfe554c\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"145c5b67-048a-4873-87d2-08267760ec36\", \"metrics\": {\"scalar_transfers\": 4665}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}, \"reason\": null, \"manifest_hash\": \"dddf156eec35cd6f5b9b93eb1fcf758fd39a97d8bd87aa5751cf137074d65f74\", \"domain_hash\": \"6e03d5b49429511b864a684696d8882ed5ad908e084843e6d3fd943000425709\", \"provider\": \"offline_deterministic\", \"model_cost\": \"not_applicable_no_model_calls\", \"tile\": 2, \"review_retries\": 0}"
+  },
+  {
+    "seq": 21,
+    "at": 1792596745.9518814,
+    "kind": "phase:decide",
+    "body": "{\"phase\": \"expert\", \"attempts\": 2, \"max_attempts\": 8, \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"history\": [{\"attempt\": 1, \"tile\": 1, \"accepted\": true, \"manifest_hash\": \"559cf631407bc7a9a4e467278f68c084006452647979d580e862c1bb6bfe554c\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"145c5b67-048a-4873-87d2-08267760ec36\", \"metrics\": {\"scalar_transfers\": 4665}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}, {\"attempt\": 2, \"tile\": 2, \"accepted\": true, \"manifest_hash\": \"dddf156eec35cd6f5b9b93eb1fcf758fd39a97d8bd87aa5751cf137074d65f74\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"3a4cb357-b5f8-48eb-99e2-56676e6ee4d0\", \"metrics\": {\"scalar_transfers\": 3523}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}], \"best\": {\"attempt\": 2, \"tile\": 2, \"accepted\": true, \"manifest_hash\": \"dddf156eec35cd6f5b9b93eb1fcf758fd39a97d8bd87aa5751cf137074d65f74\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"3a4cb357-b5f8-48eb-99e2-56676e6ee4d0\", \"metrics\": {\"scalar_transfers\": 3523}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}, \"reason\": null, \"manifest_hash\": \"dddf156eec35cd6f5b9b93eb1fcf758fd39a97d8bd87aa5751cf137074d65f74\", \"domain_hash\": \"6e03d5b49429511b864a684696d8882ed5ad908e084843e6d3fd943000425709\", \"provider\": \"offline_deterministic\", \"model_cost\": \"not_applicable_no_model_calls\", \"tile\": 2, \"review_retries\": 0}"
+  },
+  {
+    "seq": 22,
+    "at": 1792596745.9567952,
+    "kind": "paused",
+    "body": "{\"phase\": \"paused\", \"attempts\": 2, \"max_attempts\": 8, \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"history\": [{\"attempt\": 1, \"tile\": 1, \"accepted\": true, \"manifest_hash\": \"559cf631407bc7a9a4e467278f68c084006452647979d580e862c1bb6bfe554c\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"145c5b67-048a-4873-87d2-08267760ec36\", \"metrics\": {\"scalar_transfers\": 4665}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}, {\"attempt\": 2, \"tile\": 2, \"accepted\": true, \"manifest_hash\": \"dddf156eec35cd6f5b9b93eb1fcf758fd39a97d8bd87aa5751cf137074d65f74\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"3a4cb357-b5f8-48eb-99e2-56676e6ee4d0\", \"metrics\": {\"scalar_transfers\": 3523}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}], \"best\": {\"attempt\": 2, \"tile\": 2, \"accepted\": true, \"manifest_hash\": \"dddf156eec35cd6f5b9b93eb1fcf758fd39a97d8bd87aa5751cf137074d65f74\", \"contract_hash\": \"b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7\", \"reviewer_invocation\": \"3a4cb357-b5f8-48eb-99e2-56676e6ee4d0\", \"metrics\": {\"scalar_transfers\": 3523}, \"standards\": {\"verdict\": \"pass\", \"findings\": [], \"scope\": \"AST restricted operations only; not human/LLM maintainability review\"}, \"spec\": {\"verdict\": \"pass\", \"findings\": []}, \"findings\": [], \"selection\": \"retained\"}, \"reason\": \"safe_boundary_pause\", \"manifest_hash\": \"dddf156eec35cd6f5b9b93eb1fcf758fd39a97d8bd87aa5751cf137074d65f74\", \"domain_hash\": \"6e03d5b49429511b864a684696d8882ed5ad908e084843e6d3fd943000425709\", \"provider\": \"offline_deterministic\", \"model_cost\": \"not_applicable_no_model_calls\", \"tile\": 2, \"review_retries\": 0}"
+  }
+]

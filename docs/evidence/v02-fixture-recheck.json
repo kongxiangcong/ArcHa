@@ -1,0 +1,18 @@
+[
+  {
+    "fixture": "compiler",
+    "source": "src/pipeline.py",
+    "sha256": "f6950633a2a8e535a8fe684f54ecbd9f9e5061a7865eefa6e8caa02709869603",
+    "matches_before_and_after": true,
+    "project_config_v02_valid": true,
+    "execution_enabled": false
+  },
+  {
+    "fixture": "rtl",
+    "source": "rtl/identity.sv",
+    "sha256": "54ed9b7565a7b555e6892553455ce4d35d193452efc0118648b3b7171ff6e0f3",
+    "matches_before_and_after": true,
+    "project_config_v02_valid": true,
+    "execution_enabled": false
+  }
+]

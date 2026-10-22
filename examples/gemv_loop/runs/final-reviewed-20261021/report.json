@@ -1,0 +1,353 @@
+{
+  "phase": "complete",
+  "attempts": 8,
+  "max_attempts": 8,
+  "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
+  "history": [
+    {
+      "attempt": 1,
+      "tile": 1,
+      "accepted": true,
+      "manifest_hash": "d245cf605d58fb6bd8337dcdf5a38f7228b113aadb63ccc9436352b37449ad62",
+      "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
+      "reviewer_invocation": "50971e54-d0fe-4b15-88f4-11222127054b",
+      "metrics": {
+        "scalar_transfers": 4665
+      },
+      "standards": {
+        "verdict": "pass",
+        "findings": [],
+        "scope": "AST restricted operations only; not human/LLM maintainability review"
+      },
+      "spec": {
+        "verdict": "pass",
+        "findings": []
+      },
+      "findings": [],
+      "selection": "retained"
+    },
+    {
+      "attempt": 2,
+      "tile": 2,
+      "accepted": true,
+      "manifest_hash": "18568f3026d3c7ea4527be06d22698d9ac9f845a29e4694038f1832a386a53a8",
+      "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
+      "reviewer_invocation": "9bd00727-24ad-4d07-9116-f2c20c478a31",
+      "metrics": {
+        "scalar_transfers": 3523
+      },
+      "standards": {
+        "verdict": "pass",
+        "findings": [],
+        "scope": "AST restricted operations only; not human/LLM maintainability review"
+      },
+      "spec": {
+        "verdict": "pass",
+        "findings": []
+      },
+      "findings": [],
+      "selection": "retained"
+    },
+    {
+      "attempt": 3,
+      "tile": 4,
+      "accepted": true,
+      "manifest_hash": "48ad0ffe1ad1eb0007b14dcd64763413a269f55e7fce78d1e4d6fa4967f8da79",
+      "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
+      "reviewer_invocation": "888c760f-14f3-41e0-a7d6-1b144694b8d5",
+      "metrics": {
+        "scalar_transfers": 2952
+      },
+      "standards": {
+        "verdict": "pass",
+        "findings": [],
+        "scope": "AST restricted operations only; not human/LLM maintainability review"
+      },
+      "spec": {
+        "verdict": "pass",
+        "findings": []
+      },
+      "findings": [],
+      "selection": "retained"
+    },
+    {
+      "attempt": 4,
+      "tile": 8,
+      "accepted": true,
+      "manifest_hash": "e0c38f80125598b0746f2219831b72f76fa1879e1c21b8fc3737dfe56240494e",
+      "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
+      "reviewer_invocation": "ca47f819-cf1c-4d8c-a270-eec5999191f2",
+      "metrics": {
+        "scalar_transfers": 2663
+      },
+      "standards": {
+        "verdict": "pass",
+        "findings": [],
+        "scope": "AST restricted operations only; not human/LLM maintainability review"
+      },
+      "spec": {
+        "verdict": "pass",
+        "findings": []
+      },
+      "findings": [],
+      "selection": "retained"
+    },
+    {
+      "attempt": 5,
+      "tile": 16,
+      "accepted": false,
+      "manifest_hash": "0978690cb8b549c51386f415c6e1c421607c82ba1ba8eb948fb49306696431dc",
+      "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
+      "reviewer_invocation": "644be8d1-bcdf-4373-b998-60a3711fd84c",
+      "metrics": {
+        "scalar_transfers": 2522
+      },
+      "standards": {
+        "verdict": "pass",
+        "findings": [],
+        "scope": "AST restricted operations only; not human/LLM maintainability review"
+      },
+      "spec": {
+        "verdict": "fail",
+        "findings": [
+          "accumulator resource limit exceeded"
+        ]
+      },
+      "findings": [
+        "accumulator resource limit exceeded"
+      ],
+      "selection": "rejected"
+    },
+    {
+      "attempt": 6,
+      "tile": 12,
+      "accepted": true,
+      "manifest_hash": "9c85def0ce934966d204524db962bf1282b4e37638cbc55f3e7ca4e2ccf16472",
+      "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
+      "reviewer_invocation": "1d779af0-0626-4f7d-a20d-b46f7a94487c",
+      "metrics": {
+        "scalar_transfers": 2586
+      },
+      "standards": {
+        "verdict": "pass",
+        "findings": [],
+        "scope": "AST restricted operations only; not human/LLM maintainability review"
+      },
+      "spec": {
+        "verdict": "pass",
+        "findings": []
+      },
+      "findings": [],
+      "selection": "retained"
+    },
+    {
+      "attempt": 7,
+      "tile": 14,
+      "accepted": false,
+      "manifest_hash": "ea836c544aa720917e20a15f0a38d375436e04b48c28ee575ec8a9243cb46d10",
+      "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
+      "reviewer_invocation": "ce00507a-8b7b-4f6b-9632-31ace8db9b1a",
+      "metrics": {
+        "scalar_transfers": 2586
+      },
+      "standards": {
+        "verdict": "pass",
+        "findings": [],
+        "scope": "AST restricted operations only; not human/LLM maintainability review"
+      },
+      "spec": {
+        "verdict": "fail",
+        "findings": [
+          "accumulator resource limit exceeded"
+        ]
+      },
+      "findings": [
+        "accumulator resource limit exceeded"
+      ],
+      "selection": "rejected"
+    },
+    {
+      "attempt": 8,
+      "tile": 13,
+      "accepted": false,
+      "manifest_hash": "31bd05243f2e0c52ab2d5cc46e3a2e4748a81fe3676465ed627b1b400af57023",
+      "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
+      "reviewer_invocation": "093624df-2b54-443a-9607-e72b15fb3976",
+      "metrics": {
+        "scalar_transfers": 2586
+      },
+      "standards": {
+        "verdict": "pass",
+        "findings": [],
+        "scope": "AST restricted operations only; not human/LLM maintainability review"
+      },
+      "spec": {
+        "verdict": "fail",
+        "findings": [
+          "accumulator resource limit exceeded"
+        ]
+      },
+      "findings": [
+        "accumulator resource limit exceeded"
+      ],
+      "selection": "rejected"
+    }
+  ],
+  "best": {
+    "attempt": 6,
+    "tile": 12,
+    "accepted": true,
+    "manifest_hash": "9c85def0ce934966d204524db962bf1282b4e37638cbc55f3e7ca4e2ccf16472",
+    "contract_hash": "b717a454a6bcfa68411a1457cf3357c42749d0b780bede357884a52000dd55f7",
+    "reviewer_invocation": "1d779af0-0626-4f7d-a20d-b46f7a94487c",
+    "metrics": {
+      "scalar_transfers": 2586
+    },
+    "standards": {
+      "verdict": "pass",
+      "findings": [],
+      "scope": "AST restricted operations only; not human/LLM maintainability review"
+    },
+    "spec": {
+      "verdict": "pass",
+      "findings": []
+    },
+    "findings": [],
+    "selection": "retained"
+  },
+  "reason": "budget_exhausted",
+  "manifest_hash": "31bd05243f2e0c52ab2d5cc46e3a2e4748a81fe3676465ed627b1b400af57023",
+  "domain_hash": "67f8994fedb98d13d48a8c34eb46d36c124523bb51dad4c0594807d4c71b3283",
+  "domain_snapshot": "domain.py",
+  "provider": "offline_deterministic",
+  "model_cost": "not_applicable_no_model_calls",
+  "tile": 13,
+  "review_retries": 0,
+  "jobs": [
+    {
+      "key": "1:experiment",
+      "role": "experiment",
+      "status": "completed",
+      "invocation": "cbdee32b-ea9d-40db-adf5-5b06d1e0aa74",
+      "pid": 49636
+    },
+    {
+      "key": "1:reviewer:retry0",
+      "role": "reviewer",
+      "status": "completed",
+      "invocation": "50971e54-d0fe-4b15-88f4-11222127054b",
+      "pid": 21724
+    },
+    {
+      "key": "2:experiment",
+      "role": "experiment",
+      "status": "completed",
+      "invocation": "5a89b981-bf2b-4e1e-8899-e749d37881f5",
+      "pid": 51824
+    },
+    {
+      "key": "2:reviewer:retry0",
+      "role": "reviewer",
+      "status": "completed",
+      "invocation": "9bd00727-24ad-4d07-9116-f2c20c478a31",
+      "pid": 30584
+    },
+    {
+      "key": "3:experiment",
+      "role": "experiment",
+      "status": "completed",
+      "invocation": "3a684b9b-c89a-4336-92ba-01a3a5d3685e",
+      "pid": 34976
+    },
+    {
+      "key": "3:reviewer:retry0",
+      "role": "reviewer",
+      "status": "completed",
+      "invocation": "888c760f-14f3-41e0-a7d6-1b144694b8d5",
+      "pid": 37332
+    },
+    {
+      "key": "4:experiment",
+      "role": "experiment",
+      "status": "completed",
+      "invocation": "7e49b1ea-06fb-4a98-bfc2-680d12dabdba",
+      "pid": 47200
+    },
+    {
+      "key": "4:reviewer:retry0",
+      "role": "reviewer",
+      "status": "completed",
+      "invocation": "ca47f819-cf1c-4d8c-a270-eec5999191f2",
+      "pid": 33092
+    },
+    {
+      "key": "5:experiment",
+      "role": "experiment",
+      "status": "completed",
+      "invocation": "e2963ff4-3abe-4920-a3d2-361a6b15fc5b",
+      "pid": 19588
+    },
+    {
+      "key": "5:reviewer:retry0",
+      "role": "reviewer",
+      "status": "completed",
+      "invocation": "644be8d1-bcdf-4373-b998-60a3711fd84c",
+      "pid": 51108
+    },
+    {
+      "key": "6:experiment",
+      "role": "experiment",
+      "status": "completed",
+      "invocation": "2b556aca-8707-477a-8ce5-cca607d0cc6a",
+      "pid": 48144
+    },
+    {
+      "key": "6:reviewer:retry0",
+      "role": "reviewer",
+      "status": "completed",
+      "invocation": "1d779af0-0626-4f7d-a20d-b46f7a94487c",
+      "pid": 13936
+    },
+    {
+      "key": "7:experiment",
+      "role": "experiment",
+      "status": "completed",
+      "invocation": "c452257d-6053-4642-8383-cb351754ddcb",
+      "pid": 5664
+    },
+    {
+      "key": "7:reviewer:retry0",
+      "role": "reviewer",
+      "status": "completed",
+      "invocation": "ce00507a-8b7b-4f6b-9632-31ace8db9b1a",
+      "pid": 40932
+    },
+    {
+      "key": "8:experiment",
+      "role": "experiment",
+      "status": "completed",
+      "invocation": "222afcea-4115-4e04-8484-f27b1819d88f",
+      "pid": 50352
+    },
+    {
+      "key": "8:reviewer:retry0",
+      "role": "reviewer",
+      "status": "completed",
+      "invocation": "093624df-2b54-443a-9607-e72b15fb3976",
+      "pid": 8904
+    }
+  ],
+  "event_count": 84,
+  "invalid_submissions": [],
+  "acceptance_currently_valid": true,
+  "environment": {
+    "python": "3.14.0 (tags/v3.14.0:ebf955d, Oct  7 2025, 10:15:03) [MSC v.1944 64 bit (AMD64)]",
+    "langgraph": "1.0.9"
+  },
+  "limitations": [
+    "deterministic providers, no autonomous LLM research",
+    "subprocess separation, not OS privilege isolation",
+    "local scalar-transfer model, not cycle timing or hardware PPA",
+    "single controller; unknown external work requires reconciliation"
+  ]
+}
