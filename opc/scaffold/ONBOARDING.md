@@ -136,14 +136,16 @@
 ## 5. 走一遍
 
 ```bash
+# 合同审阅通过且明确决定进入执行准备后，将 execution_enabled 改为 true
 opc check     -p <project> --task <task>     # 只校验合同，不运行
 git add .opc && git commit -m "opc: onboard"  # 评价器和 .opc 必须已提交
-# 审完合同后把 .opc/project.json 的 execution_enabled 改为 true 并提交
 opc preflight -p <project> --task <task>     # 在基线上跑全部门，报告指标与缺项
 opc run       -p <project> --task <task> --direction "优先探索…"
 opc status    -p <project> --task <task>     # 另一个终端；opc pause / opc stop 控制
 opc promote   -p <project> --task <task> --confirm 3   # 晋升审核；--apply <branch> 才会动分支
 ```
+
+起草阶段保持 execution_enabled=false；此时 check 会报告执行未启用，不代表需要立即打开开关。
 
 运行结束时 `state` 为 `closed`（`target_met / best_within_budget / no_valid_candidate`）、
 `paused`（可 `opc run` 继续）或 `blocked`（环境/worker 不可用，修好后 `opc run` 继续）。
@@ -151,7 +153,24 @@ opc promote   -p <project> --task <task> --confirm 3   # 晋升审核；--apply 
 ## 6. 给 agent 的额外约束（opc onboard）
 
 - 只在 `.opc/` 下创建或修改文件；不改项目源码、测试或已有配置。
+- `.opc/runtime/`、`.opc/archa.py` 和 `.opc/research/` 是只读输入。起草只修改合同、评价器、context 和 Open items；工具事后检测输入变化，检测不等于文件系统隔离。
 - 先读 README、构建脚本、测试，找到"已经能跑通的流程"的确切命令，再写 `evaluate.py`。
 - 没有把握的字段写 `TODO` 并在 `.opc/README.md` 列出缺项，不要编造指标名或阈值。
 - 指标名必须是 `evaluate.py` 真实写出的键。
 
+
+## 7. 来自两阶段讨论的任务简报
+
+`opc onboard --brief <项目相对路径>` 会先检查 task-brief 的结构与源 map，再把完整正文及 SHA-256 来源信息交给起草 worker。不传此参数保留原有起草方式。`opc brief-check` 可单独运行，不调用模型。
+
+地图技能只部署 runtime 和入口，不提前创建合同。对这类项目，onboard 在简报检查通过后补建关闭执行的合同骨架，再调用 worker；已有项目保留原合同。
+
+简报只给目标范围、交付物和候选验收条件；基线、可改/冻结路径、预算、worker 和自主权边界由起草时根据仓库实际情况确定。先读简报、源 map 和它索引的 evidence，区分已定决定、建议和未知；简报的 Open decisions 是起草时要处理或保留的事项。
+
+- 字段映射：`Goal:` → `task.goal`，`Direction:` → `task.direction`，`- R*:` → `task.requirements[]`（`verification` 原样保留），`Objective:` → `acceptance.objective`。`Objective: none` 或 `evaluator=待建/未知` 都写成 blocking Open item。`Done when` 和交付物 `D*` 写入 `.opc/context/REQUIREMENTS.md`。
+- 把简报和 `.opc/context/` 中的精简决定接入组件 `context_files`；专家不会自动读到其他文档，每个文件默认只读前 20000 字符。
+- 每个验收 gate 写明真实命令/评价器是否存在。缺失的实现、用户未定的预算、无法表达的研究语义都作为 blocking Open items 写入 `.opc/README.md`，保持 `execution_enabled=false`；不要用模板默认数或虚构优化分数代替。
+- 只有内容与 `opc.scaffold.task_template(task_id, component_id)` 完全一致的 revision 才是可直接填写的空模板。部分填写、仍含 TODO 的合同也不是空模板。已有真实内容的 revision 保留：不同研究任务创建独立 task；同一任务的合同变更创建新 revision，并记录对应简报。
+- 纯取证无补丁、每轮独立研究审核、多任务依赖调度不是当前引擎的原生能力。
+
+简报就绪仅指可以起草；`brief-check`、`check` 和 `preflight` 都不判断研究结论是否成立。
