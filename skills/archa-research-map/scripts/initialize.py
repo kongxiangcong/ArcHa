@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,14 @@ from opc.cli import main
 if __name__ == "__main__":
     raise SystemExit(main())
 '''
+
+
+def redirected(path: Path) -> bool:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return False
+    return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & 0x400)
 
 
 def digest(path: Path) -> str:
@@ -46,6 +55,8 @@ RUNTIME_FILES = (
     "opc/core/engine.py",
     "opc/core/ledger.py",
     "opc/core/model.py",
+    "opc/core/platform.py",
+    "opc/core/windows.py",
     "opc/core/promote.py",
     "opc/core/workspace.py",
     "opc/domain.py",
@@ -86,13 +97,13 @@ def snapshot(source: Path, target: Path) -> None:
                 "differs_from_head": differs if proc.returncode == 0 else None,
                 "snapshot_sha256": hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest(),
                 "files": hashes}
-    (target / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    (target / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
 def verify(runtime: Path) -> dict:
-    if runtime.is_symlink():
+    if redirected(runtime):
         raise ValueError("runtime must be a local directory, not a symlink")
-    manifest = json.loads((runtime / "manifest.json").read_text())
+    manifest = json.loads((runtime / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("format") != 1 or not manifest.get("files"):
         raise ValueError("unsupported or empty runtime manifest")
     for rel, expected in manifest["files"].items():
@@ -113,7 +124,7 @@ def initialize(project: Path, runtime: Path) -> dict:
         raise ValueError("project must be an existing directory")
     verify(runtime)
     control = project / ".opc"
-    if control.is_symlink() or any(p.name.casefold() == ".opc" and p.name != ".opc"
+    if redirected(control) or any(p.name.casefold() == ".opc" and p.name != ".opc"
                                    for p in project.iterdir()):
         raise ValueError(".opc is redirected or has a case-conflicting name")
     existing = control.exists()
@@ -121,17 +132,17 @@ def initialize(project: Path, runtime: Path) -> dict:
     if existing:
         if not control.is_dir():
             raise ValueError(".opc must be a directory")
-        if config_path.is_symlink():
+        if redirected(config_path):
             raise ValueError("project.json must not be a symlink")
         if not config_path.is_file() and not (control / "runtime").is_dir():
             raise ValueError("existing .opc is neither a deployed runtime nor a project scaffold")
     local_runtime = control / "runtime"
-    if local_runtime.is_symlink():
+    if redirected(local_runtime):
         raise ValueError("existing runtime is a symlink")
     if local_runtime.exists():
         verify(local_runtime)  # Resume pinned version, even when skill carries a newer one.
     launcher = control / "archa.py"
-    if launcher.is_symlink() or (launcher.exists() and launcher.read_text() != LAUNCHER):
+    if redirected(launcher) or (launcher.exists() and launcher.read_text(encoding="utf-8") != LAUNCHER):
         raise ValueError("existing .opc/archa.py conflicts with project-local launcher")
     if not existing:
         control.mkdir()
@@ -145,7 +156,7 @@ def initialize(project: Path, runtime: Path) -> dict:
     if not launcher.exists():
         with launcher.open("x") as stream:
             stream.write(LAUNCHER)
-    config = json.loads(config_path.read_text()) if config_path.exists() else {}
+    config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
     return {"project": str(project), "existing_scaffold": config_path.exists(),
             "execution_enabled": config.get("execution_enabled", False),
             "runtime_commit": verify(local_runtime)["source_commit"],

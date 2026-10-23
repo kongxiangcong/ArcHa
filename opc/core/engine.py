@@ -90,8 +90,8 @@ class Engine:
         except OPCError as exc:
             return {"ok": False, "problems": [str(exc)], "warnings": warnings}
         dirty = dirty_paths(self.root)
-        from .config import matches
-        frozen_dirty = [p for p in dirty if matches(p, self.evaluator_patterns() + [".opc/**"])
+        from .config import denied
+        frozen_dirty = [p for p in dirty if denied(p, self.evaluator_patterns() + [".opc/**"])
                         and not p.startswith(".opc/local/") and not self.comp.is_scratch(p)]
         if frozen_dirty:
             problems.append("uncommitted evaluator/.opc files (runs use the committed version): "
@@ -170,7 +170,7 @@ class Engine:
         p = self._cache_path(tree_id, ev_digest, tool_digest)
         if not p.exists():
             return None
-        d = json.loads(p.read_text())
+        d = json.loads(p.read_text(encoding="utf-8"))
         gates = [GateResult.from_dict(g) for g in d["gates"]]
         for g in gates:
             g.seconds, g.detail = 0.0, ("cached; " + g.detail).strip("; ")

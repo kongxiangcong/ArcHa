@@ -18,3 +18,7 @@ include = ["opc*"]
 [tool.setuptools.package-data]
 opc = ["scaffold/*.md", "scaffold/*.py"]
 
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+testpaths = ["opc/tests", "tools/tests"]
+

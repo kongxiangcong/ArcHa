@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from .model import OPCError, canonical_json
+from .platform import portable_path
 
 ID = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
 REV = re.compile(r"r\d{4}\Z")
@@ -64,7 +65,7 @@ BUDGET_KEYS = {"max_attempts", "max_wall_seconds", "max_tokens", "max_usd", "max
 
 
 def _id(value: str, where: str) -> str:
-    if not isinstance(value, str) or not ID.fullmatch(value):
+    if not isinstance(value, str) or not ID.fullmatch(value) or not portable_path(value):
         raise OPCError("%s: %r is not a portable id (lowercase, digits, '-')" % (where, value))
     return value
 
@@ -108,6 +109,12 @@ def glob_regex(pattern: str) -> re.Pattern:
 
 def matches(path: str, patterns: list[str]) -> bool:
     return any(glob_regex(p).match(path) for p in patterns)
+
+
+def denied(path: str, patterns: list[str]) -> bool:
+    # Denials are case-insensitive on BOTH hosts. A contract cannot become weaker
+    # when moved to a case-insensitive filesystem; grants remain exact-case.
+    return matches(path.casefold(), [p.casefold() for p in patterns])
 
 
 # -------------------------------------------------------------------- project
@@ -182,6 +189,9 @@ class ComponentConfig:
         if ".opc/**" not in frozen:
             frozen.append(".opc/**")
         evaluator_files = list(_need(d, "evaluator_files", where, list))
+        for p in editable + frozen + evaluator_files + list(d.get("scratch") or []):
+            if not isinstance(p, str) or not portable_path(p):
+                raise OPCError("%s: nonportable contract path %r" % (where, p))
         if not evaluator_files:
             raise OPCError("%s: 'evaluator_files' is empty; nothing pins what produces the "
                            "numbers" % where)
@@ -203,6 +213,11 @@ class ComponentConfig:
             if argv[0] in ("sh", "bash", "/bin/sh", "/bin/bash") and "-c" in argv[1:2]:
                 raise OPCError("%s: 'sh -c' hides the real command; put it in a script under "
                                "the evaluator files instead" % gw)
+            program = argv[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
+            if ((program in ("cmd", "cmd.exe") and any(a.lower() in ("/c", "/k") for a in argv[1:]))
+                    or (program in ("powershell", "powershell.exe", "pwsh", "pwsh.exe")
+                        and any(a.lower() in ("-c", "-command", "-encodedcommand", "-enc") for a in argv[1:]))):
+                raise OPCError("%s: inline shell commands hide the evaluator; use a frozen script" % gw)
             gates.append(GateSpec(gate_id=gid, argv=argv, timeout_s=int(g.get("timeout_s", 1800)),
                                   metrics=g.get("metrics"), repeat=bool(g.get("repeat", False)),
                                   cwd=g.get("cwd", "{worktree}"), env=dict(g.get("env") or {})))
@@ -229,12 +244,13 @@ class ComponentConfig:
 
     def is_editable(self, path: str) -> bool:
         """Deny wins: a glob that reaches into a frozen or evaluator path is refused."""
-        if matches(path, self.frozen) or matches(path, self.evaluator_files):
+        if not portable_path(path) or denied(path, self.frozen + self.evaluator_files):
             return False
         return matches(path, self.editable)
 
     def is_scratch(self, path: str) -> bool:
-        return matches(path, self.scratch)
+        return (portable_path(path) and not denied(path, self.frozen + self.evaluator_files)
+                and matches(path, self.scratch))
 
 
 # ----------------------------------------------------------------------- task

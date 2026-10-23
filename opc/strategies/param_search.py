@@ -42,7 +42,7 @@ class ParamSearch:
             raise ValueError("param_search needs a non-empty space")
 
     def _current(self, tree: Path) -> dict:
-        return json.loads((tree / self.file).read_text())
+        return json.loads((tree / self.file).read_text(encoding="utf-8"))
 
     def _point(self, cfg: dict) -> dict:
         return {k: get(cfg, k) for k in self.space}
@@ -77,7 +77,7 @@ class ParamSearch:
 
     def implement(self, plan: dict, tree: Path) -> None:
         path = tree / self.file
-        cfg = json.loads(path.read_text())
+        cfg = json.loads(path.read_text(encoding="utf-8"))
         for k, v in plan["params"].items():
             put(cfg, k, v)
-        path.write_text(json.dumps(cfg, indent=2) + "\n")
+        path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")

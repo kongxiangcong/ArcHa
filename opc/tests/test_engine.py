@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 
 import pytest
 
@@ -23,7 +24,7 @@ def test_reaches_target_and_leaves_user_checkout_alone(make_project, engine_for)
     assert read_ref(root, e.ref) == s["champion"]
     assert read_ref(root, "refs/opc/t-toy/%s" % e.run_id) == s["champion"]
     assert git(root, "rev-parse", "HEAD").strip() == head
-    assert json.loads((root / "params.json").read_text())["x"] == 3
+    assert json.loads((root / "params.json").read_text(encoding="utf-8"))["x"] == 3
     assert git(root, "status", "--porcelain").strip() == ""
     views = e.artifact_dir() / "views"
     assert (views / "STATE.md").exists() and (views / "report.json").exists()
@@ -135,14 +136,14 @@ def test_noise_floor_rejects_gains_inside_measured_spread(make_project, engine_f
 
 def test_toolchain_change_remeasures_champion(make_project, engine_for, tmp_path):
     marker = tmp_path / "toolversion"
-    marker.write_text("1.0")
-    comp = component(toolchain=[["cat", str(marker)]])
+    marker.write_text("1.0", encoding="utf-8")
+    comp = component(toolchain=[["{python}", "-c", "import pathlib,sys; print(pathlib.Path(sys.argv[1]).read_text())", str(marker)]])
     t = task()
     t["budget"]["max_attempts"] = 1
     root = make_project(comp=comp, tsk=t)
     e = engine_for(root)
     e.run(max_attempts_now=0)
-    marker.write_text("2.0")
+    marker.write_text("2.0", encoding="utf-8")
     t2 = engine_for(root)
     t2.run()
     kinds = [ev["kind"] for ev in t2.ledger.events(t2.run_id)]
@@ -181,7 +182,7 @@ def test_crash_after_ref_move_recovers_champion(make_project, engine_for):
     e.run(max_attempts_now=0)
     old, meas = e.ledger.champion(e.run_id)
     git(root, "worktree", "add", "-q", "--detach", str(root.parent / "wt"), old)
-    (root.parent / "wt" / "params.json").write_text(json.dumps({"x": 4}))
+    (root.parent / "wt" / "params.json").write_text(json.dumps({"x": 4}), encoding="utf-8")
     git(root.parent / "wt", "commit", "-qam", "candidate")
     new = git(root.parent / "wt", "rev-parse", "HEAD").strip()
     n = e.ledger.begin_attempt(e.run_id, old, None)
@@ -212,7 +213,7 @@ def test_contract_change_requires_new_run(make_project, engine_for):
     t["budget"]["max_attempts"] = 3
     p = root / ".opc/tasks/t-toy/revisions/r0002/task.json"
     p.parent.mkdir(parents=True)
-    p.write_text(json.dumps(t))
+    p.write_text(json.dumps(t), encoding="utf-8")
     git(root, "add", "-A")
     git(root, "commit", "-qm", "r0002")
     with pytest.raises(OPCError, match="new run"):
@@ -237,7 +238,7 @@ def test_deterministic_cache_skips_reevaluation(make_project, engine_for):
     t = task(revision="r0002")
     p = root / ".opc/tasks/t-toy/revisions/r0002/task.json"
     p.parent.mkdir(parents=True)
-    p.write_text(json.dumps(t))
+    p.write_text(json.dumps(t), encoding="utf-8")
     git(root, "add", "-A")
     git(root, "commit", "-qm", "r0002")
     e2 = engine_for(root)

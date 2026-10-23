@@ -59,9 +59,11 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None) -> 
         raise OPCError("the onboarding agent must be codex or dsh")
     brief_report = None
     brief_text = ""
+    brief_bytes = b""
     if brief is not None:
         from .brief import load_brief
         brief_report, brief_text = load_brief(root, brief)
+        brief_bytes = (root / brief_report["brief"]).read_bytes()
         if not brief_report["ok"]:
             raise OPCError("brief is not ready for drafting: " + "; ".join(brief_report["problems"]))
     before = _snapshot(root)
@@ -106,9 +108,9 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None) -> 
                        "opc check", "git add .opc && git commit", "opc preflight"]}
     if brief_report is not None:
         result["brief_input"] = brief_report
-        from ..core.model import write_json, write_text
+        from ..core.model import write_json
         write_json(log / "brief-input.json", brief_report)
-        write_text(log / "task-brief.md", brief_text)
+        (log / "task-brief.md").write_bytes(brief_bytes)
     if outside:
         result["error"] = "agent changed files outside .opc/: revert them before continuing"
     elif protected:

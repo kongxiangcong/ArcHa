@@ -31,7 +31,7 @@ def load_brief(root: Path, brief: str | Path) -> tuple[dict, str]:
     try:
         rel = path.relative_to(root).as_posix()
         raw = path.read_bytes()
-        body = raw.decode("utf-8")
+        body = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
     except (OSError, UnicodeError, ValueError) as exc:
         raise OPCError("brief must be a readable UTF-8 file inside project: %s" % exc) from exc
     # Ignore fenced examples and comments when interpreting the handoff structure.

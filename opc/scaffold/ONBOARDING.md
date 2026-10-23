@@ -57,9 +57,9 @@
   "editable": ["configs/emulator.json"],
   "frozen": ["tests/**", "golden/**"],
   "evaluator_files": [".opc/eval/**", "tests/**", "golden/**", "workloads/**"],
-  "toolchain": [["python3", "--version"]],
+  "toolchain": [["{python}", "--version"]],
   "gates": [
-    {"id": "unit", "argv": ["python3", "-m", "pytest", "-q", "tests"], "timeout_s": 600},
+    {"id": "unit", "argv": ["{python}", "-m", "pytest", "-q", "tests"], "timeout_s": 600},
     {"id": "evaluate", "argv": ["{python}", ".opc/eval/evaluate.py", "--out", "{out}"],
      "metrics": "{out}/metrics.json", "timeout_s": 3600, "repeat": true}
   ],

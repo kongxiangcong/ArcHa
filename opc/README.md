@@ -4,6 +4,8 @@
 
 ## 使用
 
+支持原生 Windows 与 Linux，要求 Python ≥ 3.10 和 Git。Windows 安装后使用 `python -m opc` 或 `opc`；平台配置、进程清理和限制见 [跨平台运行](../docs/cross-platform.md)。
+
 ```bash
 export PYTHONPATH=/path/to/ArcHa          # 或 pip install -e ArcHa，得到 `opc` 命令
 cd your-project                           # 必须是 git 仓库，基线已提交
@@ -26,7 +28,8 @@ python3 -m opc promote   -p . --task t-xxx --confirm 2 [--review codex] [--apply
 | 模块 | 职责 | 替换点 |
 | --- | --- | --- |
 | `core/engine.py` | 主循环、停止条件、预算、恢复、视图 | 无（唯一控制者） |
-| `core/ledger.py` | SQLite 唯一权威记录，flock 单写入端，intent 先写 | — |
+| `core/ledger.py` | SQLite 唯一权威记录，跨平台单写入锁，intent 先写 | — |
+| `core/platform.py` / `core/windows.py` | 文件锁、进程树生命周期、可移植路径 | POSIX / Windows |
 | `core/workspace.py` | 从 champion 提交切 worktree、sandbox、补丁、CAS 移 ref | — |
 | `core/accept.py` | 缺指标即拒、约束、噪声下限、冻结规则文件 | 任务里 `acceptance.rule` |
 | `core/promote.py` | 证据链、复测、需求 check、可选独立审核、快进 | — |

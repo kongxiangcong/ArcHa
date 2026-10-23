@@ -33,9 +33,9 @@ def test_fresh_resume_and_preserve_contracts(tmp_path, runtime):
                     "--project-id", "demo", "--name", "Demo", "--apply"],
                    check=True, capture_output=True)
     config_path = project / ".opc/project.json"
-    config = json.loads(config_path.read_text())
+    config = json.loads(config_path.read_text(encoding="utf-8"))
     config["execution_enabled"] = True
-    config_path.write_text(json.dumps(config))
+    config_path.write_text(json.dumps(config), encoding="utf-8")
     original = config_path.read_bytes()
     second = initialize.initialize(project, runtime)
     assert second["existing_scaffold"] and second["execution_enabled"]
@@ -51,10 +51,10 @@ def test_runtime_change_is_not_overwritten(tmp_path, runtime):
     project.mkdir()
     initialize.initialize(project, runtime)
     changed = project / ".opc/runtime/opc/cli.py"
-    changed.write_text("# locally changed\n")
+    changed.write_text("# locally changed\n", encoding="utf-8")
     with pytest.raises(ValueError, match="modified"):
         initialize.initialize(project, runtime)
-    assert changed.read_text() == "# locally changed\n"
+    assert changed.read_text(encoding="utf-8") == "# locally changed\n"
 
 
 def test_existing_runtime_remains_pinned(tmp_path, runtime):
@@ -63,11 +63,11 @@ def test_existing_runtime_remains_pinned(tmp_path, runtime):
     initialize.initialize(project, runtime)
     original = (project / ".opc/runtime/manifest.json").read_bytes()
     changed = runtime / "opc/__init__.py"
-    changed.write_text(changed.read_text() + "\n# new packaged version\n")
+    changed.write_text(changed.read_text(encoding="utf-8") + "\n# new packaged version\n", encoding="utf-8")
     manifest_path = runtime / "manifest.json"
-    manifest = json.loads(manifest_path.read_text())
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["files"]["opc/__init__.py"] = initialize.digest(changed)
-    manifest_path.write_text(json.dumps(manifest))
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     initialize.initialize(project, runtime)
     assert (project / ".opc/runtime/manifest.json").read_bytes() == original
 
@@ -77,7 +77,12 @@ def test_redirected_control_directory_is_rejected(tmp_path, runtime):
     project.mkdir()
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
-    (project / ".opc").symlink_to(elsewhere, target_is_directory=True)
+    try:
+        (project / ".opc").symlink_to(elsewhere, target_is_directory=True)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows symlink privilege unavailable; junctions tested separately")
+        raise
     with pytest.raises(ValueError, match="redirected"):
         initialize.initialize(project, runtime)
     assert not list(elsewhere.iterdir())
@@ -89,11 +94,11 @@ def test_bundle_relocation_and_reinstall_backup(tmp_path):
     command = [sys.executable, str(install), "--destination", str(destination)]
     subprocess.run(command, check=True, capture_output=True)
     skill = destination / "archa-research-map"
-    (skill / "local-note.txt").write_text("keep my local changes")
+    (skill / "local-note.txt").write_text("keep my local changes", encoding="utf-8")
     report = json.loads(subprocess.run(command, check=True, capture_output=True, text=True).stdout)
     backups = [Path(p) for p in report["backups"]]
     assert len(backups) == 2
-    assert (backups[0] / "local-note.txt").read_text() == "keep my local changes"
+    assert (backups[0] / "local-note.txt").read_text(encoding="utf-8") == "keep my local changes"
     moved = tmp_path / "relocated"
     shutil.move(str(skill), moved)
     target = tmp_path / "unrelated-project"
@@ -108,9 +113,10 @@ def test_bundle_relocation_and_reinstall_backup(tmp_path):
 def test_runtime_allowlist_excludes_unrelated_files(tmp_path):
     source = tmp_path / "source"
     shutil.copytree(ROOT / "opc", source / "opc")
+    subprocess.run(["git", "init", str(source)], check=True, capture_output=True)
     shutil.copyfile(ROOT / "LICENSE", source / "LICENSE")
-    (source / "opc/new_dev_tool.py").write_text("raise RuntimeError('not runtime')")
-    (source / "opc/notes.md").write_text("development notes")
+    (source / "opc/new_dev_tool.py").write_text("raise RuntimeError('not runtime')", encoding="utf-8")
+    (source / "opc/notes.md").write_text("development notes", encoding="utf-8")
     target = tmp_path / "package"
     initialize.snapshot(source, target)
     manifest = initialize.verify(target)
