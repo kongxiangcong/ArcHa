@@ -18,8 +18,9 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import ComponentConfig, matches
+from .config import ComponentConfig, matches, denied
 from .model import OPCError
+from .platform import is_link
 
 ZERO = "0" * 40
 GIT_ID = ["-c", "user.name=opc", "-c", "user.email=opc@localhost", "-c", "commit.gpgsign=false"]
@@ -29,12 +30,14 @@ def git(*args: str, cwd: Path, check: bool = True, input: str | bytes | None = N
         binary: bool = False) -> str | bytes:
     """Raw stdout. Never strip it: porcelain lines start with a status column and
     stripping the first line shifted every path by one character on openTPU."""
-    r = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, input=input,
-                       text=not binary)
+    # Text-mode pipes rewrite LF/CRLF on Windows and corrupt patches (including
+    # no-final-newline files). Git's patch protocol must remain byte-exact.
+    payload = input.encode("utf-8") if isinstance(input, str) else input
+    r = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, input=payload)
     if check and r.returncode != 0:
         err = r.stderr if isinstance(r.stderr, str) else r.stderr.decode(errors="replace")
         raise OPCError("git %s failed in %s: %s" % (" ".join(args[:3]), cwd, err.strip()[-500:]))
-    return r.stdout
+    return r.stdout if binary else r.stdout.decode("utf-8")
 
 
 def rev_parse(repo: Path, ref: str) -> str:
@@ -62,7 +65,7 @@ def tracked_digest(repo: Path, commit: str, patterns: list[str],
         if not item:
             continue
         meta, path = item.split("\t", 1)
-        if matches(path, patterns) and not (exclude and matches(path, exclude)):
+        if denied(path, patterns) and not (exclude and matches(path, exclude)):
             entries.append((path, meta.split()[2]))
     entries.sort()
     h = hashlib.sha256()
@@ -146,7 +149,11 @@ def sandbox(comp: ComponentConfig, wt: Path, base: str) -> SandboxReport:
     names = str(git("diff", "--cached", "--name-only", "-z", "--no-renames", base, cwd=wt))
     rep = SandboxReport()
     for path in sorted(p for p in names.split("\0") if p):
-        if comp.is_editable(path):
+        target = wt / path
+        redirected = any(is_link(p) for p in (target, *target.parents) if p != wt and wt in p.parents)
+        if redirected:
+            rep.violations.append(path)
+        elif comp.is_editable(path):
             rep.editable.append(path)
         elif comp.is_scratch(path):
             rep.scratch.append(path)

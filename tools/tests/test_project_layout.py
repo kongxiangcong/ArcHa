@@ -17,7 +17,7 @@ def test_preview_does_not_write_and_apply_preserves_sources(tmp_path: Path) -> N
     project = tmp_path / "compiler"
     project.mkdir()
     source = project / "pipeline.py"
-    source.write_text("def compile_graph(graph):\n    return graph\n")
+    source.write_text("def compile_graph(graph):\n    return graph\n", encoding="utf-8")
     before = source_hash(source)
     preview = initialize(project, "compiler-one", "Compiler")
     assert not preview["applied"]
@@ -25,10 +25,10 @@ def test_preview_does_not_write_and_apply_preserves_sources(tmp_path: Path) -> N
     initialize(project, "compiler-one", "Compiler", apply=True)
     assert source_hash(source) == before
     assert sorted(p.name for p in project.iterdir()) == [".opc", "pipeline.py"]
-    config = json.loads((project / ".opc/project.json").read_text())
+    config = json.loads((project / ".opc/project.json").read_text(encoding="utf-8"))
     assert not config["execution_enabled"]
     assert config["adapter_id"] == "unconfigured"
-    requirements = (project / ".opc/context/REQUIREMENTS.md").read_text()
+    requirements = (project / ".opc/context/REQUIREMENTS.md").read_text(encoding="utf-8")
     assert "| req-001 |" in requirements
     assert "REQ-001" not in requirements
     with pytest.raises(ValueError, match="already exists"):
@@ -38,10 +38,10 @@ def test_preview_does_not_write_and_apply_preserves_sources(tmp_path: Path) -> N
 @pytest.mark.parametrize("name", [".opc", ".OPC"])
 def test_existing_control_file_is_never_overwritten(tmp_path: Path, name: str) -> None:
     original = tmp_path / name
-    original.write_text("owned by user")
+    original.write_text("owned by user", encoding="utf-8")
     with pytest.raises(ValueError, match="already exists"):
         initialize(tmp_path, "project", "Project", apply=True)
-    assert original.read_text() == "owned by user"
+    assert original.read_text(encoding="utf-8") == "owned by user"
 
 
 def test_projects_and_attempts_get_distinct_portable_paths(tmp_path: Path) -> None:
@@ -81,7 +81,7 @@ def test_nested_workspace_and_overlapping_artifact_root_rejected(tmp_path: Path)
 def test_default_artifact_path_cannot_have_file_ancestor(tmp_path: Path) -> None:
     project = tmp_path / "source"
     project.mkdir()
-    (project / ".opc").write_text("user file")
+    (project / ".opc").write_text("user file", encoding="utf-8")
     with pytest.raises(ValueError, match="non-directory"):
         layout(project, "project", "task", "run", 1, tmp_path / "work")
 
@@ -105,7 +105,7 @@ def test_generated_subpaths_reject_file_directory_conflicts(tmp_path: Path, conf
     if conflict == "plan-file":
         target.mkdir()
     else:
-        target.write_text("existing file must not become a directory")
+        target.write_text("existing file must not become a directory", encoding="utf-8")
     with pytest.raises(ValueError, match="non-directory|not a regular file"):
         layout(project, "project", "task", "run", 1, workspace, artifacts)
 

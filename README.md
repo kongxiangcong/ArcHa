@@ -12,11 +12,13 @@
 
 - `opc` 引擎 0.3.0：`init / onboard / check / preflight / run / status / pause / stop / report / promote` 均已实现。
 - 仓库正从 v0.2 的「合同原型 + 示例」迁到 v0.3 引擎：`contracts/` 与 `examples/` 已从当前工作树移除，本 README 不再引用它们；旧内容见 git 提交 `2eb1dfc`。
-- 引擎当前依赖 POSIX 文件锁（`opc/core/ledger.py` 使用 `fcntl`）。请在 Linux、macOS 或 WSL 下运行；Windows 原生 Python 会在导入账本时失败。
+- 引擎支持原生 Windows 和 Linux：跨平台文件锁、进程树清理、UTF-8 文本与 Git 补丁字节传输共用同一套行为测试。使用方式和平台边界见 [跨平台运行](docs/cross-platform.md)。
 
 ## 快速开始
 
 要求：Python ≥ 3.10、Git；目标项目必须是 git 仓库且基线已提交。
+
+Windows 使用 Python 3.10+ 和 Git for Windows，无需 WSL；在 PowerShell 中执行 `python -m pip install -e .` 后即可使用 `opc`。下面的 Bash 示例中，`cd` 改为实际路径，`git add` 和 `git commit` 在 Windows PowerShell 5 中分两行执行。
 
 ```bash
 # 1. 安装引擎（在 ArcHa 仓库根目录）

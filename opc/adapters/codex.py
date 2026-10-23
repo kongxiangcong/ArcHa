@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import subprocess
 import time
 from pathlib import Path
+
+from ..core.platform import Process, command_prefix
 from typing import Any
 
 from ..core.model import Cost, write_json, write_text
@@ -60,7 +61,7 @@ class CodexWorker:
              schema: dict | None) -> tuple[WorkerCall, str]:
         log_dir.mkdir(parents=True, exist_ok=True)
         last = log_dir / ("%s-last.txt" % role)
-        argv = [self.binary, "exec", "--json", "--skip-git-repo-check", "-s", sandbox,
+        argv = [*command_prefix(self.binary), "exec", "--json", "--skip-git-repo-check", "-s", sandbox,
                 "-C", str(tree), "-o", str(last)]
         if schema is not None:
             write_json(log_dir / "plan.schema.json", schema)
@@ -75,21 +76,22 @@ class CodexWorker:
         t0 = time.time()
         with open(log_dir / ("%s-events.jsonl" % role), "wb") as out, \
                 open(log_dir / ("%s-stderr.txt" % role), "wb") as err:
-            p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=out, stderr=err,
-                                 start_new_session=True)
             try:
-                p.communicate(prompt.encode(), timeout=self.timeout)
-                timed_out = False
-            except subprocess.TimeoutExpired:
+                p = Process(argv, cwd=str(tree), stdin=subprocess.PIPE, stdout=out, stderr=err)
+            except OSError as exc:
+                return WorkerCall(role, False, Cost(time.time() - t0, 0, None),
+                                  error="codex could not start: %s" % exc,
+                                  extra={"infra": True}), ""
+            with p:
                 try:
-                    os.killpg(p.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                p.wait()
-                timed_out = True
-        info = parse_events((log_dir / ("%s-events.jsonl" % role)).read_text(errors="replace"))
+                    p.communicate(prompt.encode(), timeout=self.timeout)
+                    timed_out = False
+                except subprocess.TimeoutExpired:
+                    p.kill_tree()
+                    timed_out = True
+        info = parse_events((log_dir / ("%s-events.jsonl" % role)).read_text(errors="replace", encoding="utf-8"))
         cost = Cost(time.time() - t0, info["tokens"], None)
-        text = last.read_text(errors="replace") if last.exists() else info["last_agent"]
+        text = last.read_text(errors="replace", encoding="utf-8") if last.exists() else info["last_agent"]
         call = WorkerCall(role, ok=False, cost=cost, call_id=info["thread_id"],
                           log_dir=str(log_dir))
         if timed_out:
