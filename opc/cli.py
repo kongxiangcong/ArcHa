@@ -112,10 +112,18 @@ def cmd_promote(a) -> int:
     return 0 if rep["promotable"] else 1
 
 
+def cmd_brief_check(a) -> int:
+    from .scaffold.brief import load_brief
+    report, _ = load_brief(Path(a.project), a.brief)
+    _print(report)
+    return 0 if report["ok"] else 1
+
+
 def cmd_onboard(a) -> int:
     from .scaffold.onboard import onboard
-    _print(onboard(Path(a.project), a.agent))
-    return 0
+    report = onboard(Path(a.project), a.agent, brief=a.brief)
+    _print(report)
+    return 0 if report["ok"] else 1
 
 
 def main(argv=None) -> int:
@@ -139,6 +147,9 @@ def main(argv=None) -> int:
     p.add_argument("--apply", action="store_true")
     p = add("onboard", cmd_onboard, task=False)
     p.add_argument("--agent", default="codex", choices=["codex", "dsh"])
+    p.add_argument("--brief", help="project-relative task-brief.md from discussion")
+    p = add("brief-check", cmd_brief_check, task=False)
+    p.add_argument("--brief", required=True)
     add("check", cmd_check)
     add("preflight", cmd_preflight)
     p = add("run", cmd_run)
@@ -165,4 +176,3 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

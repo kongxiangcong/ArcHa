@@ -49,6 +49,34 @@ opc promote -p . --task t-main --confirm 3 --review codex --apply main
 
 合同进入新 revision 后用 `opc run --new-run`；`--base <ref>` 可从上一次的 champion 接着跑。冠军始终在 `refs/heads/opc/<task>`，只有 `opc promote --apply` 才会快进你指定的分支；若该分支已被检出，promote 只打印合并命令，不动你的工作树。
 
+## 先讨论研究方向，再接入
+
+提供两个独立技能：[archa-research-map](skills/archa-research-map/SKILL.md) 和 [archa-task-brief](skills/archa-task-brief/SKILL.md)。在 ArcHa 仓库运行以下命令全局安装（默认 `$CODEX_HOME/skills` 或 `~/.codex/skills`，已有同名技能备份到技能目录之外）：
+
+```bash
+python3 tools/install_research_skills.py
+```
+
+安装包按 `RUNTIME_FILES` 白名单包含当前工作树的运行模块、起草资源和许可证，不包含测试、仓库文档、示例、构建元数据或开发工具；manifest 记录逐文件摘要、快照摘要及相对 HEAD 的差异，不依赖原仓库绝对路径。更新安装不会自动升级已经初始化的项目。安装后在能发现新技能的会话中使用：
+
+```text
+$archa-research-map
+$archa-task-brief /absolute/project/.opc/research/research-map.md
+```
+
+1. 第一阶段先初始化当前项目 `.opc/`，保存 `.opc/runtime/` 和本地入口 `.opc/archa.py`，再共同形成研究地图。地图正文自由组织，末尾包含 task to-do、每个方向的占位目录以及第二阶段提示词。此时只部署框架，不生成任务合同和评价器；已有项目合同和执行状态保留。
+2. 第二阶段每次选一个依赖证据足够的任务，派 sub-agent 调查源码或外部原始来源，证据保存在任务 `evidence/`。主 agent 调研后在回复中展示建议 brief 大纲，覆盖用途、一句话目标与完成状态、范围、交付物、验收条件、有无数值指标和留给 onboard 的未决项，请用户检查修改并确认。确认前仅保存 evidence 和讨论记录，不创建 `task-brief.md`。
+3. 用户确认整体大纲后才生成 `task-brief.md`，结构检查通过才勾选该 task；勾选仅表示简报可交给 onboard 起草。正式研究结果回流地图，再决定下一个方向。明确要求起草合同时运行；onboard 在简报检查通过后为尚无合同的部署生成关闭执行的骨架：
+
+```bash
+python3 /absolute/project/.opc/archa.py brief-check -p /absolute/project --brief .opc/research/tasks/<task>/task-brief.md
+python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --brief .opc/research/tasks/<task>/task-brief.md
+```
+
+布局见 [研究材料约定](skills/archa-research-map/references/research-layout.md)，简报见 [模板](skills/archa-task-brief/references/task-brief.md)，证据见 [证据约定](skills/archa-task-brief/references/evidence.md)，引擎映射见 [消费链](skills/archa-task-brief/references/archa-workflow.md)。`brief-check` 只检查结构、占位项和来源，**不证明研究设计正确或可运行**。目标可随证据调整；已冻结执行合同的变化需要新 revision/run。
+
+onboard 将正文与来源摘要交给 worker，在 `.opc/local/onboard/` 保存本次输入与 SHA-256（该目录为最近一次起草记录，不是不可变实验归档）。实际产出仍需核对：要求是否进入合同/上下文、gate 是否实现、能力缺口是否保留。当前研究任务中的纯取证无补丁、逐轮独立审核、跨任务调度需要另外适配，本次讨论工具没有实现这些能力。
+
 ## 一轮里发生什么
 
 ```text
@@ -102,6 +130,9 @@ pyproject.toml           包元数据（archa-opc 0.3.0，无运行时依赖）
 .opc/
   project.json                          项目身份；execution_enabled 默认 false
   ONBOARDING.md                         接入指南（init 复制进来）
+  archa.py / runtime/                   地图技能初始化的项目内 CLI 与代码快照
+  research/research-map.md              方向地图、简报 to-do 和下一阶段提示词
+  research/tasks/<id>/                  task.md、task-brief.md 和 evidence/
   context/PROJECT.md REQUIREMENTS.md DECISIONS.md
   components/<id>.json                  可改范围、冻结评价器、门命令、工具链
   tasks/<task>/revisions/rNNNN/task.json  目标、方向、需求、接纳规则、预算、worker
@@ -147,4 +178,3 @@ pyproject.toml           包元数据（archa-opc 0.3.0，无运行时依赖）
 ## 许可
 
 Apache License 2.0，见 [LICENSE](LICENSE)。
-
