@@ -144,6 +144,32 @@ def test_runtime_allowlist_excludes_unrelated_files(tmp_path):
     assert manifest["snapshot_sha256"] and manifest["source_commit"] is None
 
 
+def test_snapshot_ignores_line_ending_only_differences(tmp_path):
+    """A CRLF checkout must not be recorded as a source edit in the identity."""
+    source = tmp_path / "source"
+    shutil.copytree(ROOT / "opc", source / "opc")
+    shutil.copyfile(ROOT / "LICENSE", source / "LICENSE")
+    subprocess.run(["git", "init", str(source)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(source), "config", "core.autocrlf", "true"],
+                   check=True, capture_output=True)
+    for rel in initialize.RUNTIME_FILES:
+        path = source / rel
+        path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+    subprocess.run(["git", "-C", str(source), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(source), "-c", "user.name=t", "-c", "user.email=t@example",
+                    "commit", "-qm", "base"], check=True, capture_output=True)
+
+    initialize.snapshot(source, tmp_path / "clean")
+    manifest = initialize.verify(tmp_path / "clean")
+    assert manifest["source_commit"]
+    assert manifest["differs_from_head"] == []
+
+    edited = source / "opc/cli.py"
+    edited.write_bytes(edited.read_bytes() + b"\n# changed\n")
+    initialize.snapshot(source, tmp_path / "edited")
+    assert initialize.verify(tmp_path / "edited")["differs_from_head"] == ["opc/cli.py"]
+
+
 def test_deployed_runtime_brief_to_onboard(tmp_path, runtime):
     project = tmp_path / "project"
     project.mkdir()
