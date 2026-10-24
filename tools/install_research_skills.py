@@ -30,7 +30,9 @@ def install(destination: Path) -> dict:
         sys.dont_write_bytecode = previous
     backups = []
     with tempfile.TemporaryDirectory(prefix="archa-skills-") as temp:
-        stage = Path(temp)
+        # Windows TEMP can use an 8.3 alias (e.g. RUNNER~1). The verifier
+        # compares resolved paths, so canonicalize this trusted staging root.
+        stage = Path(temp).resolve()
         for name in NAMES:
             shutil.copytree(ROOT / "skills" / name, stage / name,
                             ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "assets"))
