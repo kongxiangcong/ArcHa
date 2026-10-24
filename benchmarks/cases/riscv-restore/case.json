@@ -1,0 +1,9 @@
+{
+  "source": "xdsl", "title": "恢复三个 RISC-V canonicalization 规则",
+  "editable": ["xdsl/transforms/canonicalization_patterns/riscv.py"],
+  "metric": "remaining_cases", "target": 0,
+  "direction": "恢复 AddImmediateZero、AndiZero、XoriZero。使用未知输入，保留寄存器结果类型；非零立即数不得被这些规则错误替换。不要从上游历史复制答案。",
+  "frozen": ["tests/**"],
+  "dependencies": ["immutabledict==4.3.1", "ordered-set==4.1.0", "typing-extensions==4.15.0"],
+  "baseline_transform": "replace-three-rule-bodies-with-pass"
+}

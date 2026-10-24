@@ -1,0 +1,8 @@
+{
+  "source": "jobshop", "title": "固定预算的 JobShopLib FT06 参数搜索",
+  "editable": ["configs/search.json"], "metric": "makespan", "target": 59,
+  "direction": "只改变邻域与温度；1000 内层步数、种子 42/43/44、实例与初始调度生成器全部冻结。目标是三种子最差 makespan <=59。",
+  "frozen": ["job_shop_lib/**"],
+  "dependencies": ["numpy==2.3.5", "networkx==3.6.1", "simanneal==0.5.0", "pandas==2.3.3"], "baseline_transform": "adjacent-neighborhood",
+  "search_space": {"neighbor": ["adjacent", "critical", "random"], "initial_temperature": [10, 100, 1000, 25000], "ending_temperature": [0.1, 1, 2.5]}
+}
