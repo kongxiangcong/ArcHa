@@ -1,6 +1,7 @@
 import json
 import os
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -61,9 +62,9 @@ last.write_text(msg)
 
 @pytest.fixture
 def fake_codex(tmp_path):
-    p = tmp_path / "bin" / "codex"
+    p = tmp_path / "bin" / "codex.py"
     p.parent.mkdir()
-    p.write_text(FAKE_CODEX)
+    p.write_text(FAKE_CODEX, encoding="utf-8")
     p.chmod(p.stat().st_mode | stat.S_IEXEC)
     return str(p)
 
@@ -180,12 +181,12 @@ def test_init_templates_parse_once_todos_are_filled(tmp_path):
     from opc.core.config import ProjectConfig
     from opc.scaffold import init
     init(tmp_path, "p-x", "X", "c-main", "t-main", apply=True)
-    assert set(json.loads((tmp_path / ".opc/project.json").read_text())) == \
+    assert set(json.loads((tmp_path / ".opc/project.json").read_text(encoding="utf-8"))) == \
         {"project_id", "display_name", "components", "execution_enabled"}
     ProjectConfig.load(tmp_path)
-    c = json.loads((tmp_path / ".opc/components/c-main.json").read_text())
+    c = json.loads((tmp_path / ".opc/components/c-main.json").read_text(encoding="utf-8"))
     c["editable"] = ["src/a.py"]
-    (tmp_path / ".opc/components/c-main.json").write_text(json.dumps(c))
+    (tmp_path / ".opc/components/c-main.json").write_text(json.dumps(c), encoding="utf-8")
     ComponentConfig.load(tmp_path, "c-main")
     TaskSpec.load(tmp_path, "t-main")
     with pytest.raises(OPCError, match="already exists"):
@@ -224,6 +225,6 @@ def test_onboard_accepts_dsh_and_rejects_unknown(tmp_path):
     with pytest.raises(OPCError, match="init --apply"):
         onboard(tmp_path, "dsh")
     (tmp_path / ".opc").mkdir()
-    (tmp_path / ".opc" / "project.json").write_text("{}")
+    (tmp_path / ".opc" / "project.json").write_text("{}", encoding="utf-8")
     with pytest.raises(OPCError, match="must be codex or dsh"):
         onboard(tmp_path, "claude")

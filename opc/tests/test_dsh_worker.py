@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import stat
+import sys
 
 import pytest
 
@@ -94,9 +95,9 @@ sys.exit(0)
 
 @pytest.fixture
 def fake_dsh(tmp_path):
-    p = tmp_path / "bin" / "dsh"
+    p = tmp_path / "bin" / "dsh.py"
     p.parent.mkdir()
-    p.write_text("#!/usr/bin/env python3" + FAKE_DSH)
+    p.write_text("#!/usr/bin/env python3" + FAKE_DSH, encoding="utf-8")
     p.chmod(p.stat().st_mode | stat.S_IEXEC)
     return str(p)
 

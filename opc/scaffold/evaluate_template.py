@@ -25,7 +25,7 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     # TODO: tools the flow needs; a missing tool is the host's fault, not the candidate's
-    for tool in ("python3",):
+    for tool in (sys.executable,):
         if shutil.which(tool) is None:
             print("missing tool %s" % tool, file=sys.stderr)
             return EX_TEMPFAIL
@@ -40,7 +40,7 @@ def main() -> int:
 
     # TODO: check correctness against the reference and parse the real metrics
     metrics = {"correct": 1, "TODO_metric": 0.0}
-    (out / "metrics.json").write_text(json.dumps({"metrics": metrics}, indent=2))
+    (out / "metrics.json").write_text(json.dumps({"metrics": metrics}, indent=2), encoding="utf-8")
     return 0
 
 

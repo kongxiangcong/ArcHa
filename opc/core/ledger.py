@@ -8,7 +8,6 @@ the intent, and reconciled on resume.
 from __future__ import annotations
 
 import datetime as dt
-import fcntl
 import json
 import os
 import sqlite3
@@ -18,6 +17,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .model import Cost, Measurements, OPCError
+from .platform import lock_writer, unlock_writer
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -71,19 +71,26 @@ class Ledger:
         lock = self.path.with_suffix(".lock")
         fd = os.open(str(lock), os.O_CREAT | os.O_RDWR, 0o644)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_writer(fd)
         except BlockingIOError:
             os.close(fd)
             raise OPCError("another controller holds %s" % lock) from None
-        os.ftruncate(fd, 0)
-        os.write(fd, str(os.getpid()).encode())
+        except BaseException:
+            os.close(fd)
+            raise
         self._lock_fd = fd
         try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            owner = str(os.getpid()).encode()
+            os.write(fd, owner)
+            os.ftruncate(fd, len(owner))
             yield
         finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
-            self._lock_fd = None
+            try:
+                unlock_writer(fd)
+            finally:
+                os.close(fd)
+                self._lock_fd = None
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:

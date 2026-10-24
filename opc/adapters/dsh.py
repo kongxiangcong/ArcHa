@@ -30,10 +30,11 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import subprocess
 import time
 from pathlib import Path
+
+from ..core.platform import Process, command_prefix
 from typing import Any
 
 from ..core.model import Cost, write_json, write_text
@@ -199,7 +200,7 @@ class DshWorker:
         the core validates the plan either way.
         """
         log_dir.mkdir(parents=True, exist_ok=True)
-        argv = [self.binary, *self.extra, "--profile", self.profile, "--json", "-"]
+        argv = [*command_prefix(self.binary), *self.extra, "--profile", self.profile, "--json", "-"]
         write_text(log_dir / ("%s-prompt.md" % role), prompt)
         write_json(log_dir / ("%s-request.json" % role),
                    {"argv": argv, "cwd": str(tree), "sandbox": sandbox,
@@ -208,24 +209,20 @@ class DshWorker:
         events = log_dir / ("%s-events.jsonl" % role)
         with open(events, "wb") as out, open(log_dir / ("%s-stderr.txt" % role), "wb") as err:
             try:
-                p = subprocess.Popen(argv, cwd=str(tree), env=self._env(tree, sandbox),
-                                     stdin=subprocess.PIPE, stdout=out, stderr=err,
-                                     start_new_session=True)
-            except FileNotFoundError as exc:
+                p = Process(argv, cwd=str(tree), env=self._env(tree, sandbox),
+                                     stdin=subprocess.PIPE, stdout=out, stderr=err)
+            except OSError as exc:
                 return WorkerCall(role, False, Cost(time.time() - t0, 0, None),
-                                  error="dsh binary not found: %s" % exc,
+                                  error="dsh could not start: %s" % exc,
                                   extra={"infra": True}), ""
-            try:
-                p.communicate(prompt.encode(), timeout=self.timeout)
-                timed_out = False
-            except subprocess.TimeoutExpired:
+            with p:
                 try:
-                    os.killpg(p.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                p.wait()
-                timed_out = True
-        info = parse_events(events.read_text(errors="replace"))
+                    p.communicate(prompt.encode(), timeout=self.timeout)
+                    timed_out = False
+                except subprocess.TimeoutExpired:
+                    p.kill_tree()
+                    timed_out = True
+        info = parse_events(events.read_text(errors="replace", encoding="utf-8"))
         cost = Cost(time.time() - t0, info["tokens"], None)   # dsh reports no price
         call = WorkerCall(role, ok=False, cost=cost, call_id=info["session_id"],
                           log_dir=str(log_dir))
