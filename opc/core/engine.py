@@ -408,16 +408,27 @@ class Engine:
                 tree: Path) -> dict[str, Any]:
         attempts = self.ledger.attempts(self.run_id)
         history, lessons = [], []
+        champions = self.ledger.champions(self.run_id)
         decided = [a for a in attempts if a["outcome"]]
         keep = {a["attempt_no"] for a in decided[-HISTORY_WINDOW:]} | \
             {a["attempt_no"] for a in decided if a["outcome"] == Outcome.IMPROVEMENT.value}
         for a in decided:
             plan = a["plan"] or {}
             row = {"attempt": a["attempt_no"], "title": plan.get("title"),
-                   "hypothesis": (plan.get("hypothesis") or "")[:300], "files": a["files"] or
+                   "hypothesis": plan.get("hypothesis"),
+                   "expected": plan.get("expected"), "falsifier": plan.get("falsifier"),
+                   "files": a["files"] or
                    plan.get("files"), "outcome": a["outcome"], "reason": a["reason"],
                    "gain": a["gain"], "plan_params": plan.get("params")}
             if a["attempt_no"] in keep:
+                # Use the comparison baseline available when this attempt finished,
+                # including an in-attempt toolchain remeasurement, never today's best.
+                prior = [c for c in champions if c["commit_sha"] == a["champion_before"]
+                         and c["at"] <= a["finished_at"]
+                         and (c["attempt_no"] is None or c["attempt_no"] <= a["attempt_no"])]
+                row["champion_before"] = prior[-1]["metrics"] if prior else None
+                row["metrics"] = a["metrics"]
+                row["gates"] = a["gates"]
                 history.append(row)
             o = a["outcome"]
             if o in (Outcome.BROKEN.value, Outcome.SANDBOX.value, Outcome.NO_GAIN.value,

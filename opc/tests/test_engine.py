@@ -263,3 +263,53 @@ def test_promotion_reports_unmet_target_and_applies_only_on_request(make_project
     rep = promote(engine_for(root), apply_to="release")
     assert rep["applied"]
     assert git(root, "rev-parse", "release").strip() == rep["champion"]
+
+
+@pytest.mark.parametrize('field', ['title', 'hypothesis', 'changes', 'expected', 'falsifier'])
+@pytest.mark.parametrize('value', [None, '', '  ', 42])
+def test_plan_requires_existing_text_fields(field, value):
+    from opc.adapters.worker import validate_plan
+    plan = dict(title='t', hypothesis='h', changes='c', expected='e', falsifier='f', files=['a'])
+    if value is None:
+        del plan[field]
+    else:
+        plan[field] = value
+    assert validate_plan(plan) == 'plan.%s is empty' % field
+
+
+@pytest.mark.parametrize('files', [[], [''], ['  '], [42], 'a'])
+def test_plan_requires_nonempty_paths(files):
+    from opc.adapters.worker import validate_plan
+    plan = dict(title='t', hypothesis='h', changes='c', expected='e', falsifier='f', files=files)
+    assert validate_plan(plan)
+
+
+def test_next_expert_receives_original_plan_and_measured_evidence(make_project, engine_for):
+    from opc.adapters.prompts import expert_prompt
+    e = engine_for(make_project())
+    e.run(max_attempts_now=2)
+    attempts = e.ledger.attempts(e.run_id)
+    ctx = json.loads((e.attempt_dir(2) / 'context.json').read_text(encoding='utf-8'))
+    previous = ctx['history'][0]
+    for field in ('hypothesis', 'expected', 'falsifier'):
+        assert previous[field] == attempts[0]['plan'][field]
+    assert previous['metrics'] == attempts[0]['metrics']
+    assert previous['gates'] == attempts[0]['gates']
+    assert previous['champion_before']['values']['loss'] == 17
+    assert previous['metrics']['values']['loss'] != 17
+    for plain_text in (False, True):
+        prompt = expert_prompt(ctx, plain_text_reply=plain_text)
+        assert json.dumps(ctx['history'], ensure_ascii=False, indent=2) in prompt
+        assert 'does not by itself establish its proposed mechanism' in prompt
+
+
+def test_failed_gate_history_preserves_failure_without_inventing_metrics(make_project, engine_for):
+    evaluate = EVALUATE + '\nif x != 3: raise SystemExit(1)\n'
+    e = engine_for(make_project(evaluate=evaluate))
+    e.run(max_attempts_now=2)
+    ctx = json.loads((e.attempt_dir(2) / 'context.json').read_text(encoding='utf-8'))
+    previous = ctx['history'][0]
+    assert previous['outcome'] == Outcome.BROKEN.value
+    assert previous['metrics'] is None
+    assert previous['gates']
+    assert previous['falsifier'] == 'loss does not decrease'

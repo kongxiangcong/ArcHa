@@ -36,8 +36,8 @@ class Step:
         for nx in (x + 1, x - 1):
             if json.dumps({"x": nx}, sort_keys=True) not in tried:
                 return {"title": "x=%d" % nx, "hypothesis": "closer to optimum",
-                        "files": ["params.json"], "changes": "set x", "expected": "",
-                        "falsifier": "", "params": {"x": nx}}
+                        "files": ["params.json"], "changes": "set x", "expected": "lower loss",
+                        "falsifier": "loss does not decrease", "params": {"x": nx}}
         return None
     def implement(self, plan, tree):
         (tree / "params.json").write_text(json.dumps(plan["params"]))

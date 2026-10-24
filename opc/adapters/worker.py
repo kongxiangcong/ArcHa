@@ -77,10 +77,13 @@ def make_worker(spec: WorkerSpec, evaluator_tree: Path) -> Worker:
 def validate_plan(plan: Any) -> str | None:
     if not isinstance(plan, dict):
         return "plan is not an object"
-    for k in ("title", "hypothesis"):
+    for k in PLAN_FIELDS:
+        if k == "files":
+            continue
         if not isinstance(plan.get(k), str) or not plan[k].strip():
             return "plan.%s is empty" % k
     files = plan.get("files")
-    if not isinstance(files, list) or not files or not all(isinstance(f, str) for f in files):
+    if not isinstance(files, list) or not files or not all(
+            isinstance(f, str) and f.strip() for f in files):
         return "plan.files must be a non-empty list of paths"
     return None
