@@ -231,7 +231,8 @@ The working directory is a read-only checkout of the champion."""
     ws = engine.workspaces("review")
     try:
         tree = ws.checkout("reviewer", best["commit_sha"])
-        worker = worker_cls(dict(engine.task.expert.options))
+        from .worker_config import worker_options
+        worker = worker_cls(worker_options(engine.worker_config, "reviewer"))
         call, text = worker._run("reviewer", prompt, tree, out / "reviewer", "read-only", schema)
     finally:
         ws.drop_all()

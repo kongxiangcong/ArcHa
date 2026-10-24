@@ -155,6 +155,19 @@ pyproject.toml           包元数据（archa-opc 0.3.0，无运行时依赖）
 - **接缝可替换**：worker 三选一（`codex` / `dsh` / `scripted`），领域适配器默认是「命令门 + metrics.json」，也可在冻结文件里写 `"adapter": "path.py:Class"`；核心只经两个工厂拿到它们。
 - **晋升才做 Spec 轴**：每轮接纳是确定性的，不调用 reviewer；「这个结果是否值得要、结论是否越界」在 promote 时做一次，可选独立审核，未给出可信 verdict 一律阻塞。
 
+## Worker 模型与推理强度
+
+`opc init --apply` 会生成独立的本机配置 `.opc/local/workers.json`（Git 忽略）。
+`expert`、`designer`、`reviewer`、`onboard` 各有自己的 `model` 和 `reasoning_effort`；
+填入的值覆盖该角色合同设置，`null` 或省略表示继承后端/合同默认值。
+reviewer 使用独立配置，不再继承 expert；仍需 `promote --review` 显式开启。
+新项目默认：expert、designer、reviewer、onboard 全部使用 `gpt-6.1-sol / medium`。
+已有配置保持不变。
+
+模板见 [workers.json](opc/scaffold/workers.json)，完整示例、优先级和 DSH 的 provider 配置见
+[接入指南](opc/scaffold/ONBOARDING.md#独立的-worker-环境配置)。旧项目可将模板复制到本机配置路径，
+无需修改任务合同；旧 runtime 需先按既有流程显式升级，才能读取新配置。
+
 ## 文档
 
 | 文档 | 内容 | 状态 |

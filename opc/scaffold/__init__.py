@@ -89,9 +89,13 @@ def init(project_root: Path, project_id: str, name: str, component_id: str, task
         if (control.name != ".opc" or is_link(control) or not control.is_dir()
                 or not (control / "runtime/opc/cli.py").is_file()
                 or not (control / "archa.py").is_file()
-                or any(p.name not in {"runtime", "archa.py", "research"} or is_link(p)
+                or any(p.name not in {"runtime", "archa.py", "research", "local"} or is_link(p)
                        for p in control.iterdir())):
             raise OPCError(".opc already exists in %s; refusing to overwrite" % root)
+        local = control / "local"
+        if local.exists() and (not local.is_dir() or any(
+                p.name != "workers.json" or is_link(p) or not p.is_file() for p in local.iterdir())):
+            raise OPCError(".opc/local must contain only workers.json before initialization")
     project = {"project_id": project_id, "display_name": name, "components": [component_id],
                "execution_enabled": False}
     files: dict[str, str] = {
@@ -100,6 +104,8 @@ def init(project_root: Path, project_id: str, name: str, component_id: str, task
         **_context(name, project_id),
     }
     files["ONBOARDING.md"] = (HERE / "ONBOARDING.md").read_text(encoding="utf-8")
+    if not (root / ".opc/local/workers.json").exists():
+        files["local/workers.json"] = (HERE / "workers.json").read_text(encoding="utf-8")
     files["components/%s.json" % component_id] = json.dumps(
         component_template(component_id), ensure_ascii=False, indent=2) + "\n"
     files["tasks/%s/revisions/r0001/task.json" % task_id] = json.dumps(

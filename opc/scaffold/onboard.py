@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.model import OPCError
+from ..core.worker_config import CONFIG_PATH, load_worker_config, worker_options
 from ..core.workspace import dirty_paths
 
 HERE = Path(__file__).resolve().parent
@@ -43,7 +44,7 @@ def _dsh_options() -> dict[str, Any]:
 
 def _inputs_snapshot(root: Path) -> dict[str, str]:
     """Include clean and ignored inputs too; onboard must not rewrite its sources."""
-    paths = [root / ".opc/archa.py"]
+    paths = [root / ".opc/archa.py", root / CONFIG_PATH]
     for directory in ("runtime", "research"):
         paths.extend((root / ".opc" / directory).rglob("*"))
     return {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
@@ -52,6 +53,7 @@ def _inputs_snapshot(root: Path) -> dict[str, str]:
 
 def onboard(project_root: Path, agent: str, brief: str | Path | None = None) -> dict[str, Any]:
     root = project_root.resolve()
+    config = load_worker_config(root)
     deployed = (root / ".opc/runtime/opc/cli.py").is_file() and (root / ".opc/archa.py").is_file()
     if not (root / ".opc" / "project.json").exists() and not deployed:
         raise OPCError("run `opc init --apply` first")
@@ -67,10 +69,11 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None) -> 
         if not brief_report["ok"]:
             raise OPCError("brief is not ready for drafting: " + "; ".join(brief_report["problems"]))
     before = _snapshot(root)
-    inputs_before = _inputs_snapshot(root)
     if not (root / ".opc/project.json").exists():
         from . import init
         init(root, "research-project", root.name, "main", "t-main", True)
+        config = load_worker_config(root)
+    inputs_before = _inputs_snapshot(root)
     guide = (HERE / "ONBOARDING.md").read_text(encoding="utf-8")
     prompt = ("You are onboarding this repository to OPC. Follow the guide below. Fill the "
               "TODOs in .opc/components/*.json, .opc/tasks/*/revisions/r0001/task.json, "
@@ -88,10 +91,10 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None) -> 
     # contract; dsh ignores the schema and is asked to write its answer as prose.
     if agent == "dsh":
         from ..adapters.dsh import DshWorker
-        worker = DshWorker({"timeout_s": 1800, **_dsh_options()})
+        worker = DshWorker(worker_options(config, "onboard", {"timeout_s": 1800, **_dsh_options()}))
     else:
         from ..adapters.codex import CodexWorker
-        worker = CodexWorker({"timeout_s": 1800})
+        worker = CodexWorker(worker_options(config, "onboard", {"timeout_s": 1800}))
     log = root / ".opc" / "local" / "onboard"
     call, text = worker._run("onboard", prompt, root, log, "workspace-write", None)
     after = _snapshot(root)
@@ -114,5 +117,6 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None) -> 
     if outside:
         result["error"] = "agent changed files outside .opc/: revert them before continuing"
     elif protected:
-        result["error"] = "agent changed runtime or research inputs: restore them before continuing"
+        result["error"] = ("agent changed runtime, research or worker configuration inputs: "
+                           "restore them before continuing")
     return result

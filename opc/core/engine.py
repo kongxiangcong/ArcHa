@@ -27,8 +27,9 @@ from typing import Any, Callable
 from ..adapters.worker import Worker, WorkerCall, make_worker, validate_plan
 from ..domain import DomainAdapter, Evaluation, load_domain
 from . import accept as acceptance
-from .config import Bindings, ComponentConfig, ProjectConfig, TaskSpec
+from .config import Bindings, ComponentConfig, ProjectConfig, TaskSpec, WorkerSpec
 from .ledger import Ledger
+from .worker_config import load_worker_config, worker_options
 from .model import (BudgetExhausted, Cost, GateResult, Measurements, OPCError, Outcome, Verdict,
                     write_json, write_text)
 from .workspace import (Workspaces, apply_patch, cas_update_ref, commit_tree, dirty_paths, git,
@@ -49,6 +50,7 @@ class Engine:
         self.project = ProjectConfig.load(project_root)
         self.root = self.project.root
         self.task = TaskSpec.load(self.root, task_id, revision)
+        self.worker_config = load_worker_config(self.root)
         self.comp = ComponentConfig.load(self.root, self.task.component)
         self.bindings = Bindings.load(self.project)
         self.ledger = Ledger(self.root / ".opc" / "local" / "ledger.sqlite3")
@@ -122,8 +124,12 @@ class Engine:
 
     def workers(self, tree: Path) -> tuple[Worker, Worker]:
         if self._workers is None:
-            expert = make_worker(self.task.expert, tree)
-            designer = make_worker(self.task.designer, tree) if self.task.designer else expert
+            expert = make_worker(WorkerSpec(self.task.expert.kind, worker_options(
+                self.worker_config, "expert", self.task.expert.options)), tree)
+            designer = expert
+            if self.task.designer:
+                designer = make_worker(WorkerSpec(self.task.designer.kind, worker_options(
+                    self.worker_config, "designer", self.task.designer.options)), tree)
             self._workers = (expert, designer)
         return self._workers
 

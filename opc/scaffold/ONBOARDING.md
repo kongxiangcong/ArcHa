@@ -133,6 +133,60 @@
   - `scripted`：固定搜索策略，不调用模型。参数类任务直接用
     `{"kind": "scripted", "strategy": "builtin:param_search", "options": {"file": "configs/emulator.json", "space": {"banks": [4, 8, 16]}}}`。
 
+### 独立的 worker 环境配置
+
+`opc init --apply` 自动生成 `.opc/local/workers.json`，该目录已由 `.opc/.gitignore`
+排除。四个角色分别配置模型和推理强度，不需要修改任务合同：
+
+```json
+{
+  "expert": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
+  "designer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
+  "reviewer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
+  "onboard": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"}
+}
+```
+
+以上是新项目生成的 Codex 默认配置；已有本机配置不会被自动覆盖。
+模型需当前账号和后端支持；推理强度也是后端和模型决定的，ArcHa 不把它固定成某个枚举。
+将字段设为 `null` 表示继承；也可以省略字段或角色。
+文件缺失时保持兼容，JSON 格式、角色或字段拼写错误会报错，不会静默忽略。
+旧项目可从 ArcHa 源码的 `opc/scaffold/workers.json` 复制到项目的 `.opc/local/workers.json`。
+只有 runtime 的项目也可先创建该文件，再执行 onboard；初始化会保留已有配置。
+
+优先级为：本机角色配置的非 null 值 > 该角色的合同字段 > 后端默认配置。
+expert、designer 的 `kind`、超时、binary、profile 等仍由任务合同决定，
+合同里的 `reasoning_effort` 也可直接使用。Codex 通过 `-m` 和
+`-c model_reasoning_effort=...` 接收设置；显式的模型与强度优先于旧 `extra_args` 中对应参数。
+仅配置模型或强度时，另一个设置继续继承合同或 CLI 默认值。
+
+reviewer 仅在 `promote --review codex` 或 `--review dsh` 时运行，配置文件不会自动开启审核；
+它使用独立的 reviewer 配置和后端默认值，**不再复用 expert 的任何选项**。
+自定义 reviewer 程序入口请使用 `OPC_CODEX_BIN` / `OPC_DSH_BIN`；DSH 还支持 `OPC_DSH_HOME`。
+onboard 的后端仍由 `--agent codex|dsh` 选择，模型与强度读取 onboard 项。
+环境配置在执行 worker 的命令开始时读取，运行中的进程不热更新；修改后可在下一次命令（含恢复运行）生效，
+不改变任务摘要，也不要求为模型切换创建新 revision。每次实际调用的 `*-request.json`
+保留启动 argv；未显式配置时后端采用的默认模型和强度仍需查后端日志。
+
+DSH 的 headless 没有模型 CLI 开关。切换到 DSH 时，请把相应角色的 Codex 默认项改成
+`{}` 以继承 DSH profile，或同时提供 DSH 的 `provider` 和 `model`：
+
+```json
+{
+  "expert": {
+    "provider": "deepseek-official",
+    "model": "<该提供方的模型ID>",
+    "reasoning_effort": "high"
+  }
+}
+```
+
+ArcHa 在本次调用的日志目录写出 `*-model.patch.json`，通过 DSH 的 `--patch`
+覆盖 `agent-default-model`，不修改全局 profile。覆盖时缺 provider/model 会直接报错；
+不覆盖时仍沿用已有 profile。`provider` 字段只适用于 DSH；Codex 的提供方由其 CLI 配置管理。
+`scripted` 不调用模型，不使用这些模型设置。onboard 将环境配置文件列为受保护输入，
+起草 worker 不应改写它；文件中不要存放密钥。
+
 ## 5. 走一遍
 
 ```bash

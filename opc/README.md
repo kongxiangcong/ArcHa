@@ -23,6 +23,13 @@ python3 -m opc promote   -p . --task t-xxx --confirm 2 [--review codex] [--apply
 
 接入写法见 [scaffold/ONBOARDING.md](scaffold/ONBOARDING.md)（`opc init` 会把它拷进项目）。
 
+四个模型角色的本机配置在 `.opc/local/workers.json`，由 init 生成，Git 忽略。
+每个角色独立填写 `model`、`reasoning_effort`，优先于该角色的任务合同；null/省略表示继承。
+reviewer 不再继承 expert，onboard 也会读取独立设置。DSH 覆盖需同时提供 provider 和 model。
+新项目默认 expert、designer、reviewer、onboard 全部使用 `gpt-6.1-sol / medium`；
+已有配置不覆盖。
+详见 [worker 环境配置](scaffold/ONBOARDING.md#独立的-worker-环境配置)。
+
 ## 结构与接缝
 
 | 模块 | 职责 | 替换点 |

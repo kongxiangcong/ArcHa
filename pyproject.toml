@@ -16,7 +16,7 @@ build-backend = "setuptools.build_meta"
 include = ["opc*"]
 
 [tool.setuptools.package-data]
-opc = ["scaffold/*.md", "scaffold/*.py"]
+opc = ["scaffold/*.md", "scaffold/*.py", "scaffold/*.json"]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"

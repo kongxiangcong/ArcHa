@@ -18,7 +18,7 @@ from pathlib import Path
 from ..core.platform import Process, command_prefix
 from typing import Any
 
-from ..core.model import Cost, write_json, write_text
+from ..core.model import Cost, OPCError, write_json, write_text
 from .prompts import designer_prompt, expert_prompt
 from .worker import EXHAUSTED_SENTINEL, PLAN_SCHEMA, WorkerCall
 
@@ -57,6 +57,9 @@ def parse_events(text: str) -> dict[str, Any]:
 class CodexWorker:
     def __init__(self, options: dict[str, Any]):
         self.model = options.get("model")
+        self.reasoning_effort = options.get("reasoning_effort")
+        if options.get("provider"):
+            raise OPCError("codex uses its CLI provider configuration; provider is only for dsh")
         self.profile = options.get("profile")
         self.timeout = float(options.get("timeout_s", 1800))
         self.extra = list(options.get("extra_args") or [])
@@ -75,11 +78,27 @@ class CodexWorker:
         if schema is not None:
             write_json(log_dir / "plan.schema.json", schema)
             argv += ["--output-schema", str(log_dir / "plan.schema.json")]
-        if self.model:
-            argv += ["-m", self.model]
         if self.profile:
             argv += ["-p", self.profile]
-        argv += self.extra + ["-"]
+        extra = list(self.extra)
+        if self.model:
+            # Model is a single-valued clap option; duplicate -m is an error.
+            filtered, i = [], 0
+            while i < len(extra):
+                arg = extra[i]
+                if arg in ("-m", "--model"):
+                    i += 2
+                    continue
+                if not (arg.startswith("--model=") or (arg.startswith("-m") and len(arg) > 2)):
+                    filtered.append(arg)
+                i += 1
+            extra = filtered
+        argv += extra + ["-"]
+        if self.reasoning_effort:
+            argv[-1:-1] = ["-c", "model_reasoning_effort=" + json.dumps(self.reasoning_effort)]
+        # Explicit role settings outrank legacy extra_args overrides.
+        if self.model:
+            argv[-1:-1] = ["-m", self.model]
         write_text(log_dir / ("%s-prompt.md" % role), prompt)
         write_json(log_dir / ("%s-request.json" % role), {"argv": argv, "cwd": str(tree)})
         t0 = time.time()
