@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install both self-contained research skills; preserve previous installs as backups."""
+"""Install ArcHa discussion and loop skills; preserve previous installs as backups."""
 from __future__ import annotations
 
 import argparse
@@ -13,14 +13,14 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-NAMES = ("archa-research-map", "archa-task-brief")
+NAMES = ("archa-map", "archa-task", "archa-loop")
 
 
 def install(destination: Path) -> dict:
     destination = destination.expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
     spec = importlib.util.spec_from_file_location(
-        "archa_initialize", ROOT / "skills/archa-research-map/scripts/initialize.py")
+        "archa_initialize", ROOT / "skills/archa-map/scripts/initialize.py")
     module = importlib.util.module_from_spec(spec)
     previous = sys.dont_write_bytecode
     try:

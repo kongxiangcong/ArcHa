@@ -1,6 +1,7 @@
 """Portable skill bundles and non-destructive project initialization."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -10,7 +11,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location(
-    "research_initialize", ROOT / "skills/archa-research-map/scripts/initialize.py")
+    "research_initialize", ROOT / "skills/archa-map/scripts/initialize.py")
 initialize = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(initialize)
 
@@ -57,6 +58,19 @@ def test_runtime_change_is_not_overwritten(tmp_path, runtime):
     assert changed.read_text(encoding="utf-8") == "# locally changed\n"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows ACL inheritance")
+def test_runtime_inherits_project_acl_instead_of_private_temp_acl(tmp_path, runtime):
+    project = tmp_path / "acl-project"
+    project.mkdir()
+    initialize.initialize(project, runtime)
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-Command",
+         "[System.IO.Directory]::GetAccessControl($env:ARCHA_TEST_RUNTIME).AreAccessRulesProtected"],
+        env={**os.environ, "ARCHA_TEST_RUNTIME": str(project / ".opc/runtime")},
+        capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == "False", "private staging ACL leaked into deployed runtime"
+
+
 def test_existing_runtime_remains_pinned(tmp_path, runtime):
     project = tmp_path / "project"
     project.mkdir()
@@ -93,11 +107,14 @@ def test_bundle_relocation_and_reinstall_backup(tmp_path):
     destination = tmp_path / "installed/skills"
     command = [sys.executable, str(install), "--destination", str(destination)]
     subprocess.run(command, check=True, capture_output=True)
-    skill = destination / "archa-research-map"
+    skill = destination / "archa-map"
     (skill / "local-note.txt").write_text("keep my local changes", encoding="utf-8")
     report = json.loads(subprocess.run(command, check=True, capture_output=True, text=True).stdout)
     backups = [Path(p) for p in report["backups"]]
-    assert len(backups) == 2
+    assert len(backups) == 3
+    assert {Path(p).name for p in report["installed"]} == {
+        "archa-map", "archa-task", "archa-loop"}
+    assert (destination / "archa-loop/SKILL.md").is_file()
     assert (backups[0] / "local-note.txt").read_text(encoding="utf-8") == "keep my local changes"
     moved = tmp_path / "relocated"
     shutil.move(str(skill), moved)

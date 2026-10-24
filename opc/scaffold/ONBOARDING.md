@@ -155,6 +155,7 @@ opc promote   -p <project> --task <task> --confirm 3   # 晋升审核；--apply 
 - 只在 `.opc/` 下创建或修改文件；不改项目源码、测试或已有配置。
 - `.opc/runtime/`、`.opc/archa.py` 和 `.opc/research/` 是只读输入。起草只修改合同、评价器、context 和 Open items；工具事后检测输入变化，检测不等于文件系统隔离。
 - 先读 README、构建脚本、测试，找到"已经能跑通的流程"的确切命令，再写 `evaluate.py`。
+- 在 Windows 上创建供沙箱 worker 使用的验证副本或测试夹具时，在 `.opc/local/` 下用普通 `mkdir` 创建唯一目录以继承项目 ACL。Python 3.13+ 的 `TemporaryDirectory` / `mkdtemp` 使用私有 mode 0700，可能使沙箱身份无法访问；保留首次权限失败与修复后的验证记录，不以跳过验证代替修复。
 - 没有把握的字段写 `TODO` 并在 `.opc/README.md` 列出缺项，不要编造指标名或阈值。
 - 指标名必须是 `evaluate.py` 真实写出的键。
 

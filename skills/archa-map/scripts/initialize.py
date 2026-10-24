@@ -11,6 +11,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import uuid
 
 LAUNCHER = '''#!/usr/bin/env python3
 """Run the ArcHa snapshot stored next to this file."""
@@ -148,11 +149,18 @@ def initialize(project: Path, runtime: Path) -> dict:
         control.mkdir()
     if not local_runtime.exists():
         # Stage inside .opc, so interruption cannot expose a partial runtime.
-        with tempfile.TemporaryDirectory(prefix=".runtime-", dir=control) as staging:
-            staged = Path(staging) / "runtime"
+        # TemporaryDirectory uses mode 0700. On Windows/Python 3.13+ its
+        # private ACL survives rename and makes runtime unreadable to workers
+        # running as the sandbox account. Inherit the project's ACL instead.
+        staging = control / (".runtime-" + uuid.uuid4().hex)
+        staging.mkdir()
+        try:
+            staged = staging / "runtime"
             shutil.copytree(runtime, staged)
             verify(staged)
             staged.rename(local_runtime)
+        finally:
+            shutil.rmtree(staging)
     if not launcher.exists():
         with launcher.open("x") as stream:
             stream.write(LAUNCHER)

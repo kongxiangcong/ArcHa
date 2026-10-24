@@ -1,6 +1,6 @@
 ---
-name: archa-research-map
-description: 初始化当前项目的 ArcHa 本地运行代码，与用户讨论研究方向，生成 .opc/research/research-map.md、研究任务清单及占位目录。用于形成或修订研究地图；具体任务的背景调查和简报交给 archa-task-brief。
+name: archa-map
+description: 初始化当前项目的 ArcHa 本地运行代码，与用户讨论研究方向，生成 .opc/research/research-map.md、研究任务清单及占位目录。用于形成或修订研究地图；具体任务的背景调查和简报交给 archa-task。
 ---
 
 # 研究地图
@@ -10,7 +10,7 @@ description: 初始化当前项目的 ArcHa 本地运行代码，与用户讨论
 目标项目默认当前工作目录，用户指定路径时以指定路径为准。读取项目约定和已有研究材料。首次调用先运行本技能目录的 `scripts/initialize.py`：
 
 ```bash
-python3 /absolute/path/to/archa-research-map/scripts/initialize.py --project /absolute/project
+python3 /absolute/path/to/archa-map/scripts/initialize.py --project /absolute/project
 ```
 
 脚本只部署 `.opc/runtime/` 运行代码和 `.opc/archa.py` 入口，合同骨架留到 onboard 时生成。打包文件由脚本中的 `RUNTIME_FILES` 明确列出，包含 CLI、引擎、worker、内置策略和起草资源，不复制仓库文档、测试、示例或开发工具。已有 `.opc/` 保留其合同与执行状态；重复调用校验已有快照，不自动升级。快照修改导致校验失败时保留用户修改并报告差异，不擅自重装。初始化成功只证明文件就位。
@@ -32,7 +32,7 @@ python3 /absolute/path/to/archa-research-map/scripts/initialize.py --project /ab
 在地图末尾和回复中给出可复制提示词，替换为实际绝对路径：
 
 ```text
-$archa-task-brief /absolute/project/.opc/research/research-map.md
+$archa-task /absolute/project/.opc/research/research-map.md
 ```
 
 说明推荐先讨论哪个任务及原因；本次结束于地图交付，不自动进入第二阶段、onboard 或实验。
