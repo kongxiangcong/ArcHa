@@ -2,14 +2,14 @@
 
 One attempt:
 
-    EXPERT     read-only champion tree -> plan
-    PLAN_CHECK plan files within editable scope, not a repeat
-    DESIGN     writable tree cut from the champion commit -> edits
+    EXPERT     research materials + results -> retrospective and next plan or stop
+    PLAN_CHECK optional file hints within scope, not a repeat
+    DESIGN     writable tree cut from the selected parent -> edits or measurement
     SANDBOX    every change classified; any non-editable change fails the attempt
-    EVALUATE   editable-only patch applied to a fresh champion tree; frozen gates run there
+    EVALUATE   editable-only candidate snapshot in a fresh tree; frozen gates run there
     ACCEPT     comparability (evaluator + toolchain + evidence), constraints, gain over noise
     CHAMPION   commit, ledger intent, compare-and-swap the ref, ledger record
-    FEEDBACK   history + lessons for the next expert; stop conditions checked
+    FEEDBACK   design + actual execution + data for the next expert to interpret
 
 Per-attempt acceptance is deterministic and calls no reviewer. The spec axis
 (is the result worth having, does the claim overreach) runs once, at promotion.
@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..adapters.worker import Worker, WorkerCall, make_worker, validate_plan
-from ..domain import DomainAdapter, Evaluation, load_domain
+from ..domain import DomainAdapter, Evaluation, experimental_data, load_domain
 from . import accept as acceptance
 from .config import Bindings, ComponentConfig, ProjectConfig, TaskSpec, WorkerSpec
 from .ledger import Ledger
@@ -108,6 +108,12 @@ class Engine:
         editable_hits = tracked_digest(self.root, base, self.comp.editable)[1]
         if not editable_hits:
             warnings.append("no committed file matches the editable paths yet")
+        source_context = [p for p in self.comp.context_files
+                          if not p.startswith(".opc/context/") or not p.endswith(".md")]
+        if source_context:
+            warnings.append("expert no longer reads source context_files; put task background, "
+                            "criteria, constraints and capabilities in .opc/context/*.md: "
+                            + ", ".join(source_context[:8]))
         for p in self.comp.editable:
             if p in (".", "**", "*"):
                 problems.append("editable %r covers the whole project" % p)
@@ -134,7 +140,7 @@ class Engine:
         return self._workers
 
     def evaluate_commit(self, ws: Workspaces, commit: str, patch: str, out: Path,
-                        name: str) -> tuple[Evaluation, Measurements | None, Path]:
+                        name: str, *, fresh: bool = False) -> tuple[Evaluation, Measurements | None, Path]:
         """Evaluate `commit` (+ `patch`) in a fresh tree with the frozen gates."""
         tree = ws.checkout(name, commit)
         apply_patch(tree, patch)
@@ -145,7 +151,7 @@ class Engine:
         # contracts and notes do not change what the gates compute
         content = tracked_digest(self.root, tree_id, ["**"], self.comp.scratch + [
             ".opc/tasks/**", ".opc/context/**", ".opc/*.md", ".opc/README.md"])[0]
-        ev = self._cached(content, digest, tool_digest)
+        ev = None if fresh else self._cached(content, digest, tool_digest)
         if ev is None:
             ev = dom.evaluate(tree, out, self.task.acceptance.repeats)
             self._store(content, digest, tool_digest, ev)
@@ -159,7 +165,8 @@ class Engine:
             "evaluator_digest": digest, "toolchain_digest": tool_digest,
             "gates": [g.as_dict() for g in ev.gates], "failure": ev.failure.value
             if ev.failure else None, "reason": ev.reason,
-            "metrics": meas.as_dict() if meas else None})
+            "metrics": meas.as_dict() if meas else None,
+            "data": ev.data, "cached": ev.cached})
         return ev, meas, tree
 
     def _cache_path(self, tree_id: str, ev_digest: str, tool_digest: str) -> Path:
@@ -183,7 +190,7 @@ class Engine:
         return Evaluation(gates=gates, values=d["values"], spread=d["spread"],
                           repeats=d["repeats"], degraded_by=d["degraded_by"],
                           failure=Outcome(d["failure"]) if d["failure"] else None,
-                          reason=d["reason"], seconds=0.0)
+                          reason=d["reason"], seconds=0.0, data=d.get("data", []), cached=True)
 
     def _store(self, tree_id: str, ev_digest: str, tool_digest: str, ev: Evaluation) -> None:
         if not self.comp.deterministic or ev.failure is Outcome.INFRA:
@@ -191,7 +198,8 @@ class Engine:
         write_json(self._cache_path(tree_id, ev_digest, tool_digest), {
             "gates": [g.as_dict() for g in ev.gates], "values": ev.values, "spread": ev.spread,
             "repeats": ev.repeats, "degraded_by": ev.degraded_by,
-            "failure": ev.failure.value if ev.failure else None, "reason": ev.reason})
+            "failure": ev.failure.value if ev.failure else None, "reason": ev.reason,
+            "data": ev.data})
 
     def preflight(self) -> dict[str, Any]:
         """Static checks, toolchain, and one full evaluation of the base commit."""
@@ -222,7 +230,7 @@ class Engine:
                 if why:
                     rep["warnings"].append("baseline already violates constraint: " + why)
         if acceptance.target_met(self.task.acceptance, meas.values):
-            rep["warnings"].append("baseline already meets the target; a run would stop at once")
+            rep["warnings"].append("baseline already meets the target; expert decides whether to continue")
         rep["baseline_metrics"] = meas.values
         rep["degraded_by"] = meas.degraded_by
         return rep
@@ -386,19 +394,7 @@ class Engine:
             raise BudgetExhausted("max_tokens", "crossed mid-attempt")
 
     def stop_condition(self) -> StopDecision | None:
-        champ = self.ledger.champion(self.run_id)
-        if champ and acceptance.target_met(self.task.acceptance, champ[1].values):
-            return StopDecision("closed", "target_met")
         decided = [a for a in self.ledger.attempts(self.run_id) if a["outcome"]]
-        streak = 0
-        for a in reversed(decided):
-            o = Outcome(a["outcome"])
-            if o is Outcome.IMPROVEMENT:
-                break
-            if o.counts_as_search:
-                streak += 1
-        if streak >= self.task.budget.max_stagnation:
-            return StopDecision("closed", "stagnation: %d attempts without improvement" % streak)
         infra = 0
         for a in reversed(decided):
             if Outcome(a["outcome"]) is not Outcome.INFRA:
@@ -410,41 +406,135 @@ class Engine:
         return None
 
     # --------------------------------------------------------------- feedback
+    def backfill_history(self) -> None:
+        """Reuse older final replies and measurement artifacts on resume, when present.
+
+        Missing artifacts stay missing. No execution, measurement or interpretation
+        is inferred from a patch, and no worker is dispatched by this migration.
+        """
+        calls = self.ledger.events(self.run_id, "worker_call")
+        for a in self.attempt_records():
+            n = a["attempt_no"]
+            adir = self.attempt_dir(n)
+            if a["execution"] is None:
+                design = [e["body"] for e in calls if e["attempt"] == n
+                          and e["body"].get("role") == "designer"]
+                if design:
+                    summary = ""
+                    last = adir / "designer/designer-last.txt"
+                    if last.is_file():
+                        summary = last.read_text(encoding="utf-8", errors="replace")[-2000:]
+                    else:
+                        events = adir / "designer/designer-events.jsonl"
+                        if events.is_file():
+                            from ..adapters.dsh import parse_events
+                            summary = parse_events(events.read_text(encoding="utf-8"))["text"][-2000:]
+                    self.ledger.event(self.run_id, "execution", n,
+                                      completed=design[-1]["ok"], summary=summary)
+            evaluation = adir / "eval/evaluation.json"
+            if a["experiment"] is None and evaluation.is_file():
+                ev = json.loads(evaluation.read_text(encoding="utf-8"))
+                data = ev.get("data", [])
+                if not data:
+                    for g in a["gates"] or []:
+                        spec = next((s for s in self.comp.gates if
+                                     s.gate_id == g["gate_id"].split("#")[0]), None)
+                        if spec and spec.metrics and "{out}" in spec.metrics:
+                            path = Path(spec.metrics.replace("{out}", g["log_dir"]))
+                            if path.is_file():
+                                try:
+                                    data.append({"gate": g["gate_id"], "data": experimental_data(
+                                                 json.loads(path.read_text(encoding="utf-8")))})
+                                except (OSError, ValueError):
+                                    pass  # retain missing evidence rather than fabricate it
+                cached = ev.get("cached")
+                if cached is None:
+                    cached = any(g.get("detail", "").startswith("cached;")
+                                 for g in ev.get("gates", []))
+                self.ledger.event(self.run_id, "experiment", n,
+                                  status="failed" if ev.get("failure") else "completed",
+                                  data=data, cached=cached, values=(a["metrics"] or {}).get("values", {}))
+
+    def attempt_records(self) -> list[dict[str, Any]]:
+        """Project existing events onto attempts; no second history authority."""
+        rows = self.ledger.attempts(self.run_id)
+        by_no = {a["attempt_no"]: a for a in rows}
+        for a in rows:
+            a.update(parent=a["champion_before"], candidate=None, execution=None,
+                     experiment=None, conclusion=None, comparison=None)
+            a["recoverable_patch"] = bool(a["patch_sha"] and
+                                          (self.attempt_dir(a["attempt_no"]) / "candidate.patch").is_file())
+        for event in self.ledger.events(self.run_id):
+            a = by_no.get(event["attempt"])
+            if a is None:
+                continue
+            body = event["body"]
+            if event["kind"] == "development_parent":
+                a["parent"] = body["commit"]
+                a["base_attempt"] = body.get("base_attempt")
+            elif event["kind"] == "candidate_saved":
+                a["candidate"] = body["commit"]
+                a["parent"] = body["parent"]
+            elif event["kind"] in ("execution", "experiment"):
+                a[event["kind"]] = body
+            elif event["kind"] == "comparison_baseline":
+                a["comparison"] = body
+            elif event["kind"] == "conclusion":
+                a["conclusion"] = body["text"]
+        return rows
+
     def context(self, n: int, champ: tuple[str, Measurements], focus: str | None,
                 tree: Path) -> dict[str, Any]:
-        attempts = self.ledger.attempts(self.run_id)
-        history, lessons = [], []
+        attempts = self.attempt_records()
         champions = self.ledger.champions(self.run_id)
-        decided = [a for a in attempts if a["outcome"]]
-        keep = {a["attempt_no"] for a in decided[-HISTORY_WINDOW:]} | \
-            {a["attempt_no"] for a in decided if a["outcome"] == Outcome.IMPROVEMENT.value}
+        decided = [a for a in attempts if a["outcome"] and a["plan"]]
+        keep = {a["attempt_no"] for a in decided[-HISTORY_WINDOW:]} | {
+            a["attempt_no"] for a in decided if a["conclusion"] is None
+            or a["outcome"] == Outcome.IMPROVEMENT.value}
+        history = []
         for a in decided:
-            plan = a["plan"] or {}
-            row = {"attempt": a["attempt_no"], "title": plan.get("title"),
-                   "hypothesis": plan.get("hypothesis"),
-                   "expected": plan.get("expected"), "falsifier": plan.get("falsifier"),
-                   "files": a["files"] or
-                   plan.get("files"), "outcome": a["outcome"], "reason": a["reason"],
-                   "gain": a["gain"], "plan_params": plan.get("params")}
-            if a["attempt_no"] in keep:
-                # Use the comparison baseline available when this attempt finished,
-                # including an in-attempt toolchain remeasurement, never today's best.
-                prior = [c for c in champions if c["commit_sha"] == a["champion_before"]
-                         and c["at"] <= a["finished_at"]
-                         and (c["attempt_no"] is None or c["attempt_no"] <= a["attempt_no"])]
-                row["champion_before"] = prior[-1]["metrics"] if prior else None
-                row["metrics"] = a["metrics"]
-                row["gates"] = a["gates"]
-                history.append(row)
-            o = a["outcome"]
-            if o in (Outcome.BROKEN.value, Outcome.SANDBOX.value, Outcome.NO_GAIN.value,
-                     Outcome.INCOMPARABLE.value, Outcome.WORKER_FAILED.value):
-                lessons.append("a%d %s '%s': %s" % (a["attempt_no"], o, plan.get("title") or "?",
-                                                    (a["reason"] or "")[:200]))
+            if a["attempt_no"] not in keep:
+                continue
+            plan = a["plan"]
+            prior = [c for c in champions if c["commit_sha"] == a["champion_before"]
+                     and c["at"] <= a["finished_at"]
+                     and (c["attempt_no"] is None or c["attempt_no"] <= a["attempt_no"])]
+            metrics = a["metrics"]
+            # No gate verdict text, worker errors or raw logs in expert context.
+            history.append({
+                "attempt": a["attempt_no"],
+                **{k: plan.get(k) for k in ("title", "hypothesis", "changes", "expected", "falsifier")},
+                "plan_params": plan.get("params"), "parent": a["parent"],
+                "candidate": a["candidate"], "outcome": a["outcome"],
+                "execution": a["execution"],
+                "experiment": a["experiment"] or {
+                    "status": "not_recorded" if a["gates"] else "not_executed", "data": []},
+                "champion_before": a["comparison"] or (
+                    {"values": prior[-1]["metrics"]["values"]} if prior else None),
+                "metrics": {k: metrics.get(k) for k in ("values", "spread", "repeats", "degraded_by")}
+                if metrics else None, "conclusion": a["conclusion"]})
         run = self.ledger.run(self.run_id)
         directions = [e["body"]["text"] for e in self.ledger.events(self.run_id, "direction")]
-        base = self.ledger.champions(self.run_id)[0]
+        base = champions[0]
         acc = self.task.acceptance
+        streak = 0
+        for a in reversed(attempts):
+            if a["outcome"] == Outcome.IMPROVEMENT.value:
+                break
+            if a["outcome"] and Outcome(a["outcome"]).counts_as_search:
+                streak += 1
+        # Onboard already maps task-brief background/done criteria/constraints to
+        # these notes. Never inject component.context_files source contents or
+        # arbitrary custom-domain material into the expert's input.
+        notes = [p for p in self.comp.context_files if p.startswith(".opc/context/")
+                 and p.endswith(".md") and ".." not in Path(p).parts]
+        if not notes:
+            notes = [".opc/context/" + p + ".md" for p in ("PROJECT", "REQUIREMENTS", "DECISIONS")]
+        background = {}
+        for rel in notes:
+            path = tree / rel
+            if path.is_file() and not path.is_symlink():
+                background[rel] = path.read_text(encoding="utf-8")[:20000]
         return {
             "attempt": n, "focus": focus,
             "task": {"goal": self.task.goal,
@@ -459,12 +549,71 @@ class Engine:
                           "editable": self.comp.editable, "scratch": self.comp.scratch},
             "champion": {"commit": champ[0], "values": champ[1].values},
             "baseline": {"commit": base["commit_sha"], "values": base["metrics"]["values"]},
-            "history": history, "lessons": lessons[-20:], "budget_left": self.budget_left(),
+            "history": history, "background": background, "budget_left": self.budget_left(),
+            "progress": {"target_met": acceptance.target_met(acc, champ[1].values),
+                         "no_gain_streak": streak, "stagnation_hint": self.task.budget.max_stagnation},
+            "candidates": [{"attempt": a["attempt_no"], "commit": a["candidate"],
+                            "parent": a["parent"], "title": (a["plan"] or {}).get("title"),
+                            "summary": a["execution"], "conclusion": a["conclusion"],
+                            "values": (a["metrics"] or {}).get("values")}
+                           for a in attempts if a["candidate"] or a["recoverable_patch"]],
             "tried_params": [a["plan"]["params"] for a in decided
-                             if (a["plan"] or {}).get("params") is not None
+                             if a["plan"].get("params") is not None
                              and a["outcome"] != Outcome.INFRA.value],
-            "domain": self.domain(tree).expert_context(tree),
         }
+
+    def save_conclusions(self, output: dict[str, Any], ctx: dict[str, Any], n: int) -> str | None:
+        pending = {a["attempt"] for a in ctx["history"] if a["conclusion"] is None}
+        conclusions = output.get("conclusions", [])
+        if not isinstance(conclusions, list):
+            return "conclusions must be a list"
+        seen = set()
+        for row in conclusions:
+            if (not isinstance(row, dict) or type(row.get("attempt")) is not int
+                    or row["attempt"] not in pending or row["attempt"] in seen
+                    or not isinstance(row.get("conclusion"), str) or not row["conclusion"].strip()):
+                return "conclusions must identify pending attempts with nonempty text"
+            seen.add(row["attempt"])
+        # Model calls review and decide together. Legacy deterministic strategies
+        # may omit conclusions; these remain visibly pending, never synthesized.
+        if self.task.expert.kind != "scripted" and seen != pending:
+            return "review all pending experiments before deciding"
+        for row in conclusions:
+            self.ledger.event(self.run_id, "conclusion", row["attempt"],
+                              text=row["conclusion"], reviewed_by_attempt=n)
+        return None
+
+    def save_candidate(self, ws: Workspaces, n: int, parent: str, patch: str, title: str) -> str:
+        tree = ws.checkout("a%06d/snapshot" % n, parent)
+        try:
+            apply_patch(tree, patch)
+            candidate = commit_tree(tree, "opc %s a%d candidate: %s" %
+                                    (self.task.task_id, n, title)) if patch.strip() else parent
+            git("update-ref", "refs/opc-candidates/%s/%s/a%d" %
+                (self.task.task_id, self.run_id, n), candidate, cwd=self.root)
+            self.ledger.event(self.run_id, "candidate_saved", n, commit=candidate, parent=parent)
+            return candidate
+        finally:
+            ws.drop(tree)
+
+    def development_parent(self, plan: dict[str, Any], champion: str, ws: Workspaces) -> str:
+        selected = plan.get("base_attempt")
+        if selected is None:
+            return champion
+        if selected == 0:
+            return self.ledger.run(self.run_id)["base_commit"]
+        prior = next((a for a in self.attempt_records() if a["attempt_no"] == selected), None)
+        if prior and prior["candidate"]:
+            return rev_parse(self.root, prior["candidate"])
+        if prior and prior["recoverable_patch"]:
+            # Older runs already saved base + patch. Restore them on selection,
+            # without a measurement or a new eligibility decision.
+            patch = (self.attempt_dir(selected) / "candidate.patch").read_text(encoding="utf-8")
+            if patch_digest(patch) != prior["patch_sha"]:
+                raise OPCError("saved candidate patch digest differs for a%d" % selected)
+            return self.save_candidate(ws, selected, prior["parent"], patch,
+                                       (prior["plan"] or {}).get("title", "restored candidate"))
+        raise OPCError("base_attempt %s has no saved candidate in this run" % selected)
 
     # ---------------------------------------------------------------- attempt
     def _worker_outcome(self, call: WorkerCall) -> Outcome:
@@ -500,16 +649,19 @@ class Engine:
             return outcome, None
 
         try:
-            expert_tree = ws.checkout("a%06d/expert" % n, champ[0])
+            loader = ws.checkout("a%06d/material-source" % n, champ[0])
+            trees.append(loader)
+            expert, designer = self.workers(loader)
+            ctx = self.context(n, champ, focus, loader)
+            ws.drop(loader)
+            trees.remove(loader)
+            expert_tree = ws.root / ("a%06d/material" % n)
+            expert_tree.mkdir(parents=True, exist_ok=True)
             trees.append(expert_tree)
-            expert, designer = self.workers(expert_tree)
-            ctx = self.context(n, champ, focus, expert_tree)
+            write_json(expert_tree / "research.json", ctx)
             write_json(adir / "context.json", ctx)
             call = expert.propose(ctx, expert_tree, adir / "expert")
             charge("expert", call.cost, call)
-            if call.exhausted:
-                finish(Outcome.NO_CHANGE, "expert has no further experiment")
-                return Outcome.NO_CHANGE, StopDecision("closed", "expert_exhausted")
             if not call.ok:
                 out = self._worker_outcome(call)
                 finish(out, "expert: %s" % call.error)
@@ -517,14 +669,25 @@ class Engine:
                     return out, StopDecision("blocked", "expert worker unavailable: %s"
                                              % call.error[:200])
                 return out, None
-            plan = call.output
+            plan = (call.output or {}) if call.exhausted else call.output
+            why = self.save_conclusions(plan, ctx, n) if isinstance(plan, dict) else "plan is not an object"
+            if why:
+                return finish(Outcome.WORKER_FAILED, "expert review: " + why)
+            if call.exhausted or plan.get("exhausted") is True:
+                reason = plan.get("stop_reason") or "expert has no further worthwhile work"
+                if not isinstance(reason, str):
+                    return finish(Outcome.WORKER_FAILED, "stop_reason must be text")
+                self.ledger.event(self.run_id, "expert_stop", n, reason=reason)
+                finish(Outcome.NO_CHANGE, reason)
+                return Outcome.NO_CHANGE, StopDecision("closed", "expert_exhausted: " + reason)
             why = validate_plan(plan)
             if why is None:
-                outside = [f for f in plan["files"] if not self.comp.is_editable(f)]
+                outside = [f for f in plan.get("files") or [] if not self.comp.is_editable(f)]
                 if outside:
                     why = "plan names non-editable paths: %s" % ", ".join(outside)
             if why is None:
-                key = (plan.get("title"), tuple(sorted(plan["files"])), plan.get("changes"),
+                key = (plan.get("title"), tuple(sorted(plan.get("files") or [])), plan.get("changes"),
+                       plan.get("base_attempt"),
                        json.dumps(plan.get("params"), sort_keys=True))
                 retryable = (Outcome.INFRA.value, Outcome.ABANDONED.value)
                 for a in self.ledger.attempts(self.run_id):
@@ -533,6 +696,7 @@ class Engine:
                         continue
                     if a["attempt_no"] != n and (p.get("title"), tuple(sorted(p.get("files") or [])),
                                                  p.get("changes"),
+                                                 p.get("base_attempt"),
                                                  json.dumps(p.get("params"), sort_keys=True)) == key:
                         why = "repeats attempt %d" % a["attempt_no"]
                         break
@@ -542,10 +706,19 @@ class Engine:
                 return finish(Outcome.WORKER_FAILED, "plan check: " + why)
             self.hard_check()
 
-            design_tree = ws.checkout("a%06d/designer" % n, champ[0])
+            try:
+                parent = self.development_parent(plan, champ[0], ws)
+            except OPCError as exc:
+                return finish(Outcome.WORKER_FAILED, "plan check: " + str(exc))
+            self.ledger.event(self.run_id, "development_parent", n, commit=parent,
+                              base_attempt=plan.get("base_attempt"))
+            ctx["parent"] = {"commit": parent, "base_attempt": plan.get("base_attempt")}
+            design_tree = ws.checkout("a%06d/designer" % n, parent)
             trees.append(design_tree)
             call = designer.implement(plan, ctx, design_tree, adir / "designer")
             charge("designer", call.cost, call)
+            self.ledger.event(self.run_id, "execution", n, completed=call.ok,
+                              summary=(call.output or {}).get("summary", ""))
             if not call.ok:
                 out = self._worker_outcome(call)
                 finish(out, "designer: %s" % call.error)
@@ -553,23 +726,28 @@ class Engine:
                     return out, StopDecision("blocked", "designer worker unavailable: %s"
                                              % call.error[:200])
                 return out, None
-            rep = sandbox(self.comp, design_tree, champ[0])
+            rep = sandbox(self.comp, design_tree, parent)
             write_json(adir / "sandbox.json", rep.as_dict())
             if not rep.ok:
                 return finish(Outcome.SANDBOX, "changed non-editable paths: %s"
                               % ", ".join(rep.violations[:6]), files=rep.violations)
-            patch = extract_patch(design_tree, champ[0], rep.editable)
-            if not patch.strip():
-                return finish(Outcome.NO_CHANGE, "designer left no editable change")
+            patch = extract_patch(design_tree, parent, rep.editable)
             write_text(adir / "candidate.patch", patch)
             self.ledger.update_attempt(self.run_id, n, "designed", patch_sha=patch_digest(patch),
                                        files=rep.editable)
+            # Snapshot only authorized edits, before gates can create outputs.
+            # Keep a ref even for NO_GAIN/BROKEN; selecting it never moves champion.
+            candidate = self.save_candidate(ws, n, parent, patch, plan["title"])
             self.hard_check()
 
-            ev, meas, eval_tree = self.evaluate_commit(ws, champ[0], patch, adir / "eval",
-                                                       "a%06d/eval" % n)
+            self.ledger.event(self.run_id, "experiment", n, status="started", data=[], cached=False)
+            ev, meas, eval_tree = self.evaluate_commit(ws, candidate, "", adir / "eval",
+                                                       "a%06d/eval" % n, fresh=not patch.strip())
             trees.append(eval_tree)
             charge("evaluator", Cost(ev.seconds, 0, 0.0))
+            self.ledger.event(self.run_id, "experiment", n,
+                              status="failed" if ev.failure else "completed", data=ev.data,
+                              cached=ev.cached, repeats=ev.repeats, values=ev.values)
             gates = [g.as_dict() for g in ev.gates]
             if ev.failure is not None:
                 return finish(ev.failure, ev.reason, gates=gates)
@@ -580,6 +758,8 @@ class Engine:
                 self.ledger.update_toolchain(self.run_id, meas.toolchain_digest)
                 champ = (champ[0], self.measure_champion(ws, champ[0], n,
                                                          "re-measured: toolchain changed"))
+            self.ledger.event(self.run_id, "comparison_baseline", n, commit=champ[0],
+                              values=champ[1].values, spread=champ[1].spread, repeats=champ[1].repeats)
             ok, why = meas.comparable(champ[1])
             if ok and sorted(meas.degraded_by) != sorted(champ[1].degraded_by):
                 ok, why = False, "evidence differs: candidate skipped %s, champion skipped %s" % (
@@ -593,9 +773,7 @@ class Engine:
                               metrics=meas.as_dict())
             self.ledger.update_attempt(self.run_id, n, "evaluated", gates=gates,
                                        metrics=meas.as_dict(), gain=gain)
-            msg = "opc %s a%d: %s\n\n%s\n\n%s" % (self.task.task_id, n, plan["title"],
-                                                  plan.get("hypothesis", ""), verdict.reason)
-            new = commit_tree(eval_tree, msg)
+            new = candidate
             meas.source_commit = new
             self.ledger.record_champion_intent(self.run_id, n, champ[0], new)
             self.move_champion_ref(new, champ[0])
@@ -624,6 +802,7 @@ class Engine:
             stop: StopDecision | None = None
             done_now = 0
             try:
+                self.backfill_history()
                 self.reconcile(ws)
                 while True:
                     ctl = self.ledger.control(self.run_id)
@@ -678,20 +857,26 @@ class Engine:
             gain = acceptance.relative_gain(self.task.acceptance, base["metrics"]["values"][m],
                                             best["metrics"]["values"][m])
         result = {"target_met": "target_met", "budget_exhausted": "best_within_budget",
-                  "stagnation": "best_within_budget", "expert_exhausted": "best_within_budget"}
+                  "stagnation": "best_within_budget", "expert_exhausted": "exploration_stopped"}
         business = None
         if run["state"] == "closed":
             key = (run["stop_reason"] or "").split(":")[0]
             business = result.get(key, "inconclusive")
             if business == "best_within_budget" and len(champs) <= 1:
                 business = "no_valid_candidate"
+            if best and acceptance.target_met(self.task.acceptance, best["metrics"]["values"]):
+                business = "target_met"
         return {"run_id": self.run_id, "task": self.task.task_id, "revision": self.task.revision,
                 "state": run["state"], "stop_reason": run["stop_reason"], "result": business,
                 "champion_ref": self.ref, "champion": best["commit_sha"] if best else None,
                 "baseline": base["commit_sha"] if base else None,
                 "baseline_metrics": base["metrics"]["values"] if base else None,
                 "champion_metrics": best["metrics"]["values"] if best else None,
+                "target_met": bool(best and acceptance.target_met(
+                    self.task.acceptance, best["metrics"]["values"])),
                 "objective": m, "objective_gain": gain, "outcomes": outcomes,
+                "pending_conclusions": [a["attempt_no"] for a in self.attempt_records()
+                                        if a["plan"] and a["outcome"] and a["conclusion"] is None],
                 "spent": self.spent(), "budget_left": self.budget_left()}
 
     def write_views(self) -> None:
@@ -699,7 +884,7 @@ class Engine:
             return
         s = self.summary()
         views = self.artifact_dir() / "views"
-        write_json(views / "report.json", {**s, "attempts": self.ledger.attempts(self.run_id),
+        write_json(views / "report.json", {**s, "attempts": self.attempt_records(),
                                            "champions": self.ledger.champions(self.run_id)})
         lines = ["# %s / %s" % (self.task.task_id, self.run_id), "",
                  "Projection of the ledger; not an authority.", "",
@@ -713,7 +898,7 @@ class Engine:
                  "- spent: %s" % json.dumps(s["spent"]), "- left: %s" % json.dumps(s["budget_left"]),
                  "", "| # | outcome | title | gain | reason |", "|---|---|---|---|---|"]
         lessons = ["# Lessons (generated)", ""]
-        for a in self.ledger.attempts(self.run_id):
+        for a in self.attempt_records():
             title = ((a["plan"] or {}).get("title") or "")[:50]
             lines.append("| %d | %s | %s | %s | %s |" % (
                 a["attempt_no"], a["outcome"] or a["state"], title,
@@ -722,5 +907,8 @@ class Engine:
             if a["outcome"] and a["outcome"] != Outcome.IMPROVEMENT.value:
                 lessons.append("- a%d %s `%s`: %s" % (a["attempt_no"], a["outcome"], title,
                                                      (a["reason"] or "")[:200]))
+            if a["plan"]:
+                lessons.append("- a%d expert conclusion: %s" %
+                               (a["attempt_no"], a["conclusion"] or "pending review"))
         write_text(views / "STATE.md", "\n".join(lines) + "\n")
         write_text(views / "LESSONS.md", "\n".join(lessons) + "\n")

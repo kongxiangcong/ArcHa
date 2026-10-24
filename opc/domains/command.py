@@ -26,7 +26,7 @@ from typing import Any
 
 from ..core.config import ComponentConfig, GateSpec
 from ..core.model import GateResult, GateStatus, Outcome, canonical_json, write_json
-from ..domain import Evaluation
+from ..domain import Evaluation, experimental_data
 
 EX_TEMPFAIL = 75
 TAIL = 4000
@@ -137,6 +137,9 @@ class CommandDomain:
                 if status is GateStatus.PASSED and gate.metrics:
                     mpath = Path(self._subst(gate.metrics, tree, out))
                     try:
+                        ev.data.append({"gate": gate.gate_id, "repeat": r + 1,
+                                        "data": experimental_data(
+                                            json.loads(mpath.read_text(encoding="utf-8")))})
                         for k, v in read_metrics(mpath).items():
                             samples.setdefault(k, []).append(v)
                     except (OSError, ValueError) as exc:
@@ -167,9 +170,6 @@ class CommandDomain:
 
     # --------------------------------------------------------------- context
     def expert_context(self, tree: Path) -> dict[str, Any]:
-        files = {}
-        for rel in self.comp.context_files:
-            p = tree / rel
-            if p.is_file():
-                files[rel] = p.read_text(encoding="utf-8", errors="replace")[:20000]
-        return {"context_files": files}
+        # Source context_files used to be injected into expert prompts. Research
+        # notes are now selected by the core; implementation stays with designer.
+        return {}

@@ -277,7 +277,7 @@ def test_plan_requires_existing_text_fields(field, value):
     assert validate_plan(plan) == 'plan.%s is empty' % field
 
 
-@pytest.mark.parametrize('files', [[], [''], ['  '], [42], 'a'])
+@pytest.mark.parametrize('files', [[''], ['  '], [42], 'a'])
 def test_plan_requires_nonempty_paths(files):
     from opc.adapters.worker import validate_plan
     plan = dict(title='t', hypothesis='h', changes='c', expected='e', falsifier='f', files=files)
@@ -293,8 +293,8 @@ def test_next_expert_receives_original_plan_and_measured_evidence(make_project, 
     previous = ctx['history'][0]
     for field in ('hypothesis', 'expected', 'falsifier'):
         assert previous[field] == attempts[0]['plan'][field]
-    assert previous['metrics'] == attempts[0]['metrics']
-    assert previous['gates'] == attempts[0]['gates']
+    assert previous['metrics']['values'] == attempts[0]['metrics']['values']
+    assert 'gates' not in previous and 'reason' not in previous
     assert previous['champion_before']['values']['loss'] == 17
     assert previous['metrics']['values']['loss'] != 17
     for plain_text in (False, True):
@@ -311,5 +311,5 @@ def test_failed_gate_history_preserves_failure_without_inventing_metrics(make_pr
     previous = ctx['history'][0]
     assert previous['outcome'] == Outcome.BROKEN.value
     assert previous['metrics'] is None
-    assert previous['gates']
+    assert previous['experiment']['status'] == 'failed'
     assert previous['falsifier'] == 'loss does not decrease'

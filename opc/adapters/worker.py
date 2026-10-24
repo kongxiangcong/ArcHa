@@ -1,8 +1,7 @@
 """The worker seam. Roles belong to OPC; a worker is only how a role gets executed.
 
-An expert reads a champion tree (read-only) and returns a plan; a designer edits
-a writable tree to implement that plan. Neither decides whether a result counts,
-what runs next, or how much budget remains.
+An expert reads research material and results and returns a plan or stops exploration;
+a designer locates and edits code. Acceptance and resource limits belong to the core.
 """
 from __future__ import annotations
 
@@ -13,7 +12,7 @@ from typing import Any, Protocol
 from ..core.config import WorkerSpec
 from ..core.model import Cost, OPCError
 
-PLAN_FIELDS = ("title", "hypothesis", "files", "changes", "expected", "falsifier")
+PLAN_FIELDS = ("title", "hypothesis", "changes", "expected", "falsifier")
 
 #: The one reply every model worker may give instead of a plan, meaning "no further
 #: experiment is worth its budget". Shared so neither worker's termination depends
@@ -23,20 +22,25 @@ EXHAUSTED_SENTINEL = "NO_EXPERIMENT"
 PLAN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": [*PLAN_FIELDS, "exhausted"],
+    "required": [*PLAN_FIELDS, "exhausted", "base_attempt", "conclusions", "stop_reason"],
     "properties": {
         "title": {"type": "string", "description": "short name of the experiment"},
         "hypothesis": {"type": "string", "description": "why this should improve the objective"},
-        "files": {"type": "array", "items": {"type": "string"},
-                  "description": "repository-relative paths that will be edited"},
-        "changes": {"type": "string", "description": "concrete edits the designer must make"},
+        "changes": {"type": "string", "description": "method and experiment for the designer to implement"},
+        "base_attempt": {"type": ["integer", "null"],
+                         "description": "null: champion; 0: initial baseline; positive: saved candidate attempt"},
+        "conclusions": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "required": ["attempt", "conclusion"], "properties": {
+                "attempt": {"type": "integer"}, "conclusion": {"type": "string"}}}},
+        "stop_reason": {"type": "string", "description": "why exploration should end; empty while continuing"},
         "expected": {"type": "string", "description": "expected effect on metrics"},
         "falsifier": {"type": "string", "description": "observation that would refute it"},
         # codex's --output-schema admits only an object, so a worker with nothing
         # left to try has no way to say so in text. Strict structured output
         # requires every property: normal plans return false, exhausted ones true.
         "exhausted": {"type": "boolean",
-                      "description": "true when no further experiment can improve the objective"},
+                      "description": "true when no worthwhile work remains for the task within budget"},
     },
 }
 
@@ -78,12 +82,13 @@ def validate_plan(plan: Any) -> str | None:
     if not isinstance(plan, dict):
         return "plan is not an object"
     for k in PLAN_FIELDS:
-        if k == "files":
-            continue
         if not isinstance(plan.get(k), str) or not plan[k].strip():
             return "plan.%s is empty" % k
     files = plan.get("files")
-    if not isinstance(files, list) or not files or not all(
-            isinstance(f, str) and f.strip() for f in files):
-        return "plan.files must be a non-empty list of paths"
+    if files is not None and (not isinstance(files, list) or not all(
+            isinstance(f, str) and f.strip() for f in files)):
+        return "plan.files must be a list of paths when supplied"
+    base = plan.get("base_attempt")
+    if base is not None and (type(base) is not int or base < 0):
+        return "plan.base_attempt must be null or a nonnegative attempt number"
     return None

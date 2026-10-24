@@ -14,6 +14,7 @@ this grid, which the engine records as `expert_exhausted`.
 """
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -41,14 +42,17 @@ class ParamSearch:
         if not self.space:
             raise ValueError("param_search needs a non-empty space")
 
-    def _current(self, tree: Path) -> dict:
-        return json.loads((tree / self.file).read_text(encoding="utf-8"))
-
     def _point(self, cfg: dict) -> dict:
         return {k: get(cfg, k) for k in self.space}
 
     def propose(self, ctx: dict, tree: Path) -> dict | None:
-        cfg = self._current(tree)
+        cfg = copy.deepcopy(self.initial_config)
+        current = next((a for a in reversed(ctx.get("history") or [])
+                        if a.get("candidate") == ctx["champion"]["commit"]
+                        and a.get("plan_params")), None)
+        if current:
+            for key, value in current["plan_params"].items():
+                put(cfg, key, value)
         point = self._point(cfg)
         tried_keys = {json.dumps(t, sort_keys=True) for t in ctx.get("tried_params") or []}
         focus = ctx.get("focus")

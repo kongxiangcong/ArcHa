@@ -58,7 +58,14 @@ if mode == "dsh_home_missing":
     sys.exit(1)
 
 emit(type="status", phase="step_start", turn=1, step=1)
-x = json.loads((cwd / "params.json").read_text())["x"]
+if (cwd / "research.json").exists():
+    ctx = json.loads((cwd / "research.json").read_text())
+    assert not (cwd / "params.json").exists() and not (cwd / ".git").exists()
+    x = int(7 - (ctx["champion"]["values"]["loss"] - 1) ** 0.5)
+    reviews = [{"attempt": a["attempt"], "conclusion": "original design measured: " + str(a["metrics"])}
+               for a in ctx["history"] if a["conclusion"] is None]
+else:
+    x = json.loads((cwd / "params.json").read_text())["x"]
 
 if sandbox == "read-only":
     assert "EXPERT" in prompt, "expert prompt arrived without the role marker"
@@ -74,8 +81,10 @@ if sandbox == "read-only":
         text = "I would rather describe the plan in prose than in JSON."
     else:
         plan = {"title": "x=%d" % (x + 1), "hypothesis": "closer to 7",
-                "files": ["params.json"], "changes": "set x to %d" % (x + 1),
-                "expected": "lower loss", "falsifier": "loss rises"}
+                "base_attempt": None, "changes": "set x to %d" % (x + 1),
+                "expected": "lower loss", "falsifier": "loss rises", "conclusions": reviews}
+        if ctx["progress"]["target_met"]:
+            plan = {"title": "done", "exhausted": True, "conclusions": reviews, "stop_reason": "finished"}
         text = "Here is the plan:" + chr(10) + FENCE + "json" + chr(10) + json.dumps(plan) + chr(10) + FENCE
 else:
     assert sandbox == "workspace-write", "designer ran without a writable policy"
@@ -146,7 +155,7 @@ def test_dsh_exhausted_expert_closes_the_run(make_project, engine_for, fake_dsh,
     monkeypatch.setenv("FAKE_DSH_MODE", "exhausted")
     e = engine_for(make_project(tsk=dsh_task(fake_dsh)))
     s = e.run()
-    assert s["state"] == "closed" and s["stop_reason"] == "expert_exhausted"
+    assert s["state"] == "closed" and s["stop_reason"].startswith("expert_exhausted:")
 
 
 def test_dsh_prose_reply_is_not_accepted_as_a_plan(make_project, engine_for, fake_dsh,

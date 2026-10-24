@@ -31,13 +31,17 @@ from pathlib import Path
 class Step:
     def __init__(self, options): self.options = options
     def propose(self, ctx, tree):
-        x = json.loads((tree / "params.json").read_text())["x"]
+        x = int(7 - (ctx["champion"]["values"]["loss"] - 1) ** 0.5)
+        reviews = [{"attempt": a["attempt"], "conclusion": "Measured result for original design: " + str(a["metrics"])}
+                   for a in ctx["history"] if a["conclusion"] is None]
+        if ctx["progress"]["target_met"]:
+            return {"exhausted": True, "conclusions": reviews, "stop_reason": "task target reached"}
         tried = {json.dumps(t, sort_keys=True) for t in ctx.get("tried_params") or []}
         for nx in (x + 1, x - 1):
             if json.dumps({"x": nx}, sort_keys=True) not in tried:
                 return {"title": "x=%d" % nx, "hypothesis": "closer to optimum",
                         "files": ["params.json"], "changes": "set x", "expected": "lower loss",
-                        "falsifier": "loss does not decrease", "params": {"x": nx}}
+                        "falsifier": "loss does not decrease", "params": {"x": nx}, "conclusions": reviews}
         return None
     def implement(self, plan, tree):
         (tree / "params.json").write_text(json.dumps(plan["params"]))

@@ -14,6 +14,7 @@ unit of budget. The strategy is a frozen evaluator-side file:
 from __future__ import annotations
 
 import importlib.util
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,8 @@ class ScriptedWorker:
         if ref == "builtin:param_search":
             from ..strategies.param_search import ParamSearch
             self.strategy = ParamSearch(dict(options.get("options") or {}))
+            self.strategy.initial_config = json.loads(
+                (evaluator_tree / self.strategy.file).read_text(encoding="utf-8"))
             return
         if not ref or ":" not in ref:
             raise OPCError("scripted worker needs strategy='path/file.py:Class' or "

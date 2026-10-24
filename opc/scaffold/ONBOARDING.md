@@ -3,6 +3,8 @@
 本文件由 `opc init` 复制到 `.opc/ONBOARDING.md`，也是 `opc onboard` 交给 agent 的指令。
 目标：把一个**已经能跑通流程的基线项目**接入 OPC，使它可以被自动迭代优化。
 
+起草时先按第 6、7 节确定读取范围与完成点，再用第 2–4 节填写合同。简报和模板已明确的字段直接映射，已有可用门直接复用，适配层只处理项目与门协议的差异。
+
 ## 0. 先确认四件事，缺一件就不能开始自动迭代
 
 | 必需 | 含义 | 放在哪里 |
@@ -37,6 +39,8 @@
 2. 检查正确性（对 golden / 参考模型），不正确就以非 0 退出。
 3. 把指标写进 `--out` 目录下的 `metrics.json`：`{"metrics": {"latency_cycles": 1234, "correct": 1}}`。
 
+`{out}/stdout.txt` 和 `{out}/stderr.txt` 由门执行器持有；适配器自己的子进程日志使用不同名称（如 `original-stdout.txt`），避免覆盖或删除门日志。
+
 退出码约定（区分"候选坏了"和"环境坏了"——openTPU 曾把环境故障记成候选失败）：
 
 | 退出码 | 含义 | OPC 的处理 |
@@ -57,13 +61,14 @@
   "editable": ["configs/emulator.json"],
   "frozen": ["tests/**", "golden/**"],
   "evaluator_files": [".opc/eval/**", "tests/**", "golden/**", "workloads/**"],
+  "scratch": [],
   "toolchain": [["{python}", "--version"]],
   "gates": [
     {"id": "unit", "argv": ["{python}", "-m", "pytest", "-q", "tests"], "timeout_s": 600},
     {"id": "evaluate", "argv": ["{python}", ".opc/eval/evaluate.py", "--out", "{out}"],
      "metrics": "{out}/metrics.json", "timeout_s": 3600, "repeat": true}
   ],
-  "context_files": ["README.md"],
+  "context_files": [".opc/context/PROJECT.md", ".opc/context/REQUIREMENTS.md", ".opc/context/DECISIONS.md"],
   "focus_areas": []
 }
 ```
@@ -72,6 +77,7 @@
 - `editable` 越窄越好。不在 `editable` 里的路径本来就不可改；`frozen` 只用来从 `editable` 的通配里挖掉例外（如 `src/**` 里的 `src/golden/**`）。与 `frozen`/`evaluator_files` 冲突时拒绝优先；`.opc/**` 永远冻结。
 - 调参任务里，被调参的模型/模拟器代码本身就是评价器的一部分，要列进 `evaluator_files`：候选能改模型，就等于能改评分。
 - `evaluator_files` 决定 evaluator digest：任何一个文件变了，就是新的评价器，必须开新 run。
+- `scratch` 声明命令生成的文件（如评测报告）：允许生成，但不进入候选补丁；冻结评价器和 `.opc/**` 仍受保护。只列实际生成物，与可改源码分开，不扩大 `editable`。
 - `toolchain` 列出会影响数字的工具版本命令。工具链变了，champion 会被重测，不同工具链的数字不比较（openTPU 上 Yosys 0.69/0.70 让 fmax 差 14.8%）。
 - 门按顺序执行，首个失败即停。占位符：`{worktree}` 候选树、`{out}` 该门输出目录、`{python}` 当前解释器。
 - 不要用 `sh -c`：把命令写成评价器里的脚本。
@@ -208,10 +214,13 @@ opc promote   -p <project> --task <task> --confirm 3   # 晋升审核；--apply 
 
 - 只在 `.opc/` 下创建或修改文件；不改项目源码、测试或已有配置。
 - `.opc/runtime/`、`.opc/archa.py` 和 `.opc/research/` 是只读输入。起草只修改合同、评价器、context 和 Open items；工具事后检测输入变化，检测不等于文件系统隔离。
-- 先读 README、构建脚本、测试，找到"已经能跑通的流程"的确切命令，再写 `evaluate.py`。
+- 有 task-brief 时按第 7 节复用调查；没有时从 README、构建脚本和测试定位已有流程。读到足以确定范围、真实命令、指标、退出码及生成物即可起草，缺口再定向补读。
+- 以本指南和已有合同模板作为接入接口；补读前先明确尚未解决的合同问题，再定位相关符号或段落。独立文件可批量读取，搜索结果只展开相关定义，已在提示词或工具结果中的内容直接复用。worker 沿用已有配置。
 - 在 Windows 上创建供沙箱 worker 使用的验证副本或测试夹具时，在 `.opc/local/` 下用普通 `mkdir` 创建唯一目录以继承项目 ACL。Python 3.13+ 的 `TemporaryDirectory` / `mkdtemp` 使用私有 mode 0700，可能使沙箱身份无法访问；保留首次权限失败与修复后的验证记录，不以跳过验证代替修复。
 - 没有把握的字段写 `TODO` 并在 `.opc/README.md` 列出缺项，不要编造指标名或阈值。
 - 指标名必须是 `evaluate.py` 真实写出的键。
+- 起草完成后运行 `check`。新适配层在 `.opc/local/` 副本中通过合同门验证一次合法测量（可调用 `CommandDomain(component).evaluate(...)`），再针对性验证候选失败及缺失/陈旧报告处理；直接调用适配器不能代替合同门接入验证。正式基线测量由后续 `preflight` 负责，起草保持执行关闭。
+- 验证覆盖上述接入与测量语义即止，合同、context、Open items 齐备后简述产物与剩余阻塞并结束。输入变更检查复用 onboard 自带检查；框架内部审计和不影响起草的环境告警留给对应维护任务。
 
 
 ## 7. 来自两阶段讨论的任务简报
@@ -220,12 +229,12 @@ opc promote   -p <project> --task <task> --confirm 3   # 晋升审核；--apply 
 
 地图技能只部署 runtime 和入口，不提前创建合同。对这类项目，onboard 在简报检查通过后补建关闭执行的合同骨架，再调用 worker；已有项目保留原合同。
 
-简报只给目标范围、交付物和候选验收条件；基线、可改/冻结路径、预算、worker 和自主权边界由起草时根据仓库实际情况确定。先读简报、源 map 和它索引的 evidence，区分已定决定、建议和未知；简报的 Open decisions 是起草时要处理或保留的事项。
+简报只给目标范围、交付物和候选验收条件；基线、可改/冻结路径、预算、worker 和自主权边界由起草时根据仓库实际情况确定。先用提示词中的完整简报和它索引的相关 evidence，区分已定决定、建议和未知；源 map 只补读本任务的范围与依赖。复用已有调查结论和来源定位，核对影响合同的关键源码；证据缺失、冲突或与当前源码不符时再扩读。简报的 Open decisions 是起草时要处理或保留的事项，无需上游另做调查或补写交接材料。
 
 - 字段映射：`Goal:` → `task.goal`，`Direction:` → `task.direction`，`- R*:` → `task.requirements[]`（`verification` 原样保留），`Objective:` → `acceptance.objective`。`Objective: none` 或 `evaluator=待建/未知` 都写成 blocking Open item。`Done when` 和交付物 `D*` 写入 `.opc/context/REQUIREMENTS.md`。
-- 把简报和 `.opc/context/` 中的精简决定接入组件 `context_files`；专家不会自动读到其他文档，每个文件默认只读前 20000 字符。
+- 把本任务在 map/简报中的相关背景、方向、完成标准、约束、已有能力写入 `.opc/context/` 的精简材料，并用 `context_files` 选择这些 Markdown 文件；未选择时使用 PROJECT、REQUIREMENTS、DECISIONS 三份材料。专家在只有研究材料的目录运行，不读取源码或其他 `context_files`，每份材料最多读取前 20000 字符。designer 负责读代码、定位文件和实现。
 - 每个验收 gate 写明真实命令/评价器是否存在。缺失的实现、用户未定的预算、无法表达的研究语义都作为 blocking Open items 写入 `.opc/README.md`，保持 `execution_enabled=false`；不要用模板默认数或虚构优化分数代替。
 - 只有内容与 `opc.scaffold.task_template(task_id, component_id)` 完全一致的 revision 才是可直接填写的空模板。部分填写、仍含 TODO 的合同也不是空模板。已有真实内容的 revision 保留：不同研究任务创建独立 task；同一任务的合同变更创建新 revision，并记录对应简报。
-- 纯取证无补丁、每轮独立研究审核、多任务依赖调度不是当前引擎的原生能力。
+- 无源码补丁的测量可复用冻结评价命令，强制新测量；未执行、缓存结果、测量失败分别如实记录。额外诊断需由现有门输出结构化数据，不扩建通用实验调度。每轮独立研究审核、多任务依赖调度不在当前流程内。
 
 简报就绪仅指可以起草；`brief-check`、`check` 和 `preflight` 都不判断研究结论是否成立。
