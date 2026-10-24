@@ -1,14 +1,14 @@
 # OPC 项目接入与目录规范
 
-更新：2026-10-22。补充[框架实现方案](OPC%20框架实现方案.md)，约定项目接入、每次实验的存放位置与生命周期。可运行实现为 [opc 引擎](opc/README.md)，合同字段以[接入指南](opc/scaffold/ONBOARDING.md)为准。
+更新：2026-10-22。补充[框架实现方案](OPC%20框架实现方案.md)，约定项目接入、每次实验的存放位置与生命周期。可运行实现为 [opc 引擎](../../opc/README.md)，合同字段以[接入指南](../../opc/scaffold/ONBOARDING.md)为准。
 
 ## 1. 核心判断
 
 **OPC 是项目外的通用工作流运行时；目标项目保留原目录，只增加 `.opc/` 接入层。**接入任何项目指协议可以适配，不代表一个目录天然具备可自动优化的参考、评价器和资源。
 
-从 openTPU 借用四种资产分开管理的方法：组件配置、候选工作区、实验原件、构建缓存。其 `tools/tourney/components/`、`.tourney/`、`tools/tourney/runs/`、`build/` 分工有源码依据，但它的 RTL 字段、秒级 slot 命名和强制清理不是通用规范。[固定版本核查](docs/research/project-integration.md)
+从 openTPU 借用四种资产分开管理的方法：组件配置、候选工作区、实验原件、构建缓存。其 `tools/tourney/components/`、`.tourney/`、`tools/tourney/runs/`、`build/` 分工有源码依据，但它的 RTL 字段、秒级 slot 命名和强制清理不是通用规范。[固定版本核查](../research/project-integration.md)
 
-从 gsd-core 借用项目盘点、稳定需求 ID、上下文决策和需求到验证追踪。它既有模板，也有确定性检查；不过自报覆盖不能代替 reviewer 身份和原始实验。OPC 不安装第二个 Master，不复制整套模板树。[GSD 固定版本核查](docs/research/gsd-contracts.md)
+从 gsd-core 借用项目盘点、稳定需求 ID、上下文决策和需求到验证追踪。它既有模板，也有确定性检查；不过自报覆盖不能代替 reviewer 身份和原始实验。OPC 不安装第二个 Master，不复制整套模板树。[GSD 固定版本核查](../research/gsd-contracts.md)
 
 减法：不搬迁源码、不为每个项目复制一份 OPC 引擎、不把运行原件默认提交 Git、不把每轮实验变成一轮人工表格填写。项目只提供领域适配信息，Ge 完成结构化转换并管理缺项。
 
@@ -166,7 +166,7 @@ python3 -m opc check     -p <project> --task t-main     # 只校验合同
 python3 -m opc preflight -p <project> --task t-main     # 在基线上真跑一遍门
 ```
 
-`init` 只写 `.opc/`，不运行项目命令。完整流程见 [opc 引擎](opc/README.md) 和 [PIM 示例](examples/pim-emulator/README.md)。
+`init` 只写 `.opc/`，不运行项目命令。完整流程见 [opc 引擎](../../opc/README.md) 和 [PIM 示例](../../examples/pim-emulator/README.md)。
 
 组件合同里的门命令是 argv 数组；`opc check` 拒绝 `sh -c` 等绕过，不能把“argv数组”误认为安全执行边界。领域代码改动许可是项目级限制与TaskSpec限制的交集；`.opc`、`.git`、evaluator、golden、验收输入默认排除。glob可能覆盖冻结路径时，拒绝优先。
 
@@ -195,5 +195,5 @@ python3 -m opc preflight -p <project> --task t-main     # 在基线上真跑一�
 
 ## 10. 合同
 
-合同只有一份、不带版本号：`project.json` → `components/<id>.json` → `tasks/<task>/revisions/rNNNN/task.json`，字段与规则见[接入指南](opc/scaffold/ONBOARDING.md)。未知字段直接报错。`context/` 下的 PROJECT/REQUIREMENTS/DECISIONS 是人读语义材料；STATE.md、LESSONS.md、report.json 是从 ledger 生成的视图。合同改动用新的 rNNNN 修订并开新 run，旧修订不原地改。
+合同只有一份、不带版本号：`project.json` → `components/<id>.json` → `tasks/<task>/revisions/rNNNN/task.json`，字段与规则见[接入指南](../../opc/scaffold/ONBOARDING.md)。未知字段直接报错。`context/` 下的 PROJECT/REQUIREMENTS/DECISIONS 是人读语义材料；STATE.md、LESSONS.md、report.json 是从 ledger 生成的视图。合同改动用新的 rNNNN 修订并开新 run，旧修订不原地改。
 

@@ -1,8 +1,8 @@
 # OPC 框架实现方案：Ge 与可验证的自动研发闭环
 
-更新：2026-10-22。输入：[原交接文档](OPC%20自主研发工作流交接.md)与用户需求。性质：可实施设计、接口草案及本地技术验证；不是已部署的自主研发平台。
+更新：2026-10-22。输入：[原交接文档](../../OPC%20自主研发工作流交接.md)与用户需求。性质：可实施设计、接口草案及本地技术验证；不是已部署的自主研发平台。
 
-可运行实现见 [opc 引擎](opc/README.md)；合同只有一份，定义在[接入指南](opc/scaffold/ONBOARDING.md)。另见[项目接入与目录规范](OPC%20项目接入与目录规范.md)。OPC引擎独立于目标项目，目标项目保留原结构，`.opc/`只存接入配置与语义材料，候选工作区和实验原件按项目/任务/run/attempt隔离。下文 GEMV 结果是更早的 LangGraph 原型，保留作对照。
+可运行实现见 [opc 引擎](../../opc/README.md)；合同只有一份，定义在[接入指南](../../opc/scaffold/ONBOARDING.md)。另见[项目接入与目录规范](OPC%20项目接入与目录规范.md)。OPC引擎独立于目标项目，目标项目保留原结构，`.opc/`只存接入配置与语义材料，候选工作区和实验原件按项目/任务/run/attempt隔离。下文 GEMV 结果是更早的 LangGraph 原型，保留作对照。
 
 ## 1. 设计判断
 
@@ -32,7 +32,7 @@
 | 工程推断 | LLM 输出存在错误，工具存在重试，指标存在噪声 | 模型提案必须通过确定性校验；原始证据必须冻结 |
 | 待验证假设 | 当前后端能提供独立会话、只读审核和可追踪费用 | 满足后才可宣称真实 agent 闭环；否则仍是离线控制验证 |
 
-资料分别见[运行底座核查](docs/research/runtime-reuse.md)和[优化循环核查](docs/research/optimization-reuse.md)。二者是本轮固定版本源码/官方文档检查，不能继承原交接文档中无法访问的旧测试原件为本轮测试。
+资料分别见[运行底座核查](../research/runtime-reuse.md)和[优化循环核查](../research/optimization-reuse.md)。二者是本轮固定版本源码/官方文档检查，不能继承原交接文档中无法访问的旧测试原件为本轮测试。
 
 敏感点：如果真实任务持续数天、跨机器并依赖远端调度器，轻量 SQLite 主控的运维收益会下降，应评估 Temporal；如果任务没有可靠 evaluator，则先派发“建设参考与评价器”的任务，不能直接跑优化竞赛。
 
@@ -136,7 +136,7 @@ Skills 可以存放领域知识、写作方式、工具用法；不负责持久�
 
 ## 6. 用户与 Ge 的合同
 
-合同只有一份、不带版本号：`.opc/project.json`、`components/<id>.json`、`tasks/<task>/revisions/rNNNN/task.json`，字段与规则见[接入指南](opc/scaffold/ONBOARDING.md)，由 `opc/core/config.py` 严格校验（未知字段报错）。需求用稳定 REQ-ID，可带 `check` 供晋升时判定 met / not_met；`.opc/context/` 下的 PROJECT/REQUIREMENTS/DECISIONS 是人读语义材料。任务修订用新的 rNNNN 目录，旧修订不原地改。
+合同只有一份、不带版本号：`.opc/project.json`、`components/<id>.json`、`tasks/<task>/revisions/rNNNN/task.json`，字段与规则见[接入指南](../../opc/scaffold/ONBOARDING.md)，由 `opc/core/config.py` 严格校验（未知字段报错）。需求用稳定 REQ-ID，可带 `check` 供晋升时判定 met / not_met；`.opc/context/` 下的 PROJECT/REQUIREMENTS/DECISIONS 是人读语义材料。任务修订用新的 rNNNN 目录，旧修订不原地改。
 
 此前设计中的权限/网络声明、带哈希的需求溯源、产物关键连接、审核轴与证据等级，引擎尚不能执行，已从合同中移除；能执行时再加回，不保留只写不查的字段。
 
@@ -228,7 +228,7 @@ class DomainAdapter:
 
 ### 9.2 本轮验证层次
 
-详见[验证结果](docs/validation.md)。目标是运行可复现的自动控制闭环，而不是展示一段写好的对话。
+详见[验证结果](../validation.md)。目标是运行可复现的自动控制闭环，而不是展示一段写好的对话。
 
 - 实际复用 LangGraph；规则专家、模板代码生成器与独立验证进程真实运行。
 - 实际产生候选文件、数值实验结果、原始输出、hash 和审核记录。

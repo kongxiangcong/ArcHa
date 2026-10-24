@@ -1,6 +1,6 @@
 # ArcHa
 
-**ArcHa** 是一个领域无关的自动迭代框架：把一个已经能跑通基线的项目接进来，给一个优化方向，引擎就会反复执行「专家提假设 → 设计者改代码 → 冻结评价器打分 → 确定性接纳 → 反馈下一轮」，直到达成目标、预算耗尽、搜索枯竭或被暂停。
+**ArcHa** 是一个领域无关的自动迭代框架：把一个已经能跑通基线的项目接进来，给一个优化方向，引擎就会反复执行「专家提假设 → 设计者改代码 → 冻结评价器打分 → 确定性接纳 → 反馈下一轮」，由专家决定继续或结束探索，或在资源耗尽、执行故障、用户暂停时结束。
 
 核心不认识 RTL、编译器、模拟器或 PIM bank。领域只通过目标项目 `.opc/` 下的合同和脚本接入：可改范围、冻结的评价器文件、有序命令门、指标字典和一条声明式接纳规则。
 
@@ -80,7 +80,7 @@ python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --brief .op
 
 布局见 [研究材料约定](skills/archa-map/references/research-layout.md)，简报见 [模板](skills/archa-task/references/task-brief.md)，证据见 [证据约定](skills/archa-task/references/evidence.md)，引擎映射见 [消费链](skills/archa-task/references/archa-workflow.md)。`brief-check` 只检查结构、占位项和来源，**不证明研究设计正确或可运行**。目标可随证据调整；已冻结执行合同的变化需要新 revision/run。
 
-onboard 将正文与来源摘要交给 worker，在 `.opc/local/onboard/` 保存本次输入与 SHA-256（该目录为最近一次起草记录，不是不可变实验归档）。实际产出仍需核对：要求是否进入合同/上下文、gate 是否实现、能力缺口是否保留。当前研究任务中的纯取证无补丁、逐轮独立审核、跨任务调度需要另外适配，本次讨论工具没有实现这些能力。
+onboard 将正文与来源摘要交给 worker，在 `.opc/local/onboard/` 保存本次输入与 SHA-256（该目录为最近一次起草记录，不是不可变实验归档）。实际产出仍需核对：要求是否进入合同/上下文、gate 是否实现、能力缺口是否保留。当前引擎支持无补丁的新测量和在下一次专家调用中复盘；额外诊断须由现有评价器输出数据。逐轮独立审核、跨任务调度仍需另外适配。
 
 ## 一轮里发生什么
 
@@ -123,9 +123,21 @@ opc/                     引擎（核心不含量指标名、工具名或领域�
   scaffold/              init 模板、onboard 指令与 ONBOARDING.md
   tests/                 引擎测试（假 codex、假 dsh、失败注入）
 tools/project_layout.py  v0.2 时代的接入路径规划工具（独立于引擎，仅预览/生成 .opc 草案）
-docs/                    源码核查、历史验证、独立审核、讨论与证据
-OPC 框架实现方案.md       设计判断、状态机、预算与恢复、复用选型、分阶段验收
-OPC 项目接入与目录规范.md  三个根目录、.opc 布局、实验产物路径与生命周期
+docs/
+  README.md              文档导航与维护边界
+  design/                框架设计基线、项目接入与目录规范
+  research/              固定版本源码与外部方案核查
+  discussions/           研究讨论、确认方案和返回点
+  reviews/               历史独立审核记录
+  reports/               已完成验证的可提交报告
+  evidence/              审核与验证的原始证据
+benchmarks/
+  cases/ adapters/ profiles/   固定任务、冻结评价器、实验配置
+  scripts/               历史实验的执行与报告辅助脚本
+  tests/                 评测工具测试（不进入默认引擎测试）
+  reports/               已审阅的历史准备与验证摘要
+  cache/ projects/ experiments/  本地依赖、独立 Git 工程与原件（不提交）
+.tmp/                    本地临时脚本、测试夹具和可丢弃产物（不提交）
 pyproject.toml           包元数据（archa-opc 0.3.0，无运行时依赖）
 ```
 
@@ -149,7 +161,7 @@ pyproject.toml           包元数据（archa-opc 0.3.0，无运行时依赖）
 
 - **合同只有一份、严格校验**：`project.json → components/<id>.json → tasks/<task>/revisions/rNNNN/task.json`。未知字段直接报错，拼错的字段不会悄悄失效；`.opc/**` 永远冻结。改合同要开新 revision 和新 run，旧修订不原地改。
 - **评价器冻结**：`evaluator_files` 的摘要决定「是否同一个评分器」；工具链版本进入每次测量。摘要不同就不比较新旧数字，工具链变了会当场重测 champion。
-- **干净树 + 最小补丁**：评测只接受 `editable` 范围内的 diff，并把它套到从 champion 提交切出的全新树上；忽略文件、缓存、软链和构建产物都不会进入评测。
+- **干净树 + 最小补丁**：评测只接受 `editable` 范围内的 diff，并把它套到从专家选定 parent 生成的候选快照切出的全新树上；忽略文件、缓存、软链和构建产物都不会进入评测。
 - **接纳失败关闭**：规则点名的指标缺失即拒绝（不是「没变坏」）；约束必须满足；收益要超过 `max(min_rel_gain, noise_k × 重复测量极差)`。自定义 `acceptance.rule` 必须是冻结评价器文件。
 - **单一权威与可恢复**：SQLite 账本是唯一权威，git ref、`STATE.md`、`report.json` 都只是投影；先写 intent 再 CAS 移动 ref，崩溃后按 intent 对账，第二个控制器会被拒绝。
 - **接缝可替换**：worker 三选一（`codex` / `dsh` / `scripted`），领域适配器默认是「命令门 + metrics.json」，也可在冻结文件里写 `"adapter": "path.py:Class"`；核心只经两个工厂拿到它们。
@@ -170,17 +182,19 @@ reviewer 使用独立配置，不再继承 expert；仍需 `promote --review` �
 
 ## 文档
 
+目录分工与保留规则见 [文档导航](docs/README.md)，评测准备与现有实验位置见 [benchmarks/README](benchmarks/README.md)。
+
 | 文档 | 内容 | 状态 |
 | --- | --- | --- |
-| [OPC 框架实现方案](OPC%20框架实现方案.md) | 设计判断、状态机、预算与恢复、复用选型、分阶段验收 | 设计基线；仍用旧名「Ge」，目录示例早于 v0.3 |
-| [OPC 项目接入与目录规范](OPC%20项目接入与目录规范.md) | 三个根目录、`.opc` 布局、实验产物与生命周期 | 接入规范；个别链接指向已移除的示例 |
+| [OPC 框架实现方案](docs/design/OPC%20框架实现方案.md) | 设计判断、状态机、预算与恢复、复用选型、分阶段验收 | 设计基线；仍用旧名「Ge」，目录示例早于 v0.3 |
+| [OPC 项目接入与目录规范](docs/design/OPC%20项目接入与目录规范.md) | 三个根目录、`.opc` 布局、实验产物与生命周期 | 接入规范；个别链接指向已移除的示例 |
 | [opc/README](opc/README.md) | 引擎用法、模块接缝、openTPU 教训、未完成项 | 引擎参考；「已验证」节引用已移除的示例 |
 | [接入指南](opc/scaffold/ONBOARDING.md) | 合同字段、评价器契约、退出码、worker 选项 | 当前接入指南（`opc init` 会复制到目标项目） |
 | [运行底座核查](docs/research/runtime-reuse.md) / [优化循环核查](docs/research/optimization-reuse.md) | Argus、LangGraph、OpenEvolve 等选型证据 | 选型证据 |
 | [项目接入核查](docs/research/project-integration.md) / [GSD 合同核查](docs/research/gsd-contracts.md) | openTPU 目录与生命周期、GSD 需求追踪 | 选型证据 |
 | [v0.1 验证记录](docs/validation.md) / [v0.2 接入验证](docs/integration-validation.md) | LangGraph+GEMV 原型、合同 v0.2 与路径工具验证 | 历史记录；引用已移除的 `contracts/`、`examples/` |
-| [Standards 审核](docs/review-standards.md) / [Spec 审核](docs/review-spec.md) | v0.1 的双轴独立审核 | 历史记录 |
-| [合同审核](docs/review-contracts-v02.md) / [布局审核](docs/review-integration-layout.md) | v0.2 的两项独立审核 | 历史记录 |
+| [Standards 审核](docs/reviews/review-standards.md) / [Spec 审核](docs/reviews/review-spec.md) | v0.1 的双轴独立审核 | 历史记录 |
+| [合同审核](docs/reviews/review-contracts-v02.md) / [布局审核](docs/reviews/review-integration-layout.md) | v0.2 的两项独立审核 | 历史记录 |
 | [讨论白板](docs/discussions/opc/winson-whiteboard.md) | 目标边界、减法记录、待验证假设与返回点 | 历史讨论 |
 | [证据归档](docs/evidence/) | 上述审核的原始探针与复算结果 | 归档原件 |
 

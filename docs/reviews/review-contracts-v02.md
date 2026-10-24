@@ -22,7 +22,7 @@
 - `.tmp/contracts-v02-review/artifact-mapping-submission.json`
 - `.tmp/contracts-v02-review/artifact-mapping-review.json`
 
-修复增加 [ArtifactBinding](../contracts/models_v02.py#L286) 和 [跨对象产物检查](../contracts/models_v02.py#L372)：
+修复增加 [ArtifactBinding](../../contracts/models_v02.py#L286) 和 [跨对象产物检查](../../contracts/models_v02.py#L372)：
 
 1. 每个绑定声明 `artifact_id`、`present/missing`、实际引用或缺失理由。
 2. 已知 ID、唯一性和计划预期产物均需检查，不能静默漏掉计划产物。

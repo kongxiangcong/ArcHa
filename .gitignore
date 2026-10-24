@@ -6,3 +6,8 @@ __pycache__/
 .venv/
 .tmp/
 *.egg-info/
+
+# Local application state and packaging / test scratch
+/.codex/
+/pip-*/
+/.pytest_tmp*/

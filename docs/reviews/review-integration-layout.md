@@ -8,7 +8,7 @@
 
 根目录经过 `check_directory_chain()`，但生成的 `<project-id>/<task-id>/<run-id>/attempts/...` 子树只检查 resolve 后是否仍在指定根内。若 `.../a000001/candidate` 已经是一个普通文件，`layout()` 仍返回 `.../candidate/source` 作为有效源码归档目录。这条路径不越界，但无法落盘；同类问题也可发生在 `experiment/jobs` 等中间层。现有测试只覆盖 `.opc` 本身是文件的根祖先场景，没有覆盖生成子树。
 
-已运行的最小负例：在项目自己的 `.tmp/integration-layout-review/` 创建独立 fixture 与普通文件 `artifacts/p/t/r/attempts/a000001/candidate`，调用 `layout(..., project_id='p', task_id='t', run_id='r', attempt=1)`。工具成功返回 candidate/source；原文件保持不变。证据：[file-ancestor-probe.json](../.tmp/integration-layout-review/file-ancestor-probe.json)。未访问或修改其他项目。
+已运行的最小负例：在项目自己的 `.tmp/integration-layout-review/` 创建独立 fixture 与普通文件 `artifacts/p/t/r/attempts/a000001/candidate`，调用 `layout(..., project_id='p', task_id='t', run_id='r', attempt=1)`。工具成功返回 candidate/source；原文件保持不变。证据：[file-ancestor-probe.json](../../.tmp/integration-layout-review/file-ancestor-probe.json)。未访问或修改其他项目。
 
 影响是路径预检可靠性：目标项目可能已经有旧文件或中断留下的冲突路径，接入报告却宣称计划可用；真实 runner 直到写原件时才失败。**没有观察到覆盖源码、写出授权根或删除数据。**
 
@@ -20,7 +20,7 @@
 
 `under()` 已对全部现存父目录调用目录链检查，并区分目录型/文件型叶子；run、attempt、workspace、candidate source 与 designer/reviewer 目录调用点明确传入 `directory=True`。文件型叶子如已存在目录则拒绝，合法现存文件可用于只读路径查询，实际创建仍使用独占写入。
 
-独立重新运行原文件祖先反例，现抛出 `planned directory contains a non-directory path`。另外验证了目录叶子被普通文件占用、文件叶子被目录占用，两者均拒绝；全新合法路径仍成功返回且不创建 artifact/workspace 目录，原冲突文件 bytes 不变。复核证据：[path-types-recheck.json](../.tmp/integration-layout-review/path-types-recheck.json)。没有重复运行全套测试。
+独立重新运行原文件祖先反例，现抛出 `planned directory contains a non-directory path`。另外验证了目录叶子被普通文件占用、文件叶子被目录占用，两者均拒绝；全新合法路径仍成功返回且不创建 artifact/workspace 目录，原冲突文件 bytes 不变。复核证据：[path-types-recheck.json](../../.tmp/integration-layout-review/path-types-recheck.json)。没有重复运行全套测试。
 
 修复仅提升预检可靠性，不消除检查与使用间竞态，不构成操作系统隔离。Windows 当前环境的实际符号链接用例仍未运行，不因本次修复升级其验证状态。
 

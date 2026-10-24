@@ -45,7 +45,7 @@ python -m ruff check contracts
 
 ## 4. 独立审查实际发现的问题
 
-不同审查 agent 分别做 [Standards 轴](review-standards.md)与 [Spec 轴](review-spec.md)。它们都有同一 OS 文件权限，能独立检查与复算，但不构成生产权限隔离。
+不同审查 agent 分别做 [Standards 轴](reviews/review-standards.md)与 [Spec 轴](reviews/review-spec.md)。它们都有同一 OS 文件权限，能独立检查与复算，但不构成生产权限隔离。
 
 两轴共同复现：初版计划 tile=12，候选源码实际 TILE=13；这组形状的 `ceil(M/12)` 与 `ceil(M/13)` 相同，流量一致，因此初版审核错误放行超出12个累加器的代码。这是需要修复的验证器漏洞，不是允许改变容量的理由。
 

@@ -36,7 +36,7 @@ Ge 实际对话/API 服务、通用合同到 demo 的映射、真实模型 adapt
 
 ## 修复后的证据复核
 
-- 已补读 [validation.md](validation.md) 与 [RESULTS.md](../examples/gemv_loop/RESULTS.md)。正式证据为 `examples/gemv_loop/runs/final-reviewed-20261021/`；旧 `final-20261021/` 不能代表修复后的 evaluator。
+- 已补读 [validation.md](../validation.md) 与 [RESULTS.md](../../examples/gemv_loop/RESULTS.md)。正式证据为 `examples/gemv_loop/runs/final-reviewed-20261021/`；旧 `final-20261021/` 不能代表修复后的 evaluator。
 - 独立读取新 `report.json` 和 `paused-report.json`：暂停时 phase=paused、2 轮、4 个作业；最终 phase=complete、reason=budget_exhausted、8 轮、16 个作业；暂停时全部 invocation 保留。最终 best tile=12、scalar_transfers=2586，5 个有效候选、3 次拒绝，`acceptance_currently_valid=true`、`invalid_submissions=[]`。报告 domain hash 与当前 evaluator 原始 bytes 一致。
 - 已读取 `runs/tests-reviewed.xml`：12 个测试、0 failures、0 errors；包含新增四个拒绝实例。复核只重跑了上述最小错报反例，没有重复整个测试套件。Ruff/Mypy 通过依据主实施者验证记录，本审核未另行重跑静态检查。
 - 验证报告把模型流量、固定形状、独立子进程、真实模型尚未接入、生产权限/预算/恢复未实现分别说明，未发现需要纠正的结论越界。
