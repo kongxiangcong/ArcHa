@@ -439,7 +439,7 @@ class Engine:
                                     "constraints": [c.describe() for c in acc.constraints],
                                     "target": acc.target.describe() if acc.target else None}},
             "component": {"id": self.comp.component_id, "description": self.comp.description,
-                          "editable": self.comp.editable},
+                          "editable": self.comp.editable, "scratch": self.comp.scratch},
             "champion": {"commit": champ[0], "values": champ[1].values},
             "baseline": {"commit": base["commit_sha"], "values": base["metrics"]["values"]},
             "history": history, "lessons": lessons[-20:], "budget_left": self.budget_left(),

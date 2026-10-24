@@ -24,6 +24,9 @@ print(json.dumps({"type": "thread.started", "thread_id": str(uuid.uuid4())}))
 if mode == "limit":
     print(json.dumps({"type": "turn.failed", "error": {"message": "You've hit your usage limit."}}))
     sys.exit(1)
+if mode == "schema_error":
+    print(json.dumps({"type": "turn.failed", "error": {"message": "invalid_json_schema: missing required key"}}))
+    sys.exit(1)
 if mode.startswith("onboard"):
     assert "workspace-write" in args and "onboarding" in prompt
     (cwd / ".opc/README.md").write_text("Open items: none\n")
@@ -34,6 +37,11 @@ if mode.startswith("onboard"):
 x = json.loads((cwd / "params.json").read_text())["x"]
 if "--output-schema" in args:
     assert "read-only" in args and "EXPERT" in prompt
+    schema = json.loads(Path(args[args.index("--output-schema") + 1]).read_text())
+    if set(schema["required"]) != set(schema["properties"]):
+        print(json.dumps({"type": "turn.failed", "error": {"message":
+            "invalid_json_schema: required must include every property"}}))
+        sys.exit(1)
     if mode == "exhausted":
         msg = json.dumps({"title": "nothing left", "hypothesis": "search exhausted",
                           "files": [], "changes": "", "expected": "", "falsifier": "",
@@ -46,9 +54,14 @@ if "--output-schema" in args:
         last.write_text(msg); sys.exit(0)
     msg = json.dumps({"title": "x=%d" % (x + 1), "hypothesis": "closer to 7",
                       "files": ["params.json"], "changes": "set x to %d" % (x + 1),
-                      "expected": "lower loss", "falsifier": "loss rises"})
+                      "expected": "lower loss", "falsifier": "loss rises", "exhausted": False})
 else:
     assert "workspace-write" in args and "DESIGNER" in prompt
+    if mode == "scratch":
+        assert 'Generated scratch paths:' in prompt
+        scratch = json.loads(prompt.split('Generated scratch paths: ', 1)[1].split('].', 1)[0] + ']')
+        assert 'result.json' in scratch
+        (cwd / "result.json").write_text('{"local_check": true}')
     (cwd / "params.json").write_text(json.dumps({"x": x + 1}))
     if mode == "cheat":
         (cwd / ".opc/eval/evaluate.py").write_text("raise SystemExit(0)\n")
@@ -96,6 +109,16 @@ def test_codex_editing_evaluator_fails_sandbox(make_project, engine_for, fake_co
     assert [a["outcome"] for a in e.ledger.attempts(e.run_id)] == [Outcome.SANDBOX.value]
 
 
+def test_designer_can_run_checks_that_write_declared_scratch(make_project, engine_for,
+                                                            fake_codex, monkeypatch):
+    monkeypatch.setenv("FAKE_CODEX_MODE", "scratch")
+    root = make_project(comp=component(scratch=["result.json"]), tsk=codex_task(fake_codex))
+    result = engine_for(root).run()
+    assert result["result"] == "target_met"
+    from opc.core.workspace import git
+    assert "result.json" not in git("ls-tree", "--name-only", result["champion"], cwd=root)
+
+
 def test_codex_usage_limit_blocks_the_run_at_once(make_project, engine_for, fake_codex,
                                                   monkeypatch):
     monkeypatch.setenv("FAKE_CODEX_MODE", "limit")
@@ -104,6 +127,15 @@ def test_codex_usage_limit_blocks_the_run_at_once(make_project, engine_for, fake
     assert s["state"] == "blocked" and "usage limit" in s["stop_reason"]
     assert [a["outcome"] for a in e.ledger.attempts(e.run_id)] == [Outcome.INFRA.value]
     assert s["spent"]["search_attempts"] == 0
+
+
+def test_codex_schema_error_does_not_spend_search_attempts(make_project, engine_for,
+                                                         fake_codex, monkeypatch):
+    monkeypatch.setenv("FAKE_CODEX_MODE", "schema_error")
+    e = engine_for(make_project(tsk=codex_task(fake_codex)))
+    result = e.run()
+    assert result["state"] == "blocked"
+    assert result["spent"]["search_attempts"] == 0
 
 
 def test_token_budget_stops_before_overspending(make_project, engine_for, fake_codex):
@@ -135,6 +167,33 @@ def test_parse_real_codex_failure_stream():
         '{"type":"turn.failed","error":{"message":"You\u2019ve hit your usage limit."}}'])
     info = parse_events(stream)
     assert info["thread_id"] == "01a1" and info["failed"] and info["tokens"] == 0
+
+
+def test_windows_default_codex_prefers_native_over_npm_shim(monkeypatch):
+    from opc.adapters import codex
+    monkeypatch.setattr(codex.sys, "platform", "win32")
+    monkeypatch.delenv("OPC_CODEX_BIN", raising=False)
+    monkeypatch.setattr(codex.shutil, "which", lambda name:
+                        "C:/native/codex.exe" if name == "codex.exe" else "C:/npm/codex.cmd")
+    assert codex.CodexWorker({}).binary == "C:/native/codex.exe"
+    assert codex.CodexWorker({"binary": "custom"}).binary == "custom"
+    monkeypatch.setenv("OPC_CODEX_BIN", "explicit")
+    assert codex.CodexWorker({}).binary == "explicit"
+
+
+@pytest.mark.parametrize("message", [
+    'Error loading config.toml: unknown variant `priority`',
+    'Error: failed to initialize in-process app-server client: access denied',
+    'The model requires a newer version of Codex. Please upgrade.',
+])
+def test_codex_startup_stderr_is_visible_and_infrastructure(tmp_path, message):
+    from opc.adapters.codex import CodexWorker
+    script = tmp_path / "bad_config.py"
+    script.write_text("import sys\nprint(%r, file=sys.stderr)\nsys.exit(1)\n" % message)
+    call, _ = CodexWorker({"binary": str(script)})._run(
+        "expert", "test", tmp_path, tmp_path / "logs", "read-only", None)
+    assert not call.ok and message in call.error
+    assert call.extra["infra"] is True
 
 
 # ------------------------------------------------------------------- contracts

@@ -308,11 +308,11 @@ def test_promotion_accepts_a_real_verdict(make_project, engine_for, monkeypatch)
 
 def test_both_workers_share_the_exhaustion_semantics():
     """Neither adapter may invent its own "nothing left" rule: the schema field is
-    optional in PLAN_SCHEMA, and the shared sentinel is importable from worker.py,
+    required by strict PLAN_SCHEMA (false for a normal plan), and the shared sentinel is importable from worker.py,
     so either adapter can be deleted without changing termination behaviour."""
     from opc.adapters.worker import EXHAUSTED_SENTINEL, PLAN_SCHEMA
     assert PLAN_SCHEMA["properties"]["exhausted"]["type"] == "boolean"
-    assert "exhausted" not in PLAN_SCHEMA["required"], "a normal plan must omit it"
+    assert set(PLAN_SCHEMA["required"]) == set(PLAN_SCHEMA["properties"])
     assert EXHAUSTED_SENTINEL == "NO_EXPERIMENT"
 
 

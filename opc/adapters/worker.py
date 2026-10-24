@@ -23,7 +23,7 @@ EXHAUSTED_SENTINEL = "NO_EXPERIMENT"
 PLAN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": list(PLAN_FIELDS),
+    "required": [*PLAN_FIELDS, "exhausted"],
     "properties": {
         "title": {"type": "string", "description": "short name of the experiment"},
         "hypothesis": {"type": "string", "description": "why this should improve the objective"},
@@ -33,8 +33,8 @@ PLAN_SCHEMA: dict[str, Any] = {
         "expected": {"type": "string", "description": "expected effect on metrics"},
         "falsifier": {"type": "string", "description": "observation that would refute it"},
         # codex's --output-schema admits only an object, so a worker with nothing
-        # left to try has no way to say so in text. This optional flag is that
-        # channel, and it is the schema-valid equivalent of dsh's NO_EXPERIMENT.
+        # left to try has no way to say so in text. Strict structured output
+        # requires every property: normal plans return false, exhausted ones true.
         "exhausted": {"type": "boolean",
                       "description": "true when no further experiment can improve the objective"},
     },

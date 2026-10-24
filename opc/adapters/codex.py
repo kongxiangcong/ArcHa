@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -22,7 +24,10 @@ from .worker import EXHAUSTED_SENTINEL, PLAN_SCHEMA, WorkerCall
 
 #: account/host conditions: retrying the attempt cannot help, the run must block
 INFRA_MARKERS = ("usage limit", "rate limit", "429", "unauthorized", "401", "not logged in",
-                 "Connection", "timed out", "network", "stream disconnected", "quota")
+                 "Connection", "timed out", "network", "stream disconnected", "quota",
+                 "error loading config", "requires a newer version of codex",
+                 "failed to initialize in-process app-server", "invalid_json_schema",
+                 "invalid schema for response_format")
 
 
 def parse_events(text: str) -> dict[str, Any]:
@@ -55,7 +60,11 @@ class CodexWorker:
         self.profile = options.get("profile")
         self.timeout = float(options.get("timeout_s", 1800))
         self.extra = list(options.get("extra_args") or [])
-        self.binary = options.get("binary") or os.environ.get("OPC_CODEX_BIN", "codex")
+        self.binary = options.get("binary") or os.environ.get("OPC_CODEX_BIN")
+        if not self.binary:
+            # npm's codex.cmd may shadow a native CLI later on PATH. Never run
+            # the batch wrapper through a shell, or override an explicit choice.
+            self.binary = (shutil.which("codex.exe") if sys.platform == "win32" else None) or "codex"
 
     def _run(self, role: str, prompt: str, tree: Path, log_dir: Path, sandbox: str,
              schema: dict | None) -> tuple[WorkerCall, str]:
@@ -97,10 +106,14 @@ class CodexWorker:
         if timed_out:
             call.error, call.extra["infra"] = "codex timed out after %ss" % self.timeout, True
         elif info["failed"] or p.returncode != 0:
-            msg = "; ".join(e for e in info["errors"] if e)[-500:] or \
+            stderr = (log_dir / ("%s-stderr.txt" % role)).read_text(
+                errors="replace", encoding="utf-8")
+            msg = "; ".join(e for e in info["errors"] if e) or stderr.strip() or \
                   "codex exited %s" % p.returncode
+            infra = not info["thread_id"] or any(m.lower() in msg.lower() for m in INFRA_MARKERS)
+            msg = msg[-2000:]
             call.error = msg
-            call.extra["infra"] = any(m.lower() in msg.lower() for m in INFRA_MARKERS)
+            call.extra["infra"] = infra
         else:
             call.ok = True
         return call, text
