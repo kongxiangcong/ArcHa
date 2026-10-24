@@ -12,11 +12,13 @@
 
 - `opc` 引擎 0.3.0：`init / onboard / check / preflight / run / status / pause / stop / report / promote` 均已实现。
 - 仓库正从 v0.2 的「合同原型 + 示例」迁到 v0.3 引擎：`contracts/` 与 `examples/` 已从当前工作树移除，本 README 不再引用它们；旧内容见 git 提交 `2eb1dfc`。
-- 引擎当前依赖 POSIX 文件锁（`opc/core/ledger.py` 使用 `fcntl`）。请在 Linux、macOS 或 WSL 下运行；Windows 原生 Python 会在导入账本时失败。
+- 引擎支持原生 Windows 和 Linux：跨平台文件锁、进程树清理、UTF-8 文本与 Git 补丁字节传输共用同一套行为测试。使用方式和平台边界见 [跨平台运行](docs/cross-platform.md)。
 
 ## 快速开始
 
 要求：Python ≥ 3.10、Git；目标项目必须是 git 仓库且基线已提交。
+
+Windows 使用 Python 3.10+ 和 Git for Windows，无需 WSL；在 PowerShell 中执行 `python -m pip install -e .` 后即可使用 `opc`。下面的 Bash 示例中，`cd` 改为实际路径，`git add` 和 `git commit` 在 Windows PowerShell 5 中分两行执行。
 
 ```bash
 # 1. 安装引擎（在 ArcHa 仓库根目录）
@@ -51,7 +53,7 @@ opc promote -p . --task t-main --confirm 3 --review codex --apply main
 
 ## 先讨论研究方向，再接入
 
-提供两个独立技能：[archa-research-map](skills/archa-research-map/SKILL.md) 和 [archa-task-brief](skills/archa-task-brief/SKILL.md)。在 ArcHa 仓库运行以下命令全局安装（默认 `$CODEX_HOME/skills` 或 `~/.codex/skills`，已有同名技能备份到技能目录之外）：
+方向讨论使用 [archa-map](skills/archa-map/SKILL.md)；目标与合同准备使用 [archa-task](skills/archa-task/SKILL.md)，自动推进使用 [archa-loop](skills/archa-loop/SKILL.md)。在 ArcHa 仓库运行以下命令安装这三个技能（默认 `$CODEX_HOME/skills` 或 `~/.codex/skills`，已有同名技能备份到技能目录之外）：
 
 ```bash
 python3 tools/install_research_skills.py
@@ -60,20 +62,23 @@ python3 tools/install_research_skills.py
 安装包按 `RUNTIME_FILES` 白名单包含当前工作树的运行模块、起草资源和许可证，不包含测试、仓库文档、示例、构建元数据或开发工具；manifest 记录逐文件摘要、快照摘要及相对 HEAD 的差异，不依赖原仓库绝对路径。更新安装不会自动升级已经初始化的项目。安装后在能发现新技能的会话中使用：
 
 ```text
-$archa-research-map
-$archa-task-brief /absolute/project/.opc/research/research-map.md
+$archa-map
+$archa-task /absolute/project/.opc/research/research-map.md
+$archa-loop /absolute/project/.opc/research/tasks/<task>/task-brief.md
 ```
 
 1. 第一阶段先初始化当前项目 `.opc/`，保存 `.opc/runtime/` 和本地入口 `.opc/archa.py`，再共同形成研究地图。地图正文自由组织，末尾包含 task to-do、每个方向的占位目录以及第二阶段提示词。此时只部署框架，不生成任务合同和评价器；已有项目合同和执行状态保留。
 2. 第二阶段每次选一个依赖证据足够的任务，派 sub-agent 调查源码或外部原始来源，证据保存在任务 `evidence/`。主 agent 调研后在回复中展示建议 brief 大纲，覆盖用途、一句话目标与完成状态、范围、交付物、验收条件、有无数值指标和留给 onboard 的未决项，请用户检查修改并确认。确认前仅保存 evidence 和讨论记录，不创建 `task-brief.md`。
-3. 用户确认整体大纲后才生成 `task-brief.md`，结构检查通过才勾选该 task；勾选仅表示简报可交给 onboard 起草。正式研究结果回流地图，再决定下一个方向。明确要求起草合同时运行；onboard 在简报检查通过后为尚无合同的部署生成关闭执行的骨架：
+3. 用户确认整体大纲后生成 `task-brief.md`，结构检查通过才勾选该 task；勾选仅表示简报就绪。技能随后自动调用 onboard，核对合同并处理未决项，在 `.opc/context/DECISIONS.md` 记录简报路径、摘要与对应 task/revision。起草阶段保持执行关闭；缺失预算、评价器等如实报告为阻塞。底层调用：
 
 ```bash
 python3 /absolute/project/.opc/archa.py brief-check -p /absolute/project --brief .opc/research/tasks/<task>/task-brief.md
 python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --brief .opc/research/tasks/<task>/task-brief.md
 ```
 
-布局见 [研究材料约定](skills/archa-research-map/references/research-layout.md)，简报见 [模板](skills/archa-task-brief/references/task-brief.md)，证据见 [证据约定](skills/archa-task-brief/references/evidence.md)，引擎映射见 [消费链](skills/archa-task-brief/references/archa-workflow.md)。`brief-check` 只检查结构、占位项和来源，**不证明研究设计正确或可运行**。目标可随证据调整；已冻结执行合同的变化需要新 revision/run。
+4. 用户调用 `archa-loop <task-brief-path>` 后，技能定位对应合同，在已确定的范围与预算内完成执行开关、静态检查、接入文件提交和基线 preflight，再启动或恢复引擎迭代。已有运行先检查状态；已关闭的 run 不自动重置预算。结束时交付实际结果和报告，不自动晋升到用户分支。`archa-loop` 是技能入口，不是新增的 CLI 子命令。
+
+布局见 [研究材料约定](skills/archa-map/references/research-layout.md)，简报见 [模板](skills/archa-task/references/task-brief.md)，证据见 [证据约定](skills/archa-task/references/evidence.md)，引擎映射见 [消费链](skills/archa-task/references/archa-workflow.md)。`brief-check` 只检查结构、占位项和来源，**不证明研究设计正确或可运行**。目标可随证据调整；已冻结执行合同的变化需要新 revision/run。
 
 onboard 将正文与来源摘要交给 worker，在 `.opc/local/onboard/` 保存本次输入与 SHA-256（该目录为最近一次起草记录，不是不可变实验归档）。实际产出仍需核对：要求是否进入合同/上下文、gate 是否实现、能力缺口是否保留。当前研究任务中的纯取证无补丁、逐轮独立审核、跨任务调度需要另外适配，本次讨论工具没有实现这些能力。
 
@@ -149,6 +154,19 @@ pyproject.toml           包元数据（archa-opc 0.3.0，无运行时依赖）
 - **单一权威与可恢复**：SQLite 账本是唯一权威，git ref、`STATE.md`、`report.json` 都只是投影；先写 intent 再 CAS 移动 ref，崩溃后按 intent 对账，第二个控制器会被拒绝。
 - **接缝可替换**：worker 三选一（`codex` / `dsh` / `scripted`），领域适配器默认是「命令门 + metrics.json」，也可在冻结文件里写 `"adapter": "path.py:Class"`；核心只经两个工厂拿到它们。
 - **晋升才做 Spec 轴**：每轮接纳是确定性的，不调用 reviewer；「这个结果是否值得要、结论是否越界」在 promote 时做一次，可选独立审核，未给出可信 verdict 一律阻塞。
+
+## Worker 模型与推理强度
+
+`opc init --apply` 会生成独立的本机配置 `.opc/local/workers.json`（Git 忽略）。
+`expert`、`designer`、`reviewer`、`onboard` 各有自己的 `model` 和 `reasoning_effort`；
+填入的值覆盖该角色合同设置，`null` 或省略表示继承后端/合同默认值。
+reviewer 使用独立配置，不再继承 expert；仍需 `promote --review` 显式开启。
+新项目默认：expert、designer、reviewer、onboard 全部使用 `gpt-6.1-sol / medium`。
+已有配置保持不变。
+
+模板见 [workers.json](opc/scaffold/workers.json)，完整示例、优先级和 DSH 的 provider 配置见
+[接入指南](opc/scaffold/ONBOARDING.md#独立的-worker-环境配置)。旧项目可将模板复制到本机配置路径，
+无需修改任务合同；旧 runtime 需先按既有流程显式升级，才能读取新配置。
 
 ## 文档
 

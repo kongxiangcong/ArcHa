@@ -1,11 +1,11 @@
 ---
-name: archa-task-brief
-description: 读取 research-map 的任务清单，每次选择一个研究任务，派 sub-agent 调研源码或外部原始来源，调研后提出 brief 大纲供用户确认，确认后生成 task-brief.md，供 ArcHa onboard 起草合同。
+name: archa-task
+description: 读取 research-map 的任务清单，调查一个任务并提出 brief 大纲；用户确认后生成 task-brief.md，自动调用 ArcHa onboard 并核对合同，为 archa-loop 准备执行入口。
 ---
 
 # 单个研究任务的背景与简报
 
-输入 research-map.md 路径。只给目录时查找其 `.opc/research/research-map.md`；找不到时说明需要先用 `$archa-research-map` 形成地图，不凭空补全方向。
+输入 research-map.md 路径。只给目录时查找其 `.opc/research/research-map.md`；找不到时说明需要先用 `$archa-map` 形成地图，不凭空补全方向。
 
 ## 选择一个任务
 
@@ -36,7 +36,7 @@ sub-agent 只调查本任务，不改项目实现、地图状态或执行合同�
 
 目标和验收条件可以暂定，但必须写出来；“怎么做”的细节不必在大纲里定。
 
-大纲末尾请用户检查是否需要修改，并确认是否按此生成简报。用户确认的是这份整体大纲（包括明确列出的起草阶段未决项），无需再逐项重复确认。用户提出修改时，吸收修改并展示修订后的大纲，等待确认；仅回答局部问题或未回复不算认可整份大纲。已有明确认可当前大纲的会话记录时直接继续。
+大纲末尾请用户检查是否需要修改，并说明确认后会生成简报、自动起草和核对合同，执行由后续 archa-loop 启动。用户确认的是这份整体大纲（包括明确列出的起草阶段未决项），无需再逐项重复确认。用户提出修改时，吸收修改并展示修订后的大纲，等待确认；仅回答局部问题或未回复不算认可整份大纲。已有明确认可当前大纲的会话记录时直接继续。
 
 ## 确认后生成与交接
 
@@ -48,6 +48,20 @@ sub-agent 只调查本任务，不改项目实现、地图状态或执行合同�
 python3 /absolute/project/.opc/archa.py brief-check -p /absolute/project --brief .opc/research/tasks/<task>/task-brief.md
 ```
 
-通过后在地图勾选该项并设为 `ready-for-onboard`，链接简报，明确“简报已完成，研究尚未执行”，给出范围、未决事项和建议下一步。检查失败则保持未勾选并修复。结构通过不证明研究设计正确。
+通过后在地图勾选该项并设为 `ready-for-onboard`，链接简报；该状态仅表示简报就绪，不表示合同或执行就绪。检查失败则保持未勾选并修复。结构通过不证明研究设计正确。
 
-默认结束于本任务简报，不自动处理下一个 task 或调用 onboard。用户要求起草合同时运行 `python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --brief <brief>`，之后核对合同与 Open items，保持执行关闭。
+## 自动完成 onboard
+
+简报检查通过后，先检查 `.opc/context/DECISIONS.md` 是否已有同一简报路径及摘要、且合同核对完成的交接；有则复用并核对当前合同。否则直接运行，无需用户再发起 onboard：
+
+```bash
+python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --brief <brief>
+```
+
+使用项目已有的起草 worker 配置（CLI 默认 codex，需要 dsh 时加 `--agent dsh`）。核对返回的 `ok`、越界修改和受保护输入变化；失败时保留诊断，修复明确原因后再继续，不把 worker 返回成功当作合同完成。
+
+依据消费链核对目标、交付物、验收条件、评价器、范围、基线、预算与 worker。自动解决已确认范围内能从证据确定的事项；需要用户决定的预算或范围、缺失评价器和能力缺口保留为 blocking Open items，明确报告阻塞。保持 `execution_enabled=false`，用项目入口运行 `check -p <project> --task <task-id> --revision <revision>`。执行关闭、接入文件尚未提交以及因此尚未进入基线的评价器属于待 loop 完成的准备项；其他问题修复或列为阻塞，不把所有非零退出都当作预期。不运行 preflight 或 run。
+
+在 `.opc/context/DECISIONS.md` 记录本次交接：简报的项目相对路径及当前 SHA-256、对应 task ID、revision、合同路径、已定执行预算和剩余阻塞项。从实际生成的合同核对 ID，不把地图 ID 当作引擎 ID。保留其他任务记录。已投入执行的合同修改沿用新 revision/run 流程。
+
+最后给出简报、合同位置和准备状态；有阻塞时说明缺项，无阻塞时给出 `$archa-loop <task-brief绝对路径>`。本次结束于本任务的合同准备，不自动启动 loop 或处理下一个任务。

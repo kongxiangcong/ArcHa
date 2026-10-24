@@ -14,12 +14,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import signal
+import platform
 import statistics
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+from ..core.platform import Process
 from typing import Any
 
 from ..core.config import ComponentConfig, GateSpec
@@ -38,21 +40,18 @@ def run_command(argv: list[str], cwd: Path, env: dict[str, str], timeout: float,
     t0 = time.time()
     with open(log_dir / "stdout.txt", "wb") as out, open(log_dir / "stderr.txt", "wb") as err:
         try:
-            p = subprocess.Popen(argv, cwd=str(cwd), env=env, stdout=out, stderr=err,
-                                 start_new_session=True)
-        except FileNotFoundError as exc:
-            (log_dir / "stderr.txt").write_text("command not found: %s\n" % exc)
-            return None, "command not found: %s" % argv[0], time.time() - t0, False
-        try:
-            code = p.wait(timeout=timeout)
-            timed_out = False
-        except subprocess.TimeoutExpired:
+            p = Process(argv, cwd=str(cwd), env=env, stdout=out, stderr=err)
+        except OSError as exc:
+            detail = "command could not start: %s" % exc
+            (log_dir / "stderr.txt").write_text(detail + "\n", encoding="utf-8")
+            return None, detail, time.time() - t0, False
+        with p:
             try:
-                os.killpg(p.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            p.wait()
-            code, timed_out = None, True
+                code = p.wait(timeout=timeout)
+                timed_out = False
+            except subprocess.TimeoutExpired:
+                p.kill_tree()
+                code, timed_out = None, True
     tail = ((log_dir / "stdout.txt").read_bytes()[-TAIL:] + b"\n" +
             (log_dir / "stderr.txt").read_bytes()[-TAIL:]).decode(errors="replace")
     return code, tail, time.time() - t0, timed_out
@@ -79,12 +78,16 @@ class CommandDomain:
 
     # ------------------------------------------------------------- toolchain
     def toolchain(self) -> tuple[str, dict[str, str]]:
-        details = {}
+        details = {"_host": canonical_json({"system": platform.system(),
+                   "release": platform.release(), "machine": platform.machine(),
+                   "python": platform.python_version()})}
         for argv in self.comp.toolchain:
             key = " ".join(argv)
+            argv = [a.replace("{python}", sys.executable) for a in argv]
             try:
-                r = subprocess.run(argv, capture_output=True, text=True, timeout=60)
-                details[key] = (r.stdout + r.stderr).strip()[:500] or "rc=%d" % r.returncode
+                with Process(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as p:
+                    stdout, stderr = p.communicate(timeout=60)
+                details[key] = (stdout + stderr).decode("utf-8", errors="replace").strip()[:500] or "rc=%d" % p.returncode
             except (OSError, subprocess.TimeoutExpired) as exc:
                 details[key] = "unavailable: %s" % type(exc).__name__
         return hashlib.sha256(canonical_json(details).encode()).hexdigest(), details

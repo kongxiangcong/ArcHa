@@ -36,8 +36,8 @@ class Step:
         for nx in (x + 1, x - 1):
             if json.dumps({"x": nx}, sort_keys=True) not in tried:
                 return {"title": "x=%d" % nx, "hypothesis": "closer to optimum",
-                        "files": ["params.json"], "changes": "set x", "expected": "",
-                        "falsifier": "", "params": {"x": nx}}
+                        "files": ["params.json"], "changes": "set x", "expected": "lower loss",
+                        "falsifier": "loss does not decrease", "params": {"x": nx}}
         return None
     def implement(self, plan, tree):
         (tree / "params.json").write_text(json.dumps(plan["params"]))
@@ -51,7 +51,7 @@ def git(cwd: Path, *args: str) -> str:
 
 def write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(textwrap.dedent(text).lstrip())
+    path.write_text(textwrap.dedent(text).lstrip(), encoding="utf-8")
 
 
 def component(**over) -> dict:
@@ -59,7 +59,7 @@ def component(**over) -> dict:
         "component_id": "toy",
         "editable": ["params.json"],
         "evaluator_files": [".opc/eval/**", ".opc/strategy.py"],
-        "toolchain": [["python3", "--version"]],
+        "toolchain": [["{python}", "--version"]],
         "gates": [{"id": "evaluate", "argv": ["{python}", ".opc/eval/evaluate.py", "--out",
                                              "{out}"], "metrics": "{out}/metrics.json",
                    "timeout_s": 60}],

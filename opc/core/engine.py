@@ -27,8 +27,9 @@ from typing import Any, Callable
 from ..adapters.worker import Worker, WorkerCall, make_worker, validate_plan
 from ..domain import DomainAdapter, Evaluation, load_domain
 from . import accept as acceptance
-from .config import Bindings, ComponentConfig, ProjectConfig, TaskSpec
+from .config import Bindings, ComponentConfig, ProjectConfig, TaskSpec, WorkerSpec
 from .ledger import Ledger
+from .worker_config import load_worker_config, worker_options
 from .model import (BudgetExhausted, Cost, GateResult, Measurements, OPCError, Outcome, Verdict,
                     write_json, write_text)
 from .workspace import (Workspaces, apply_patch, cas_update_ref, commit_tree, dirty_paths, git,
@@ -49,6 +50,7 @@ class Engine:
         self.project = ProjectConfig.load(project_root)
         self.root = self.project.root
         self.task = TaskSpec.load(self.root, task_id, revision)
+        self.worker_config = load_worker_config(self.root)
         self.comp = ComponentConfig.load(self.root, self.task.component)
         self.bindings = Bindings.load(self.project)
         self.ledger = Ledger(self.root / ".opc" / "local" / "ledger.sqlite3")
@@ -90,8 +92,8 @@ class Engine:
         except OPCError as exc:
             return {"ok": False, "problems": [str(exc)], "warnings": warnings}
         dirty = dirty_paths(self.root)
-        from .config import matches
-        frozen_dirty = [p for p in dirty if matches(p, self.evaluator_patterns() + [".opc/**"])
+        from .config import denied
+        frozen_dirty = [p for p in dirty if denied(p, self.evaluator_patterns() + [".opc/**"])
                         and not p.startswith(".opc/local/") and not self.comp.is_scratch(p)]
         if frozen_dirty:
             problems.append("uncommitted evaluator/.opc files (runs use the committed version): "
@@ -122,8 +124,12 @@ class Engine:
 
     def workers(self, tree: Path) -> tuple[Worker, Worker]:
         if self._workers is None:
-            expert = make_worker(self.task.expert, tree)
-            designer = make_worker(self.task.designer, tree) if self.task.designer else expert
+            expert = make_worker(WorkerSpec(self.task.expert.kind, worker_options(
+                self.worker_config, "expert", self.task.expert.options)), tree)
+            designer = expert
+            if self.task.designer:
+                designer = make_worker(WorkerSpec(self.task.designer.kind, worker_options(
+                    self.worker_config, "designer", self.task.designer.options)), tree)
             self._workers = (expert, designer)
         return self._workers
 
@@ -170,7 +176,7 @@ class Engine:
         p = self._cache_path(tree_id, ev_digest, tool_digest)
         if not p.exists():
             return None
-        d = json.loads(p.read_text())
+        d = json.loads(p.read_text(encoding="utf-8"))
         gates = [GateResult.from_dict(g) for g in d["gates"]]
         for g in gates:
             g.seconds, g.detail = 0.0, ("cached; " + g.detail).strip("; ")
@@ -408,16 +414,27 @@ class Engine:
                 tree: Path) -> dict[str, Any]:
         attempts = self.ledger.attempts(self.run_id)
         history, lessons = [], []
+        champions = self.ledger.champions(self.run_id)
         decided = [a for a in attempts if a["outcome"]]
         keep = {a["attempt_no"] for a in decided[-HISTORY_WINDOW:]} | \
             {a["attempt_no"] for a in decided if a["outcome"] == Outcome.IMPROVEMENT.value}
         for a in decided:
             plan = a["plan"] or {}
             row = {"attempt": a["attempt_no"], "title": plan.get("title"),
-                   "hypothesis": (plan.get("hypothesis") or "")[:300], "files": a["files"] or
+                   "hypothesis": plan.get("hypothesis"),
+                   "expected": plan.get("expected"), "falsifier": plan.get("falsifier"),
+                   "files": a["files"] or
                    plan.get("files"), "outcome": a["outcome"], "reason": a["reason"],
                    "gain": a["gain"], "plan_params": plan.get("params")}
             if a["attempt_no"] in keep:
+                # Use the comparison baseline available when this attempt finished,
+                # including an in-attempt toolchain remeasurement, never today's best.
+                prior = [c for c in champions if c["commit_sha"] == a["champion_before"]
+                         and c["at"] <= a["finished_at"]
+                         and (c["attempt_no"] is None or c["attempt_no"] <= a["attempt_no"])]
+                row["champion_before"] = prior[-1]["metrics"] if prior else None
+                row["metrics"] = a["metrics"]
+                row["gates"] = a["gates"]
                 history.append(row)
             o = a["outcome"]
             if o in (Outcome.BROKEN.value, Outcome.SANDBOX.value, Outcome.NO_GAIN.value,
@@ -439,7 +456,7 @@ class Engine:
                                     "constraints": [c.describe() for c in acc.constraints],
                                     "target": acc.target.describe() if acc.target else None}},
             "component": {"id": self.comp.component_id, "description": self.comp.description,
-                          "editable": self.comp.editable},
+                          "editable": self.comp.editable, "scratch": self.comp.scratch},
             "champion": {"commit": champ[0], "values": champ[1].values},
             "baseline": {"commit": base["commit_sha"], "values": base["metrics"]["values"]},
             "history": history, "lessons": lessons[-20:], "budget_left": self.budget_left(),

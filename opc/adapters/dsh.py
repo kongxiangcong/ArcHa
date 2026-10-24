@@ -30,13 +30,14 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import subprocess
 import time
 from pathlib import Path
+
+from ..core.platform import Process, command_prefix
 from typing import Any
 
-from ..core.model import Cost, write_json, write_text
+from ..core.model import Cost, OPCError, write_json, write_text
 from .prompts import designer_prompt, expert_prompt
 from .worker import EXHAUSTED_SENTINEL, WorkerCall
 
@@ -174,6 +175,11 @@ class DshWorker:
         self.profile = str(options.get("profile") or "headless")
         self.timeout = float(options.get("timeout_s", 1800))
         self.extra = list(options.get("extra_args") or [])
+        self.selection = {k: options[k] for k in ("provider", "model", "reasoning_effort")
+                          if options.get(k) is not None}
+        if self.selection and not all(self.selection.get(k) for k in ("provider", "model")):
+            raise OPCError("dsh model overrides require both provider and model; "
+                           "reasoning_effort is optional")
         self.dsh_home = options.get("dsh_home") or os.environ.get("OPC_DSH_HOME")
         self.env = {str(k): str(v) for k, v in (options.get("env") or {}).items()}
 
@@ -199,7 +205,15 @@ class DshWorker:
         the core validates the plan either way.
         """
         log_dir.mkdir(parents=True, exist_ok=True)
-        argv = [self.binary, *self.extra, "--profile", self.profile, "--json", "-"]
+        argv = [*command_prefix(self.binary), *self.extra, "--profile", self.profile, "--json", "-"]
+        if self.selection:
+            # JSON is a YAML subset. An invocation-local patch never edits DSH_HOME.
+            selection = {"provider": self.selection["provider"], "model": self.selection["model"]}
+            if "reasoning_effort" in self.selection:
+                selection["reasoningEffort"] = self.selection["reasoning_effort"]
+            overlay = log_dir / ("%s-model.patch.json" % role)
+            write_json(overlay, [{"id": "agent-default-model", "config": selection}])
+            argv[-2:-2] = ["--patch", str(overlay.resolve())]
         write_text(log_dir / ("%s-prompt.md" % role), prompt)
         write_json(log_dir / ("%s-request.json" % role),
                    {"argv": argv, "cwd": str(tree), "sandbox": sandbox,
@@ -208,24 +222,20 @@ class DshWorker:
         events = log_dir / ("%s-events.jsonl" % role)
         with open(events, "wb") as out, open(log_dir / ("%s-stderr.txt" % role), "wb") as err:
             try:
-                p = subprocess.Popen(argv, cwd=str(tree), env=self._env(tree, sandbox),
-                                     stdin=subprocess.PIPE, stdout=out, stderr=err,
-                                     start_new_session=True)
-            except FileNotFoundError as exc:
+                p = Process(argv, cwd=str(tree), env=self._env(tree, sandbox),
+                                     stdin=subprocess.PIPE, stdout=out, stderr=err)
+            except OSError as exc:
                 return WorkerCall(role, False, Cost(time.time() - t0, 0, None),
-                                  error="dsh binary not found: %s" % exc,
+                                  error="dsh could not start: %s" % exc,
                                   extra={"infra": True}), ""
-            try:
-                p.communicate(prompt.encode(), timeout=self.timeout)
-                timed_out = False
-            except subprocess.TimeoutExpired:
+            with p:
                 try:
-                    os.killpg(p.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                p.wait()
-                timed_out = True
-        info = parse_events(events.read_text(errors="replace"))
+                    p.communicate(prompt.encode(), timeout=self.timeout)
+                    timed_out = False
+                except subprocess.TimeoutExpired:
+                    p.kill_tree()
+                    timed_out = True
+        info = parse_events(events.read_text(errors="replace", encoding="utf-8"))
         cost = Cost(time.time() - t0, info["tokens"], None)   # dsh reports no price
         call = WorkerCall(role, ok=False, cost=cost, call_id=info["session_id"],
                           log_dir=str(log_dir))

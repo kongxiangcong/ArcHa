@@ -32,7 +32,7 @@
 
 推荐 R01，因为 R02 需要知道实际输入消费位置。
 
-`$archa-task-brief /absolute/project/.opc/research/research-map.md`
+`$archa-task /absolute/project/.opc/research/research-map.md`
 ```
 
 状态只有四种：
@@ -48,4 +48,4 @@
 
 ## 修订
 
-地图记录日期和重大方向变更。新证据推翻前提时，链接证据说明影响，把受影响任务取消勾选改回 `active` 或 `parked`，若已有简报，将其标为 `Status: draft` 并记录修订原因；正文修订由 archa-task-brief 展示新大纲并经用户确认后生成；保留历史版本和证据。执行中的合同变更交由独立 revision/run 流程处理。
+地图记录日期和重大方向变更。新证据推翻前提时，链接证据说明影响，把受影响任务取消勾选改回 `active` 或 `parked`，若已有简报，将其标为 `Status: draft` 并记录修订原因；正文修订由 archa-task 展示新大纲并经用户确认后生成；保留历史版本和证据。执行中的合同变更交由独立 revision/run 流程处理。

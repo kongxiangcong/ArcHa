@@ -1,6 +1,7 @@
 """Portable skill bundles and non-destructive project initialization."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -10,7 +11,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location(
-    "research_initialize", ROOT / "skills/archa-research-map/scripts/initialize.py")
+    "research_initialize", ROOT / "skills/archa-map/scripts/initialize.py")
 initialize = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(initialize)
 
@@ -33,9 +34,9 @@ def test_fresh_resume_and_preserve_contracts(tmp_path, runtime):
                     "--project-id", "demo", "--name", "Demo", "--apply"],
                    check=True, capture_output=True)
     config_path = project / ".opc/project.json"
-    config = json.loads(config_path.read_text())
+    config = json.loads(config_path.read_text(encoding="utf-8"))
     config["execution_enabled"] = True
-    config_path.write_text(json.dumps(config))
+    config_path.write_text(json.dumps(config), encoding="utf-8")
     original = config_path.read_bytes()
     second = initialize.initialize(project, runtime)
     assert second["existing_scaffold"] and second["execution_enabled"]
@@ -51,10 +52,23 @@ def test_runtime_change_is_not_overwritten(tmp_path, runtime):
     project.mkdir()
     initialize.initialize(project, runtime)
     changed = project / ".opc/runtime/opc/cli.py"
-    changed.write_text("# locally changed\n")
+    changed.write_text("# locally changed\n", encoding="utf-8")
     with pytest.raises(ValueError, match="modified"):
         initialize.initialize(project, runtime)
-    assert changed.read_text() == "# locally changed\n"
+    assert changed.read_text(encoding="utf-8") == "# locally changed\n"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows ACL inheritance")
+def test_runtime_inherits_project_acl_instead_of_private_temp_acl(tmp_path, runtime):
+    project = tmp_path / "acl-project"
+    project.mkdir()
+    initialize.initialize(project, runtime)
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-Command",
+         "[System.IO.Directory]::GetAccessControl($env:ARCHA_TEST_RUNTIME).AreAccessRulesProtected"],
+        env={**os.environ, "ARCHA_TEST_RUNTIME": str(project / ".opc/runtime")},
+        capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == "False", "private staging ACL leaked into deployed runtime"
 
 
 def test_existing_runtime_remains_pinned(tmp_path, runtime):
@@ -63,11 +77,11 @@ def test_existing_runtime_remains_pinned(tmp_path, runtime):
     initialize.initialize(project, runtime)
     original = (project / ".opc/runtime/manifest.json").read_bytes()
     changed = runtime / "opc/__init__.py"
-    changed.write_text(changed.read_text() + "\n# new packaged version\n")
+    changed.write_text(changed.read_text(encoding="utf-8") + "\n# new packaged version\n", encoding="utf-8")
     manifest_path = runtime / "manifest.json"
-    manifest = json.loads(manifest_path.read_text())
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["files"]["opc/__init__.py"] = initialize.digest(changed)
-    manifest_path.write_text(json.dumps(manifest))
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     initialize.initialize(project, runtime)
     assert (project / ".opc/runtime/manifest.json").read_bytes() == original
 
@@ -77,7 +91,12 @@ def test_redirected_control_directory_is_rejected(tmp_path, runtime):
     project.mkdir()
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
-    (project / ".opc").symlink_to(elsewhere, target_is_directory=True)
+    try:
+        (project / ".opc").symlink_to(elsewhere, target_is_directory=True)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows symlink privilege unavailable; junctions tested separately")
+        raise
     with pytest.raises(ValueError, match="redirected"):
         initialize.initialize(project, runtime)
     assert not list(elsewhere.iterdir())
@@ -88,12 +107,15 @@ def test_bundle_relocation_and_reinstall_backup(tmp_path):
     destination = tmp_path / "installed/skills"
     command = [sys.executable, str(install), "--destination", str(destination)]
     subprocess.run(command, check=True, capture_output=True)
-    skill = destination / "archa-research-map"
-    (skill / "local-note.txt").write_text("keep my local changes")
+    skill = destination / "archa-map"
+    (skill / "local-note.txt").write_text("keep my local changes", encoding="utf-8")
     report = json.loads(subprocess.run(command, check=True, capture_output=True, text=True).stdout)
     backups = [Path(p) for p in report["backups"]]
-    assert len(backups) == 2
-    assert (backups[0] / "local-note.txt").read_text() == "keep my local changes"
+    assert len(backups) == 3
+    assert {Path(p).name for p in report["installed"]} == {
+        "archa-map", "archa-task", "archa-loop"}
+    assert (destination / "archa-loop/SKILL.md").is_file()
+    assert (backups[0] / "local-note.txt").read_text(encoding="utf-8") == "keep my local changes"
     moved = tmp_path / "relocated"
     shutil.move(str(skill), moved)
     target = tmp_path / "unrelated-project"
@@ -108,9 +130,10 @@ def test_bundle_relocation_and_reinstall_backup(tmp_path):
 def test_runtime_allowlist_excludes_unrelated_files(tmp_path):
     source = tmp_path / "source"
     shutil.copytree(ROOT / "opc", source / "opc")
+    subprocess.run(["git", "init", str(source)], check=True, capture_output=True)
     shutil.copyfile(ROOT / "LICENSE", source / "LICENSE")
-    (source / "opc/new_dev_tool.py").write_text("raise RuntimeError('not runtime')")
-    (source / "opc/notes.md").write_text("development notes")
+    (source / "opc/new_dev_tool.py").write_text("raise RuntimeError('not runtime')", encoding="utf-8")
+    (source / "opc/notes.md").write_text("development notes", encoding="utf-8")
     target = tmp_path / "package"
     initialize.snapshot(source, target)
     manifest = initialize.verify(target)

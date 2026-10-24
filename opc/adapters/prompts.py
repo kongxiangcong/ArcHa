@@ -9,13 +9,7 @@ def _history(ctx: dict[str, Any]) -> str:
     rows = ctx.get("history") or []
     if not rows:
         return "(no previous attempts)"
-    lines = ["| # | title | files | outcome | gain | reason |", "|---|---|---|---|---|---|"]
-    for h in rows:
-        lines.append("| %s | %s | %s | %s | %s | %s |" % (
-            h.get("attempt"), (h.get("title") or "")[:60], ", ".join(h.get("files") or [])[:60],
-            h.get("outcome"), "" if h.get("gain") is None else "%+.2f%%" % (100 * h["gain"]),
-            (h.get("reason") or "").replace("|", "/").replace("\n", " ")[:160]))
-    return "\n".join(lines)
+    return json.dumps(rows, ensure_ascii=False, indent=2)
 
 
 #: Appended only for a worker that has to parse the reply out of free text (dsh).
@@ -59,6 +53,15 @@ Baseline metrics: {json.dumps(ctx['baseline']['values'])}
 ## Previous attempts (do not repeat a refuted idea; learn from failures)
 {_history(ctx)}
 
+Use the original hypothesis, expected effect and falsifier alongside each attempt's
+measurements and gates. champion_before is that attempt's comparison baseline.
+Missing measurements mean unmeasured, not zero or a refuted hypothesis. A failed
+implementation or gate does not by itself refute the hypothesis; an accepted
+improvement does not by itself establish its proposed mechanism.
+In your next hypothesis, briefly identify the relevant prior attempt and explain
+why its evidence motivates continuing, revising or abandoning that idea. Do not
+repeat it unchanged or invent measurements for an untested prediction.
+
 ## Lessons
 {chr(10).join('- ' + l for l in ctx.get('lessons') or []) or '(none yet)'}
 
@@ -82,11 +85,16 @@ def designer_prompt(plan: dict[str, Any], ctx: dict[str, Any]) -> str:
 the plan below in this working tree.
 
 Rules:
-- Edit only these paths: {json.dumps(comp['editable'])}. Any other change fails the attempt.
+- Edit implementation only in these paths: {json.dumps(comp['editable'])}.
+- Generated scratch paths: {json.dumps(comp.get('scratch') or [])}. Local checks may write
+  these outputs; they are discarded and never included in the candidate patch. Frozen
+  tests/evaluators and .opc/ remain protected even if a scratch pattern matches them.
 - Do not touch tests, evaluators, golden data or anything under .opc/.
 - Do not run `git commit`; leave changes in the working tree.
 - Keep the change minimal and self-consistent. If a quick local check exists you may run it,
   but the official evaluation happens elsewhere.
+- Run checks unchanged; do not monkeypatch evaluators or suppress their report writes.
+  If a check requires undeclared outputs, report that limitation instead of altering it.
 
 ## Plan
 {json.dumps(plan, ensure_ascii=False, indent=2)}

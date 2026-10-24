@@ -9,19 +9,25 @@ from __future__ import annotations
 
 import json
 import os
-import signal
+import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
+
+from ..core.platform import Process, command_prefix
 from typing import Any
 
-from ..core.model import Cost, write_json, write_text
+from ..core.model import Cost, OPCError, write_json, write_text
 from .prompts import designer_prompt, expert_prompt
 from .worker import EXHAUSTED_SENTINEL, PLAN_SCHEMA, WorkerCall
 
 #: account/host conditions: retrying the attempt cannot help, the run must block
 INFRA_MARKERS = ("usage limit", "rate limit", "429", "unauthorized", "401", "not logged in",
-                 "Connection", "timed out", "network", "stream disconnected", "quota")
+                 "Connection", "timed out", "network", "stream disconnected", "quota",
+                 "error loading config", "requires a newer version of codex",
+                 "failed to initialize in-process app-server", "invalid_json_schema",
+                 "invalid schema for response_format")
 
 
 def parse_events(text: str) -> dict[str, Any]:
@@ -51,54 +57,82 @@ def parse_events(text: str) -> dict[str, Any]:
 class CodexWorker:
     def __init__(self, options: dict[str, Any]):
         self.model = options.get("model")
+        self.reasoning_effort = options.get("reasoning_effort")
+        if options.get("provider"):
+            raise OPCError("codex uses its CLI provider configuration; provider is only for dsh")
         self.profile = options.get("profile")
         self.timeout = float(options.get("timeout_s", 1800))
         self.extra = list(options.get("extra_args") or [])
-        self.binary = options.get("binary") or os.environ.get("OPC_CODEX_BIN", "codex")
+        self.binary = options.get("binary") or os.environ.get("OPC_CODEX_BIN")
+        if not self.binary:
+            # npm's codex.cmd may shadow a native CLI later on PATH. Never run
+            # the batch wrapper through a shell, or override an explicit choice.
+            self.binary = (shutil.which("codex.exe") if sys.platform == "win32" else None) or "codex"
 
     def _run(self, role: str, prompt: str, tree: Path, log_dir: Path, sandbox: str,
              schema: dict | None) -> tuple[WorkerCall, str]:
         log_dir.mkdir(parents=True, exist_ok=True)
         last = log_dir / ("%s-last.txt" % role)
-        argv = [self.binary, "exec", "--json", "--skip-git-repo-check", "-s", sandbox,
+        argv = [*command_prefix(self.binary), "exec", "--json", "--skip-git-repo-check", "-s", sandbox,
                 "-C", str(tree), "-o", str(last)]
         if schema is not None:
             write_json(log_dir / "plan.schema.json", schema)
             argv += ["--output-schema", str(log_dir / "plan.schema.json")]
-        if self.model:
-            argv += ["-m", self.model]
         if self.profile:
             argv += ["-p", self.profile]
-        argv += self.extra + ["-"]
+        extra = list(self.extra)
+        if self.model:
+            # Model is a single-valued clap option; duplicate -m is an error.
+            filtered, i = [], 0
+            while i < len(extra):
+                arg = extra[i]
+                if arg in ("-m", "--model"):
+                    i += 2
+                    continue
+                if not (arg.startswith("--model=") or (arg.startswith("-m") and len(arg) > 2)):
+                    filtered.append(arg)
+                i += 1
+            extra = filtered
+        argv += extra + ["-"]
+        if self.reasoning_effort:
+            argv[-1:-1] = ["-c", "model_reasoning_effort=" + json.dumps(self.reasoning_effort)]
+        # Explicit role settings outrank legacy extra_args overrides.
+        if self.model:
+            argv[-1:-1] = ["-m", self.model]
         write_text(log_dir / ("%s-prompt.md" % role), prompt)
         write_json(log_dir / ("%s-request.json" % role), {"argv": argv, "cwd": str(tree)})
         t0 = time.time()
         with open(log_dir / ("%s-events.jsonl" % role), "wb") as out, \
                 open(log_dir / ("%s-stderr.txt" % role), "wb") as err:
-            p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=out, stderr=err,
-                                 start_new_session=True)
             try:
-                p.communicate(prompt.encode(), timeout=self.timeout)
-                timed_out = False
-            except subprocess.TimeoutExpired:
+                p = Process(argv, cwd=str(tree), stdin=subprocess.PIPE, stdout=out, stderr=err)
+            except OSError as exc:
+                return WorkerCall(role, False, Cost(time.time() - t0, 0, None),
+                                  error="codex could not start: %s" % exc,
+                                  extra={"infra": True}), ""
+            with p:
                 try:
-                    os.killpg(p.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                p.wait()
-                timed_out = True
-        info = parse_events((log_dir / ("%s-events.jsonl" % role)).read_text(errors="replace"))
+                    p.communicate(prompt.encode(), timeout=self.timeout)
+                    timed_out = False
+                except subprocess.TimeoutExpired:
+                    p.kill_tree()
+                    timed_out = True
+        info = parse_events((log_dir / ("%s-events.jsonl" % role)).read_text(errors="replace", encoding="utf-8"))
         cost = Cost(time.time() - t0, info["tokens"], None)
-        text = last.read_text(errors="replace") if last.exists() else info["last_agent"]
+        text = last.read_text(errors="replace", encoding="utf-8") if last.exists() else info["last_agent"]
         call = WorkerCall(role, ok=False, cost=cost, call_id=info["thread_id"],
                           log_dir=str(log_dir))
         if timed_out:
             call.error, call.extra["infra"] = "codex timed out after %ss" % self.timeout, True
         elif info["failed"] or p.returncode != 0:
-            msg = "; ".join(e for e in info["errors"] if e)[-500:] or \
+            stderr = (log_dir / ("%s-stderr.txt" % role)).read_text(
+                errors="replace", encoding="utf-8")
+            msg = "; ".join(e for e in info["errors"] if e) or stderr.strip() or \
                   "codex exited %s" % p.returncode
+            infra = not info["thread_id"] or any(m.lower() in msg.lower() for m in INFRA_MARKERS)
+            msg = msg[-2000:]
             call.error = msg
-            call.extra["infra"] = any(m.lower() in msg.lower() for m in INFRA_MARKERS)
+            call.extra["infra"] = infra
         else:
             call.ok = True
         return call, text

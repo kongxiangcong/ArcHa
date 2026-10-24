@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 
 import pytest
 
@@ -23,7 +24,7 @@ def test_reaches_target_and_leaves_user_checkout_alone(make_project, engine_for)
     assert read_ref(root, e.ref) == s["champion"]
     assert read_ref(root, "refs/opc/t-toy/%s" % e.run_id) == s["champion"]
     assert git(root, "rev-parse", "HEAD").strip() == head
-    assert json.loads((root / "params.json").read_text())["x"] == 3
+    assert json.loads((root / "params.json").read_text(encoding="utf-8"))["x"] == 3
     assert git(root, "status", "--porcelain").strip() == ""
     views = e.artifact_dir() / "views"
     assert (views / "STATE.md").exists() and (views / "report.json").exists()
@@ -135,14 +136,14 @@ def test_noise_floor_rejects_gains_inside_measured_spread(make_project, engine_f
 
 def test_toolchain_change_remeasures_champion(make_project, engine_for, tmp_path):
     marker = tmp_path / "toolversion"
-    marker.write_text("1.0")
-    comp = component(toolchain=[["cat", str(marker)]])
+    marker.write_text("1.0", encoding="utf-8")
+    comp = component(toolchain=[["{python}", "-c", "import pathlib,sys; print(pathlib.Path(sys.argv[1]).read_text())", str(marker)]])
     t = task()
     t["budget"]["max_attempts"] = 1
     root = make_project(comp=comp, tsk=t)
     e = engine_for(root)
     e.run(max_attempts_now=0)
-    marker.write_text("2.0")
+    marker.write_text("2.0", encoding="utf-8")
     t2 = engine_for(root)
     t2.run()
     kinds = [ev["kind"] for ev in t2.ledger.events(t2.run_id)]
@@ -181,7 +182,7 @@ def test_crash_after_ref_move_recovers_champion(make_project, engine_for):
     e.run(max_attempts_now=0)
     old, meas = e.ledger.champion(e.run_id)
     git(root, "worktree", "add", "-q", "--detach", str(root.parent / "wt"), old)
-    (root.parent / "wt" / "params.json").write_text(json.dumps({"x": 4}))
+    (root.parent / "wt" / "params.json").write_text(json.dumps({"x": 4}), encoding="utf-8")
     git(root.parent / "wt", "commit", "-qam", "candidate")
     new = git(root.parent / "wt", "rev-parse", "HEAD").strip()
     n = e.ledger.begin_attempt(e.run_id, old, None)
@@ -212,7 +213,7 @@ def test_contract_change_requires_new_run(make_project, engine_for):
     t["budget"]["max_attempts"] = 3
     p = root / ".opc/tasks/t-toy/revisions/r0002/task.json"
     p.parent.mkdir(parents=True)
-    p.write_text(json.dumps(t))
+    p.write_text(json.dumps(t), encoding="utf-8")
     git(root, "add", "-A")
     git(root, "commit", "-qm", "r0002")
     with pytest.raises(OPCError, match="new run"):
@@ -237,7 +238,7 @@ def test_deterministic_cache_skips_reevaluation(make_project, engine_for):
     t = task(revision="r0002")
     p = root / ".opc/tasks/t-toy/revisions/r0002/task.json"
     p.parent.mkdir(parents=True)
-    p.write_text(json.dumps(t))
+    p.write_text(json.dumps(t), encoding="utf-8")
     git(root, "add", "-A")
     git(root, "commit", "-qm", "r0002")
     e2 = engine_for(root)
@@ -262,3 +263,53 @@ def test_promotion_reports_unmet_target_and_applies_only_on_request(make_project
     rep = promote(engine_for(root), apply_to="release")
     assert rep["applied"]
     assert git(root, "rev-parse", "release").strip() == rep["champion"]
+
+
+@pytest.mark.parametrize('field', ['title', 'hypothesis', 'changes', 'expected', 'falsifier'])
+@pytest.mark.parametrize('value', [None, '', '  ', 42])
+def test_plan_requires_existing_text_fields(field, value):
+    from opc.adapters.worker import validate_plan
+    plan = dict(title='t', hypothesis='h', changes='c', expected='e', falsifier='f', files=['a'])
+    if value is None:
+        del plan[field]
+    else:
+        plan[field] = value
+    assert validate_plan(plan) == 'plan.%s is empty' % field
+
+
+@pytest.mark.parametrize('files', [[], [''], ['  '], [42], 'a'])
+def test_plan_requires_nonempty_paths(files):
+    from opc.adapters.worker import validate_plan
+    plan = dict(title='t', hypothesis='h', changes='c', expected='e', falsifier='f', files=files)
+    assert validate_plan(plan)
+
+
+def test_next_expert_receives_original_plan_and_measured_evidence(make_project, engine_for):
+    from opc.adapters.prompts import expert_prompt
+    e = engine_for(make_project())
+    e.run(max_attempts_now=2)
+    attempts = e.ledger.attempts(e.run_id)
+    ctx = json.loads((e.attempt_dir(2) / 'context.json').read_text(encoding='utf-8'))
+    previous = ctx['history'][0]
+    for field in ('hypothesis', 'expected', 'falsifier'):
+        assert previous[field] == attempts[0]['plan'][field]
+    assert previous['metrics'] == attempts[0]['metrics']
+    assert previous['gates'] == attempts[0]['gates']
+    assert previous['champion_before']['values']['loss'] == 17
+    assert previous['metrics']['values']['loss'] != 17
+    for plain_text in (False, True):
+        prompt = expert_prompt(ctx, plain_text_reply=plain_text)
+        assert json.dumps(ctx['history'], ensure_ascii=False, indent=2) in prompt
+        assert 'does not by itself establish its proposed mechanism' in prompt
+
+
+def test_failed_gate_history_preserves_failure_without_inventing_metrics(make_project, engine_for):
+    evaluate = EVALUATE + '\nif x != 3: raise SystemExit(1)\n'
+    e = engine_for(make_project(evaluate=evaluate))
+    e.run(max_attempts_now=2)
+    ctx = json.loads((e.attempt_dir(2) / 'context.json').read_text(encoding='utf-8'))
+    previous = ctx['history'][0]
+    assert previous['outcome'] == Outcome.BROKEN.value
+    assert previous['metrics'] is None
+    assert previous['gates']
+    assert previous['falsifier'] == 'loss does not decrease'
