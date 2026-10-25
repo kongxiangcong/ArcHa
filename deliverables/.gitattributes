@@ -1,0 +1,3 @@
+# Preserve packaged snapshots and their byte-level SHA-256 manifests on every OS.
+fp32-reduce-benchmark/** -text whitespace=cr-at-eol,-blank-at-eof
+*.tar.gz binary
