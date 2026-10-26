@@ -274,16 +274,14 @@ class DshWorker:
         if text.strip() == EXHAUSTED_SENTINEL:
             call.exhausted = True
             return call
-        plan = extract_json(text, require=("title", "files"))
+        plan = extract_json(text, require=("title",))
         if plan is None:
             call.ok, call.error = False, "expert reply holds no JSON object: %s" % text[:200]
             return call
         # Same signal as codex's schema field, so a plan that says "nothing left"
         # behaves identically whichever worker produced it.
-        if plan.pop("exhausted", False) is True:
-            call.exhausted = True
-            return call
         call.output = plan
+        call.exhausted = plan.get("exhausted") is True
         return call
 
     def implement(self, plan: dict[str, Any], ctx: dict[str, Any], tree: Path,

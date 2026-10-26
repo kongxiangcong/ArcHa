@@ -1,6 +1,6 @@
 """Codex CLI worker: `codex exec --json`, one fresh session per role call.
 
-The expert runs read-only against the champion tree with a JSON output schema;
+The expert runs read-only in a research-material directory with a JSON output schema;
 the designer runs workspace-write inside its own tree. Every call records its
 thread id (the call identity) and token usage from the event stream. Codex does
 not report prices, so usd stays None (unknown) and budgets must cap tokens.
@@ -153,10 +153,8 @@ class CodexWorker:
             except json.JSONDecodeError:
                 call.ok, call.error = False, "expert reply is not JSON: %s" % text[:200]
                 return call
-            if isinstance(plan, dict) and plan.pop("exhausted", False) is True:
-                call.exhausted = True
-                return call
             call.output = plan
+            call.exhausted = isinstance(plan, dict) and plan.get("exhausted") is True
         return call
 
     def implement(self, plan: dict[str, Any], ctx: dict[str, Any], tree: Path,

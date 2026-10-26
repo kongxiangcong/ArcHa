@@ -42,7 +42,8 @@ def component_template(component_id: str) -> dict[str, Any]:
             {"id": "evaluate", "argv": ["{python}", ".opc/eval/evaluate.py", "--out", "{out}"],
              "metrics": "{out}/metrics.json", "timeout_s": 3600, "repeat": True}
         ],
-        "context_files": ["README.md"],
+        "context_files": [".opc/context/PROJECT.md", ".opc/context/REQUIREMENTS.md",
+                          ".opc/context/DECISIONS.md"],
         "focus_areas": [],
     }
 

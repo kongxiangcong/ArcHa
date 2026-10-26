@@ -1,6 +1,6 @@
 # opc：通用自动迭代引擎
 
-把一个“能跑通基线”的项目接进来，给一个方向，引擎就会循环：专家提假设 → 设计者改代码 → 冻结的评测门打分 → 确定性接纳 → 反馈下一轮，直到达成目标、预算用完、搜索枯竭或被暂停。核心代码不含任何领域知识；领域只通过 `.opc/` 下的配置和脚本接入。
+把一个“能跑通基线”的项目接进来，给一个方向，引擎就会循环：专家提假设 → 设计者改代码 → 冻结的评测门打分 → 确定性接纳 → 反馈下一轮，由专家判断继续或停止探索，或在资源耗尽、执行故障、用户暂停时结束。核心代码不含任何领域知识；领域只通过 `.opc/` 下的配置和脚本接入。
 
 ## 使用
 
@@ -37,7 +37,7 @@ reviewer 不再继承 expert，onboard 也会读取独立设置。DSH 覆盖需�
 | `core/engine.py` | 主循环、停止条件、预算、恢复、视图 | 无（唯一控制者） |
 | `core/ledger.py` | SQLite 唯一权威记录，跨平台单写入锁，intent 先写 | — |
 | `core/platform.py` / `core/windows.py` | 文件锁、进程树生命周期、可移植路径 | POSIX / Windows |
-| `core/workspace.py` | 从 champion 提交切 worktree、sandbox、补丁、CAS 移 ref | — |
+| `core/workspace.py` | 从专家选定的 parent 切 worktree、sandbox、补丁、CAS 移 ref | — |
 | `core/accept.py` | 缺指标即拒、约束、噪声下限、冻结规则文件 | 任务里 `acceptance.rule` |
 | `core/promote.py` | 证据链、复测、需求 check、可选独立审核、快进 | — |
 | `domain.py` + `domains/command.py` | 领域接口；默认实现＝命令门 + metrics.json | 组件里 `adapter: path.py:Class` |
@@ -75,3 +75,15 @@ reviewer 不再继承 expert，onboard 也会读取独立设置。DSH 覆盖需�
 - 内置 `param_search` 是坐标搜索，会停在局部最优；更强的搜索应作为策略插件接入。
 - Ge 统一入口未实现；`onboard` 只起草合同，不替代人工审核。
 
+
+## 实验反馈与候选续用
+
+专家只读取任务相关的 `.opc/context/*.md`、目标/完成标准/约束、逐轮设计、执行摘要、结构化实验数据和结论。源码、完整门判决和原始日志留在实现/证据侧。`context_files` 中的源码路径不再注入专家；旧接入应把必要背景迁到 `.opc/context/`，无需修改可改范围。
+
+计划的 `changes` 表达方法与实验，不必提供 `files`。`base_attempt: null`（省略同义）从当前冠军继续，`0` 从初始基线继续，正整数选择本 run 已保存的候选。候选由 Git 引用 `refs/opc-candidates/<task>/<run>/a<N>` 保留，`candidate.patch` 相对实际 parent；账本事件记录 parent、候选与冠军比较基线。未涨分也可选用，冠军仍走冻结的接纳规则。不会自动合并不同候选；若最终冠军不是目标分支的后代，promote 仍要求人工合并。
+
+下一次已有专家调用先返回 `conclusions: [{"attempt": N, "conclusion": "..."}]` 复盘待处理轮次，再规划或通过 `exhausted: true` 与 `stop_reason` 结束。结论挂回原轮次；资源/暂停/故障不触发补调，报告的 `pending_conclusions` 如实列出待复盘。阈值、`max_stagnation` 只作为专家进展信号；预算上限、基础设施故障和用户控制继续约束执行。`result=exploration_stopped` 表示专家结束探索，`result=target_met` 与独立的 `target_met` 布尔字段表示测量达到目标，停止理由单独保留，任务终验仍使用原 promote。
+
+默认命令领域从 metrics 文件保留数值指标及 `conditions`、`controls`、`cases`、`samples`、`results` 实验字段和各次重复输出，不透传嵌入的日志/判决全文，标记缓存来源。无补丁也运行冻结门，跳过缓存获取新数据；未执行不写成有测量。自定义领域可通过 `Evaluation.data` 返回必要数据，原标量 `values` 接口继续可用。没有数据的旧记录不补造测量或解释。
+
+Codex/DSH 计划接口使用上述字段；旧 `NO_EXPERIMENT` 仍识别，但有待复盘时模型须返回 JSON 结论再结束。确定性 scripted 策略的 `propose(ctx, tree)` 中 tree 也成为材料目录，应从 ctx 读取状态；旧策略若依赖源码路径需迁移。内置参数搜索已适配。旧 scripted 策略省略结论时保留待复盘，不冒充模型解释。

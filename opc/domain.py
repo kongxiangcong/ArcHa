@@ -17,6 +17,22 @@ from .core.config import ComponentConfig, matches
 from .core.model import GateResult, OPCError, Outcome
 
 
+def experimental_data(payload: Any) -> dict[str, Any]:
+    """Measurement fields from a metrics artifact, not embedded logs/verdicts.
+
+    Richer domain-specific data can be returned directly through Evaluation.data.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    metrics = payload.get("metrics")
+    values = metrics if isinstance(metrics, dict) else payload
+    result = {"metrics": {k: v for k, v in values.items() if isinstance(v, (int, float))}}
+    for key in ("conditions", "controls", "cases", "samples", "results"):
+        if key in payload:
+            result[key] = payload[key]
+    return result
+
+
 @dataclass
 class Evaluation:
     gates: list[GateResult]
@@ -27,6 +43,8 @@ class Evaluation:
     failure: Outcome | None = None       # BROKEN or INFRA; None when every gate passed
     reason: str = ""
     seconds: float = 0.0
+    data: list[dict[str, Any]] = field(default_factory=list)  # structured experimental output
+    cached: bool = False
 
 
 class DomainAdapter(Protocol):
@@ -39,7 +57,7 @@ class DomainAdapter(Protocol):
         """Run the ordered gates on a clean tree; stop at the first failure."""
 
     def expert_context(self, tree: Path) -> dict[str, Any]:
-        """Domain material the expert should see (sources, docs, extra hints)."""
+        """Legacy material hook; the engine uses .opc/context research notes only."""
 
 
 def load_domain(comp: ComponentConfig, evaluator_tree: Path) -> DomainAdapter:

@@ -1,0 +1,141 @@
+{
+  "date": "2026-10-24",
+  "scope": "Preparation and preflight only; no model-driven run or promote",
+  "python": "3.14.0 (tags/v3.14.0:ebf955d, Oct  7 2025, 10:15:03) [MSC v.1944 64 bit (AMD64)]",
+  "adapter_sha256": "034c297a7acdd799ec63e4074ce8909df0e3a03825d0f8d6c7e25c7909acdea4",
+  "cases": {
+    "ft06-search": {
+      "ok": true,
+      "metrics": {
+        "makespan": 61.0,
+        "mean_makespan": 61.0,
+        "correct": 1.0,
+        "inner_steps": 1000.0,
+        "seeds": 3.0,
+        "evaluation_wall_seconds": 17.467994599952362
+      },
+      "gates": [
+        {
+          "gate_id": "evaluate",
+          "status": "passed",
+          "seconds": 18.061,
+          "exit_code": 0,
+          "detail": ""
+        }
+      ],
+      "command_wall_seconds": 24.807260099914856,
+      "evaluator_digest": "331ec21342f502f3e86cbd124071c3473984c2a2c1cce27f28714b7b2ab9c099",
+      "framework_sha256": "46c94a2bcdc8758230c3a076f9ccbb995d2b979fd5d585acb94b17fea51ebd25",
+      "framework_head": "a1c50ca4297ab1105ea5fab3e71f604a6cf5bb83",
+      "template_commit": "ed067c6731adf6a38f45d68153893cb5d6224b4a",
+      "experiment": "benchmarks/experiments/validation-ft06",
+      "source": {
+        "url": "https://github.com/Pabloo22/job_shop_lib.git",
+        "commit": "1216c9a0e18ddd19eee22dace6c697b28a163714"
+      }
+    },
+    "kernel-opt": {
+      "ok": true,
+      "metrics": {
+        "cycles": 147734.0,
+        "correct": 1.0,
+        "cases": 3.0,
+        "evaluation_wall_seconds": 2.7593699999852106
+      },
+      "gates": [
+        {
+          "gate_id": "evaluate",
+          "status": "passed",
+          "seconds": 3.218,
+          "exit_code": 0,
+          "detail": ""
+        }
+      ],
+      "command_wall_seconds": 9.09714410000015,
+      "evaluator_digest": "c02ef7a5e67bf3b19f2f9a3661d45ceed0ba180746b485367366e96e01017930",
+      "framework_sha256": "46c94a2bcdc8758230c3a076f9ccbb995d2b979fd5d585acb94b17fea51ebd25",
+      "framework_head": "a1c50ca4297ab1105ea5fab3e71f604a6cf5bb83",
+      "template_commit": "e5cfd128c36e7b33a1e95655a41b6b7276d46c8d",
+      "experiment": "benchmarks/experiments/validation-kernel",
+      "source": {
+        "url": "https://github.com/anthropics/original_performance_takehome.git",
+        "commit": "5452f74bd977807ac2e74f3d29432b9df6f25197"
+      }
+    },
+    "vliw-pack": {
+      "ok": true,
+      "metrics": {
+        "bundles": 1234.0,
+        "correct": 1.0,
+        "cases": 36.0,
+        "evaluation_wall_seconds": 0.24128040007781237
+      },
+      "gates": [
+        {
+          "gate_id": "evaluate",
+          "status": "passed",
+          "seconds": 0.653,
+          "exit_code": 0,
+          "detail": ""
+        }
+      ],
+      "command_wall_seconds": 7.013069699984044,
+      "evaluator_digest": "311306a642c1fc202a2cb06b00173bcce21319bbed20a1318b3a9eeeb8b0539b",
+      "framework_sha256": "46c94a2bcdc8758230c3a076f9ccbb995d2b979fd5d585acb94b17fea51ebd25",
+      "framework_head": "a1c50ca4297ab1105ea5fab3e71f604a6cf5bb83",
+      "template_commit": "a8e92a0947c343b37f3363d24e726cd005e9adf5",
+      "experiment": "benchmarks/experiments/validation-pack",
+      "source": {
+        "url": "https://github.com/anthropics/original_performance_takehome.git",
+        "commit": "5452f74bd977807ac2e74f3d29432b9df6f25197"
+      }
+    },
+    "riscv-restore": {
+      "ok": true,
+      "metrics": {
+        "remaining_cases": 3.0,
+        "correct": 1.0,
+        "semantic_checks": 180.0,
+        "evaluation_wall_seconds": 1.5879935000557452
+      },
+      "gates": [
+        {
+          "gate_id": "evaluate",
+          "status": "passed",
+          "seconds": 2.095,
+          "exit_code": 0,
+          "detail": ""
+        }
+      ],
+      "command_wall_seconds": 13.248584200046025,
+      "evaluator_digest": "74b631cbbe057fba72bf40ba56024be7a223f4744d32e50be2684a906f0086b5",
+      "framework_sha256": "46c94a2bcdc8758230c3a076f9ccbb995d2b979fd5d585acb94b17fea51ebd25",
+      "framework_head": "a1c50ca4297ab1105ea5fab3e71f604a6cf5bb83",
+      "template_commit": "5f437ef50f63ad96b0be90faf6c25fff0b8c0143",
+      "experiment": "benchmarks/experiments/validation-riscv",
+      "source": {
+        "url": "https://github.com/xdslproject/xdsl.git",
+        "commit": "f76e4d9abf820700172a8b2c7fd42fca6579e9f5"
+      }
+    }
+  },
+  "tests": [
+    {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "tests": "11",
+      "time": "77.733",
+      "timestamp": "2026-10-24T14:55:37.308755+08:00",
+      "hostname": "Kong"
+    }
+  ],
+  "positive_control": {
+    "kind": "adapter validation, not an ArcHa optimization run",
+    "project": "D:\\dsh-proj\\ArcHa\\benchmarks\\cache\\ft06-positive-5f304983",
+    "returncode": 0,
+    "stdout": "{\"makespan\": 56, \"mean_makespan\": 55.333333333333336, \"correct\": 1, \"inner_steps\": 1000, \"seeds\": 3, \"evaluation_wall_seconds\": 3.5606214000144973}\n",
+    "stderr": ""
+  }
+}

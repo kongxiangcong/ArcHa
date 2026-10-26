@@ -34,7 +34,14 @@ if mode.startswith("onboard"):
         with open(cwd / "params.json", "a") as f:
             f.write("\n")
     last.write_text("drafted"); sys.exit(0)
-x = json.loads((cwd / "params.json").read_text())["x"]
+if (cwd / "research.json").exists():
+    ctx = json.loads((cwd / "research.json").read_text())
+    assert not (cwd / "params.json").exists() and not (cwd / ".git").exists()
+    x = int(7 - (ctx["champion"]["values"]["loss"] - 1) ** 0.5)
+    reviews = [{"attempt": a["attempt"], "conclusion": "original design measured: " + str(a["metrics"])}
+               for a in ctx["history"] if a["conclusion"] is None]
+else:
+    x = json.loads((cwd / "params.json").read_text())["x"]
 if "--output-schema" in args:
     assert "read-only" in args and "EXPERT" in prompt
     schema = json.loads(Path(args[args.index("--output-schema") + 1]).read_text())
@@ -42,10 +49,10 @@ if "--output-schema" in args:
         print(json.dumps({"type": "turn.failed", "error": {"message":
             "invalid_json_schema: required must include every property"}}))
         sys.exit(1)
-    if mode == "exhausted":
+    if mode == "exhausted" or ctx["progress"]["target_met"]:
         msg = json.dumps({"title": "nothing left", "hypothesis": "search exhausted",
-                          "files": [], "changes": "", "expected": "", "falsifier": "",
-                          "exhausted": True})
+                          "base_attempt": None, "changes": "", "expected": "", "falsifier": "",
+                          "exhausted": True, "conclusions": reviews, "stop_reason": "finished"})
         print(json.dumps({"type": "item.completed",
                           "item": {"type": "agent_message", "text": msg}}))
         print(json.dumps({"type": "turn.completed",
@@ -53,8 +60,8 @@ if "--output-schema" in args:
                                     "output_tokens": 2}}))
         last.write_text(msg); sys.exit(0)
     msg = json.dumps({"title": "x=%d" % (x + 1), "hypothesis": "closer to 7",
-                      "files": ["params.json"], "changes": "set x to %d" % (x + 1),
-                      "expected": "lower loss", "falsifier": "loss rises", "exhausted": False})
+                      "base_attempt": None, "stop_reason": "", "changes": "set x to %d" % (x + 1),
+                      "expected": "lower loss", "falsifier": "loss rises", "exhausted": False, "conclusions": reviews})
 else:
     assert "workspace-write" in args and "DESIGNER" in prompt
     if mode == "scratch":
@@ -94,11 +101,11 @@ def test_codex_worker_loop_records_identity_and_tokens(make_project, engine_for,
     e = engine_for(make_project(tsk=codex_task(fake_codex)))
     s = e.run()
     assert s["result"] == "target_met"
-    assert s["spent"]["tokens"] == 4 * 2400
+    assert s["spent"]["tokens"] == 4 * 2400 + 12
     assert not s["spent"]["usd_known"]
     calls = e.ledger.events(e.run_id, "worker_call")
-    assert len(calls) == 8 and all(c["body"]["call_id"] for c in calls)
-    assert len({c["body"]["call_id"] for c in calls}) == 8
+    assert len(calls) == 9 and all(c["body"]["call_id"] for c in calls)
+    assert len({c["body"]["call_id"] for c in calls}) == 9
 
 
 def test_codex_editing_evaluator_fails_sandbox(make_project, engine_for, fake_codex,
@@ -276,7 +283,7 @@ def test_codex_expert_can_declare_exhaustion(make_project, engine_for, fake_code
     t["budget"]["max_tokens"] = 100000
     e = engine_for(make_project(tsk=t))
     s = e.run()
-    assert s["state"] == "closed" and s["stop_reason"] == "expert_exhausted"
+    assert s["state"] == "closed" and s["stop_reason"].startswith("expert_exhausted:")
 
 
 def test_onboard_accepts_dsh_and_rejects_unknown(tmp_path):

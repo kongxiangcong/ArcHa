@@ -1,0 +1,6 @@
+/cache/
+/projects/
+/experiments/*/
+!/experiments/README.md
+/experiments/comparison.csv
+__pycache__/

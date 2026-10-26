@@ -90,10 +90,17 @@ def snapshot(source: Path, target: Path) -> None:
     hashes = {rel: digest(target / rel) for rel in RUNTIME_FILES}
     differs = []
     if proc.returncode == 0:
+        # Ask git whether a path differs from HEAD. Comparing raw working-tree bytes
+        # to blob bytes reports every CRLF checkout as uncommitted, so a clean source
+        # tree would be recorded as a dirty snapshot identity.
+        changed = subprocess.run(["git", "-C", str(source), "diff", "--name-only", "-z",
+                                  "HEAD", "--"], capture_output=True)
+        changed_paths = {p for p in changed.stdout.decode("utf-8", "surrogateescape").split("\0")
+                         if p}
         for rel in RUNTIME_FILES:
-            committed = subprocess.run(["git", "-C", str(source), "show", "HEAD:" + rel],
-                                       capture_output=True)
-            if committed.returncode or hashlib.sha256(committed.stdout).hexdigest() != hashes[rel]:
+            tracked = subprocess.run(["git", "-C", str(source), "cat-file", "-e", "HEAD:" + rel],
+                                     capture_output=True)
+            if tracked.returncode or rel in changed_paths:
                 differs.append(rel)
     manifest = {"format": 1, "source_commit": proc.stdout.strip() if proc.returncode == 0 else None,
                 "source_kind": "working-tree snapshot; source_commit is a base, not the bundle identity",

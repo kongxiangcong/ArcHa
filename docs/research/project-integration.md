@@ -39,7 +39,7 @@ openTPU 的 tournament 直接嵌在目标仓库 `tools/tourney/`，其配置知�
 
 ## 4. OPC 建议目录：项目保留原样，接入层只放必要信息
 
-以下已按本轮最终方案统一路径，不是已实现的 OPC daemon。完整约束以 [项目接入与目录规范](../../OPC%20项目接入与目录规范.md) 和 schema 为准。
+以下已按本轮最终方案统一路径，不是已实现的 OPC daemon。完整约束以 [项目接入与目录规范](../design/OPC%20项目接入与目录规范.md) 和 schema 为准。
 
 ```text
 <target-project>/

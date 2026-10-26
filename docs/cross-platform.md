@@ -58,4 +58,4 @@ python -m pytest -q
 
 CI 在 Windows、Ubuntu 的 Python 3.10/3.12/3.14 上执行同一套测试。覆盖跨进程锁竞争和崩溃释放、真实孙进程清理、worker/gate 超时、平台摘要、中文/空格路径、LF/CRLF/无末尾换行补丁、冻结路径拒绝，以及迭代/恢复/晋升回归。Windows 无软链接权限时只跳过对应软链接测试，另有不需要该权限的 junction 测试；Job Object 测试仅在 Windows 执行。
 
-限制性外层沙箱仍可能拒绝 junction 创建或安装器对私有临时目录的访问。遇到 `Access is denied` 时保留原始输出，用相同测试节点在获授权的正常宿主环境复核，区分宿主限制与产品回归；不要把测试改成无条件跳过。起草 worker 自建验证夹具的目录权限规则见 `opc/scaffold/ONBOARDING.md` 第 6 节。
+限制性外层沙箱仍可能拒绝 junction 创建或安装器对私有临时目录的访问。遇到 `Access is denied` 时保留原始输出，用相同测试节点在获授权的正常宿主环境复核，区分宿主限制与产品回归；不要把测试改成无条件跳过。FT06 重跑中这两项在外层沙箱稳定失败，在宿主环境通过。起草 worker 自建验证夹具的目录权限规则见 `opc/scaffold/ONBOARDING.md` 第 6 节。

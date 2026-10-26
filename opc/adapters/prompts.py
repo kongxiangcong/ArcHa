@@ -15,66 +15,68 @@ def _history(ctx: dict[str, Any]) -> str:
 #: Appended only for a worker that has to parse the reply out of free text (dsh).
 #: Codex constrains the shape through --output-schema, so it needs none of this, and
 #: saying "no fence" there would contradict the schema channel rather than help it.
-TEXT_REPLY_RULES = """Output only that JSON object: no prose, no markdown fence, no commentary around it. A reply
-that holds no JSON object is discarded and the attempt is wasted.
-If you judge that no further experiment can improve the objective with the budget left, reply
-with exactly NO_EXPERIMENT and nothing else, instead of repeating a refuted idea."""
+TEXT_REPLY_RULES = """Output only the JSON object. Legacy NO_EXPERIMENT is understood,
+but use the JSON stop object to preserve conclusions and stop_reason."""
 
-#: The same exhaustion signal in the shape a schema-constrained worker can send.
-#: Given to every model worker, because "stop when there is nothing left" is a
-#: property of the role, not of one adapter.
-EXHAUSTION_RULE = """If no further experiment can improve the objective with the budget left, set "exhausted":
-true in the object and stop exploring, instead of repeating a refuted idea."""
+EXHAUSTION_RULE = """Decide whether any worthwhile work remains toward the task, including
+capability development and diagnosis, within the budget. Reaching a target or a
+streak without gain is information for your decision. If finished, set "exhausted":
+true and give stop_reason after reviewing pending results; otherwise set it false."""
 
 
 def expert_prompt(ctx: dict[str, Any], plain_text_reply: bool = False) -> str:
     task, comp = ctx["task"], ctx["component"]
-    domain_files = (ctx.get("domain") or {}).get("context_files") or {}
-    docs = "\n\n".join("### %s\n```\n%s\n```" % (k, v) for k, v in domain_files.items())
     format_rules = (TEXT_REPLY_RULES if plain_text_reply else "") + "\n" + EXHAUSTION_RULE
-    return f"""You are the EXPERT role in an automatic optimization loop. You propose ONE
-experiment; another role implements it; a frozen evaluator judges it. You do not edit files.
+    return f"""You are the EXPERT role in an automatic research loop. You design ONE
+experiment or stop exploration. The designer reads and implements code; a frozen
+evaluator measures results. You do not edit files or inspect source code.
 
 ## Task
 Goal: {task['goal']}
 User direction: {task.get('direction') or '(none)'}
 Requirements: {json.dumps(task.get('requirements') or [], ensure_ascii=False)}
 Acceptance: {task['acceptance']}
-
-## Component `{comp['id']}`
-{comp.get('description') or ''}
-Editable paths (only these may change): {json.dumps(comp['editable'])}
-Focus for this attempt: {ctx.get('focus') or '(free choice)'}
+Component: {comp['id']}; {comp.get('description') or ''}
+Focus: {ctx.get('focus') or '(free choice)'}
 
 ## Current champion
 commit {ctx['champion']['commit'][:12]}; metrics: {json.dumps(ctx['champion']['values'])}
 Baseline metrics: {json.dumps(ctx['baseline']['values'])}
 
-## Previous attempts (do not repeat a refuted idea; learn from failures)
+## Previous experiments
 {_history(ctx)}
 
-Use the original hypothesis, expected effect and falsifier alongside each attempt's
-measurements and gates. champion_before is that attempt's comparison baseline.
-Missing measurements mean unmeasured, not zero or a refuted hypothesis. A failed
-implementation or gate does not by itself refute the hypothesis; an accepted
-improvement does not by itself establish its proposed mechanism.
-In your next hypothesis, briefly identify the relevant prior attempt and explain
-why its evidence motivates continuing, revising or abandoning that idea. Do not
-repeat it unchanged or invent measurements for an untested prediction.
+Use the original hypothesis, changes, expected effect and falsifier alongside actual
+execution and experimental data. champion_before is the comparison baseline; parent
+is the actual development starting point. Missing measurements mean unmeasured, not
+zero or a refuted hypothesis. Failed implementation or execution alone does not refute
+a hypothesis; an accepted improvement does not by itself establish its proposed mechanism.
+cached=true means reused historical data, not a new measurement. started without a
+completed result means incomplete execution, not evidence that the hypothesis failed.
+First review each history row with conclusion=null. Return conclusions as
+[{{"attempt": 1, "conclusion": "short interpretation of that original design and result"}}].
+Mention support, uncertainty, deviations and capability changes where relevant.
+These are your interpretations, not independent reviews. Do not invent measurements.
+Then choose the next experiment or stop in this SAME reply. First round: conclusions=[].
 
-## Lessons
-{chr(10).join('- ' + l for l in ctx.get('lessons') or []) or '(none yet)'}
+## Progress signals
+{json.dumps(ctx.get('progress') or {})}
 
 ## Budget left
 {json.dumps(ctx.get('budget_left') or {})}
 
-## Project material
-The working directory is a read-only checkout of the champion. Read whatever you need.
-{docs}
+## Research background
+{json.dumps(ctx.get('background') or {}, ensure_ascii=False, indent=2)}
+The working directory contains only research materials. Work from background,
+decisions, experimental data and conclusions. Do not seek code, raw logs or evaluator
+verdicts. The designer locates files and implementation details.
 
-Return a JSON object with: title, hypothesis, files (subset of editable paths), changes
-(precise enough for another engineer to implement without guessing), expected (effect on the
-objective and constraints), falsifier (what result would refute the hypothesis).
+Return a JSON object with title, hypothesis, changes (method, conditions, controls
+and observations for the designer to implement), expected, falsifier, base_attempt
+(null for champion, 0 for initial baseline, or an available candidate attempt number),
+conclusions, exhausted, stop_reason. Code file paths are not required. When stopping,
+experiment text may be empty; retain conclusions and stop_reason.
+Available candidates: {json.dumps(ctx.get('candidates') or [])}
 {format_rules}
 """
 
@@ -82,7 +84,8 @@ objective and constraints), falsifier (what result would refute the hypothesis).
 def designer_prompt(plan: dict[str, Any], ctx: dict[str, Any]) -> str:
     comp = ctx["component"]
     return f"""You are the DESIGNER role in an automatic optimization loop. Implement exactly
-the plan below in this working tree.
+the plan below in this working tree. Read code and locate the relevant files. A
+measurement or diagnosis may need no code edit.
 
 Rules:
 - Edit implementation only in these paths: {json.dumps(comp['editable'])}.
@@ -103,5 +106,8 @@ Rules:
 Goal: {ctx['task']['goal']}
 Champion metrics: {json.dumps(ctx['champion']['values'])}
 
-When done, reply with a short summary of what you changed.
+Actual development parent: {json.dumps(ctx.get('parent') or {})}
+
+When done, summarize actual behavior, design deviations, capability changes and
+execution limitations. Official measurements run separately.
 """

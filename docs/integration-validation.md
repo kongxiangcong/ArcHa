@@ -8,7 +8,7 @@
 
 合并测试 **30 passed、1 skipped**；新合同的 **6 份样本、6 份 schema、关联草案**通过，**10 个字段/模型反例与 7 个跨对象反例**被拒绝。旧 v0.1 的 6 份样本、6 份 schema 与 4 个反例继续通过原校验。两项独立审核发现的 P2 均已修复，并经独立定向复验关闭。
 
-- 规范：[项目接入与目录规范](../OPC%20项目接入与目录规范.md)。
+- 规范：[项目接入与目录规范](design/OPC%20项目接入与目录规范.md)。
 - 合同：[v0.2 升级说明](../contracts/V0.2.md)、[模板入口](../contracts/templates/v0.2/README.md)。
 - 可执行例子：[接入工具与两项目示例](../examples/project-onboarding/README.md)。
 - 原有优化闭环：[GEMV 验证记录](validation.md)，保持 v0.1 历史归属，没有被改名包装成 v0.2 集成验收。
@@ -48,8 +48,8 @@
 
 | 审核 | 发现 | 修复和定向复验 |
 | --- | --- | --- |
-| [目录与接入审核](review-integration-layout.md) | 生成子路径的普通文件祖先仍会被当作目录返回 | 对每一级现存父路径及目录/文件叶子校验；补 4 类冲突测试；独立复验原反例与正常路径 |
-| [合同审核](review-contracts-v02.md) | Plan 的预期产物 ID 没有映射到提交的具体原件 | 增加 `artifact_bindings`；计划项显式 present/missing，present 必须属于提交原件，REQ pass 必需产物齐全；同步 SUMMARY/VERIFICATION 模板 |
+| [目录与接入审核](reviews/review-integration-layout.md) | 生成子路径的普通文件祖先仍会被当作目录返回 | 对每一级现存父路径及目录/文件叶子校验；补 4 类冲突测试；独立复验原反例与正常路径 |
+| [合同审核](reviews/review-contracts-v02.md) | Plan 的预期产物 ID 没有映射到提交的具体原件 | 增加 `artifact_bindings`；计划项显式 present/missing，present 必须属于提交原件，REQ pass 必需产物齐全；同步 SUMMARY/VERIFICATION 模板 |
 
 当前范围没有未关闭的 P1/P2。审核由不同子 agent 执行，但共享主机权限，因此这里只能说明审查分工独立，不能说明生产 reviewer 的权限隔离已落地。
 
