@@ -232,3 +232,46 @@ opc onboard -p . --brief <brief> --prepare --task <task-id> --max-tokens <授权
 已部署的 runtime 和全局技能不会自动升级；使用前核对项目入口 --help 与已安装技能内容。本仓库修改只影响后续明确部署的副本。
 
 每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用已有冻结回执。无法取得可靠累计量时停止后续模型派发。
+
+## 只读观察工作台（可选）
+
+观察工作台显示研究地图、任务合同、历史运行/轮次、已有产物、终验和 agent 调用内容。它没有执行控制或消息发送能力，不启动研究任务，也不生成缺失报告。准备、执行、验收分别展示；账单或实时活动缺失时明确显示未知。
+
+从干净 checkout 构建并安装（Node 20.19+ 或 22.12+；Python 3.10+）：
+
+```bash
+npm --prefix web ci
+npm --prefix web run build
+python -m venv .venv
+# Linux / macOS / WSL
+. .venv/bin/activate
+# Windows PowerShell 改用 .venv\Scripts\Activate.ps1
+python -m pip install '.[observer]'
+python -m opc.observer --demo
+```
+
+访问 <http://127.0.0.1:8765>。演示模式在独立临时目录生成合成的当前源格式材料，仍由同一读取适配器处理；页面始终标注演示。退出清理临时材料，不访问用户项目。查看真实项目：
+
+```bash
+python -m opc.observer --project /absolute/path/to/project
+# 端口可通过 --port 8766 指定
+```
+
+观察器不创建缺失项目或数据库。默认且仅允许绑定 loopback；远程使用既有 SSH 隧道。项目配置明确指定的外置 `artifact_root` 也可读取，其他路径和越界符号链接会被拒绝。Markdown 不执行原始 HTML，外部图片不自动加载，HTML/SVG 原件仅显示源码或下载。页面 URL 保存任务、合同、run、阶段、轮次和所选产物/调用；刷新保留阅读位置。
+
+前端开发可运行 `npm --prefix web run dev`，Vite 会将 API 转发至本地 Python 服务。生产构建输出到 `opc/observer/static/`，该目录不提交，但构建后打包的 wheel 包含它；安装这种 wheel 后运行观察器不需要 Node。没有安装 observer extra 时原有 `opc` CLI 继续独立工作。只安装源包而未构建前端时，观察服务会明确提示构建命令。
+
+后端可选依赖锁定在 `pyproject.toml`，前端与传递依赖锁定在 `web/package-lock.json`。升级 ArcHa 时，在 `opc/observer/adapter.py` 核对变化的路径、账本列、冻结合同和 provider 日志映射；前端只消费 `/api/observer/v1` DTO。实体及接口模型见 `opc/observer/models.py`，服务的 `/openapi.json` 可读取生成的合同。升级后运行以下离线检查，不要求模型密钥：
+
+```bash
+python -m pip install pytest httpx
+python -m pytest opc/tests/test_observer.py -q
+npm --prefix web run typecheck
+npm --prefix web run build
+# 浏览器验收另需 Playwright 与本机 Chromium
+python tools/observer_browser_smoke.py
+```
+
+实施/验收记录及已知边界见 [观察工作台 tickets](docs/design/observer-workbench/tickets.md)。当前格式的离线夹具验证不代表用户实际部署已验证；未识别来源以 partial/unsupported 和具体诊断降级，不迁移源数据。
+
+当前来源适配只采纳可核对的明确关联。例如 `.opc/context/DECISIONS.md` 中一条 `task=<执行任务ID> revision=r0001 brief=<项目内简报路径> sha256=<完整SHA256>` 可绑定合同和简报；同一绑定出现多个不同 SHA 会标记歧义，不按标题或时间猜测。现有材料不满足该约定时仍可作为未关联对象浏览，观察器不会补写关联。
