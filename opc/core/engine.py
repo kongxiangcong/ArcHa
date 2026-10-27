@@ -114,6 +114,14 @@ class Engine:
             warnings.append("expert no longer reads source context_files; put task background, "
                             "criteria, constraints and capabilities in .opc/context/*.md: "
                             + ", ".join(source_context[:8]))
+        if (self.comp.adapter == "command" and acceptance.required_metrics(self.task.acceptance)
+                and not any(g.metrics for g in self.comp.gates)):
+            problems.append("required numeric metrics have no declared output")
+        gate_ids = {g.gate_id for g in self.comp.gates}
+        for req in self.task.requirements:
+            missing = set(req.get("gates") or []) - gate_ids
+            if missing:
+                problems.append("requirement %s names unknown gates: %s" % (req.get("id"), sorted(missing)))
         for p in self.comp.editable:
             if p in (".", "**", "*"):
                 problems.append("editable %r covers the whole project" % p)
@@ -568,12 +576,16 @@ class Engine:
                      "requirements": self.task.requirements,
                      "acceptance": {"objective": {"metric": acc.objective_metric,
                                                   "direction": acc.direction,
-                                                  "min_rel_gain": acc.min_rel_gain},
+                                                  "min_rel_gain": acc.min_rel_gain} if acc.objective_metric else None,
                                     "constraints": [c.describe() for c in acc.constraints],
                                     "target": acc.target.describe() if acc.target else None}},
             "component": {"id": self.comp.component_id, "description": self.comp.description,
                           "editable": self.comp.editable, "scratch": self.comp.scratch},
-            "champion": {"commit": champ[0], "values": metric_view(champ[1].values)},
+            "working_version": {"commit": champ[0]},
+            "champion": {"commit": champ[0], "values": metric_view(champ[1].values),
+                         "params": next((a["plan"].get("params") for a in reversed(attempts)
+                             if a["candidate"] == champ[0] and a["plan"] and a["plan"].get("params")), None)
+                         if self.task.expert.kind == "scripted" else None} if acc.objective_metric else None,
             "baseline": {"commit": base["commit_sha"], "values": metric_view(base["metrics"]["values"])},
             "history": history, "background": background, "budget_left": self.budget_left(),
             "progress": {"target_met": acceptance.target_met(acc, champ[1].values),

@@ -72,7 +72,7 @@ Rules:
 
 ## Objective context
 Goal: {ctx['task']['goal']}
-Champion metrics: {json.dumps(ctx['champion']['values'])}
+Numeric champion (when applicable): {json.dumps(ctx.get('champion'))}
 
 Actual development parent: {json.dumps(ctx.get('parent') or {})}
 

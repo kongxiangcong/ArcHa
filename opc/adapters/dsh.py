@@ -75,6 +75,7 @@ def parse_events(text: str) -> dict[str, Any]:
     """
     session_id, tokens, complete = "", 0, True
     tool_calls = 0
+    output_tokens = 0
     last_text = ""
     runner_error = ""
     end_kind: str | None = None
@@ -101,6 +102,7 @@ def parse_events(text: str) -> dict[str, Any]:
             usage = ev.get("usage")
             if isinstance(usage, dict):
                 tokens += _sum_usage(usage)
+                output_tokens += int(usage.get("outputTokens") or 0)
             else:
                 complete = False
         elif kind == "status" and ev.get("phase") == "turn_end":
@@ -114,7 +116,7 @@ def parse_events(text: str) -> dict[str, Any]:
         # error is the better explanation when it exists.
         last_text = ""
     return {"session_id": session_id, "tokens": tokens, "usage_complete": complete,
-            "tool_calls": tool_calls, "text": last_text, "runner_error": runner_error,
+            "tool_calls": tool_calls, "output_tokens": output_tokens, "text": last_text, "runner_error": runner_error,
             "end_kind": end_kind, "end_code": end_code, "end_message": end_message}
 
 
@@ -263,7 +265,7 @@ class DshWorker:
         else:
             call.extra["infra"] = any(m.lower() in message.lower() for m in INFRA_MARKERS)
         call.extra["infra"] = call.extra.get("infra", False) or request_rejected(
-            info["end_code"] + " " + message, bool(info["tool_calls"]))
+            info["end_code"] + " " + message, bool(info["tool_calls"] or info["output_tokens"]))
         return call, info["text"]
 
     def propose(self, ctx: dict[str, Any], tree: Path, log_dir: Path) -> WorkerCall:

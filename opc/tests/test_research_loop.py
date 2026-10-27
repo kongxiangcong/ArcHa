@@ -232,6 +232,8 @@ def test_work_versions_resume_and_select(make_project, engine_for):
     assert e.preflight()["ok"]
     first = e.run(max_attempts_now=1)
     assert first['champion'] is None
+    ctx = json.loads((e.attempt_dir(1) / 'context.json').read_text())
+    assert ctx['champion'] is None and ctx['task']['acceptance']['objective'] is None
     first_commit = first['working_version']
     e = engine_for(root)
     second = e.run(max_attempts_now=1)
@@ -302,11 +304,12 @@ def test_context_bounds_machine_data_and_history(make_project, engine_for):
     payload = {'metrics': {'loss': 17, 'correct': 1, **{f'machine_{i}': i for i in range(2156)}},
                'conditions': {'seed': 17}, 'cases': [{'id': i, 'latency': i+3} for i in range(1000)]}
     evaluate = EVALUATE[:EVALUATE.index('(out / "metrics.json")')] + '(out / "metrics.json").write_text('+repr(json.dumps(payload))+')\n'
-    seq = Sequence([plan(i) for i in range(15)] + [stop], [4]*15)
+    seq = Sequence([plan(i) for i in range(15)] + [lambda ctx: {**stop(ctx), "base_attempt": 1}], [4]*15)
     e = use_sequence(engine_for(make_project(evaluate=evaluate)), seq)
     e.run()
     ctx = seq.contexts[-1]
     assert len(ctx['history']) == 12 and len(ctx['candidates']) <= 12
+    assert e.summary()['selected_version'] == e.attempt_records()[0]['candidate']
     assert '"machine_' not in json.dumps(ctx)
     data = ctx['history'][-1]['experiment']['data'][0]['data']
     assert data['conditions']['seed'] == 17 and data['cases']['count'] == 1000
@@ -327,3 +330,77 @@ def test_development_local_steps_and_explicit_measurement(make_project, engine_f
     assert rows[1]['experiment']['status'] == 'completed'
     assert rows[1]['parent'] == rows[0]['candidate']
     assert not e.ledger.champions(e.run_id)
+
+
+def test_direct_task_to_delivery_and_environment_invalidation(make_project, engine_for, monkeypatch):
+    from opc.tests.test_brief import brief_project
+    from opc.scaffold.brief import load_brief
+    from opc.core.promote import promote
+    root = make_project(tsk=task(acceptance={}, requirements=[
+        {'id': 'R1', 'text': 'public contract', 'verification': 'automated', 'gates': ['evaluate']}]))
+    body = brief_project(root)
+    (root / 'TASK.md').write_text('Implement the confirmed task', encoding='utf-8')
+    (root / 'task-brief.md').write_text(body.replace('Map: map.md', 'Task: TASK.md'), encoding='utf-8')
+    assert load_brief(root, 'task-brief.md')[0]['ok']
+    git(root, 'add', '-A'); git(root, 'commit', '-qm', 'confirmed direct task')
+    e = use_sequence(engine_for(root), Sequence([plan(1)], [4]))
+    e.run(max_attempts_now=1)
+    seq = Sequence([plan(2), {'exhausted': True, 'base_attempt': 2}], [7])
+    resumed = use_sequence(engine_for(root), seq)
+    s = resumed.run()
+    assert resumed.attempt_records()[1]['parent'] == resumed.attempt_records()[0]['candidate']
+    assert all(not a['experiment'] for a in resumed.attempt_records())
+    result = promote(resumed)
+    assert result['complete'] and result['selected_version'] == s['selected_version']
+    assert result['requirements'][0]['status'] == 'met_by_gates'
+    assert promote(resumed)['evidence_source']
+    monkeypatch.setenv('ARCHA_TEST_TOOL_ENV', 'changed')
+    assert promote(resumed)['evidence_source'] is None
+
+
+def test_selected_nonchampion_reports_its_own_measurement(make_project, engine_for):
+    from opc.core.promote import promote
+    e = use_sequence(engine_for(make_project()), Sequence([
+        plan(1), plan(2), {'exhausted': True, 'base_attempt': 2}], [7, 6]))
+    e.run()
+    r = promote(e)
+    assert r['selected_metrics']['loss'] == 2
+    assert r['champion_metrics']['loss'] == 1
+    assert r['selected_version'] != r['champion']
+    assert not r['complete']  # original loss<=1 completion requirement still applies
+
+
+@pytest.mark.parametrize('case', ['gates', 'metrics', 'review', 'conditions'])
+def test_delivery_missing_evidence_blocks(make_project, engine_for, monkeypatch, case):
+    from opc.core.promote import promote
+    requirements = ([{'id': 'R1', 'text': 'reviewed', 'verification': 'review'}]
+                    if case in ('review', 'conditions') else [])
+    acc = {'constraints': [{'metric': 'missing', 'op': '==', 'value': 1}]} if case == 'metrics' else {}
+    ev = EVALUATE+'\nraise SystemExit(1)\n' if case == 'gates' else EVALUATE
+    e = use_sequence(engine_for(make_project(evaluate=ev, tsk=task(acceptance=acc, requirements=requirements))),
+                     Sequence([plan(1), {'exhausted': True, 'base_attempt': 0}], [4]))
+    s = e.run()
+    assert s['selected_version'] == s['baseline']
+    monkeypatch.setattr('opc.core.promote.run_reviewer', lambda *a: {
+        'ok': True, 'verdict': 'accept_with_conditions', 'summary': 'required docs missing'})
+    r = promote(e, review='codex' if case == 'conditions' else None)
+    assert not r['complete'] and not r['promotable']
+
+
+def test_no_numeric_output_is_required_for_gate_only_completion(make_project, engine_for):
+    from opc.core.promote import promote
+    comp = component()
+    comp['gates'][0].pop('metrics')
+    root = make_project(comp=comp, tsk=task(acceptance={}, requirements=[
+        {'id': 'R1', 'verification': 'automated', 'gates': ['evaluate']}]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), stop], [4]))
+    assert e.preflight()['ok']
+    e.run()
+    assert promote(e)['complete']
+
+
+def test_numeric_contract_still_requires_metric_output(make_project, engine_for):
+    comp = component()
+    comp['gates'][0].pop('metrics')
+    e = engine_for(make_project(comp=comp))
+    assert not e.static_check()['ok']

@@ -25,7 +25,7 @@ REV = re.compile(r"r\d{4}\Z")
 OPS = ("<", "<=", "==", ">=", ">", "!=")
 DEFAULT_SCRATCH = ["**/__pycache__/**", "**/*.pyc", ".pytest_cache/**"]
 DEFAULT_INFRA = [
-    "Cannot allocate memory", "No space left on device", "command not found",
+    "Cannot allocate memory", "No space left on device", "command not found", "can't open file",
     "No such file or directory: '", "Connection refused", "Connection reset",
     "Temporary failure in name resolution", "Killed", "Resource temporarily unavailable",
 ]
@@ -55,7 +55,7 @@ COMPONENT_KEYS = {"component_id", "description", "editable", "frozen", "evaluato
 GATE_KEYS = {"id", "argv", "timeout_s", "metrics", "repeat", "cwd", "env"}
 TASK_KEYS = {"task_id", "revision", "component", "goal", "direction", "requirements",
              "acceptance", "budget", "workers", "base_ref"}
-REQUIREMENT_KEYS = {"id", "text", "verification", "check"}
+REQUIREMENT_KEYS = {"id", "text", "verification", "check", "gates"}
 ACCEPTANCE_KEYS = {"objective", "constraints", "target", "repeats", "noise_k", "rule",
                    "rule_params"}
 OBJECTIVE_KEYS = {"metric", "direction", "min_rel_gain"}
@@ -225,8 +225,6 @@ class ComponentConfig:
             raise OPCError("%s: no gates" % where)
         if len({g.gate_id for g in gates}) != len(gates):
             raise OPCError("%s: duplicate gate ids" % where)
-        if not any(g.metrics for g in gates):
-            raise OPCError("%s: no gate declares 'metrics'; nothing can be measured" % where)
         on_skip = d.get("on_skip", "reject")
         if on_skip not in ("reject", "degrade"):
             raise OPCError("%s: on_skip must be 'reject' or 'degrade'" % where)
@@ -327,6 +325,9 @@ class TaskSpec:
         _keys(d, TASK_KEYS, where)
         for i, r in enumerate(d.get("requirements") or []):
             _keys(r, REQUIREMENT_KEYS, "%s requirements[%d]" % (where, i))
+            if "gates" in r and (not isinstance(r["gates"], list) or not r["gates"] or
+                                  not all(isinstance(g, str) and g for g in r["gates"])):
+                raise OPCError("requirement.gates must name nonempty gate IDs")
         if _id(_need(d, "task_id", where, str), where) != task_id:
             raise OPCError("%s: task_id does not match its directory" % where)
         if _need(d, "revision", where, str) != revision or not REV.fullmatch(revision):

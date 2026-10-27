@@ -31,6 +31,8 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
     run = engine.ledger.latest_run(engine.task.task_id)
     if run is None:
         raise OPCError("task %s has no run" % engine.task.task_id)
+    if run["task_digest"] != engine.task.digest:
+        raise OPCError("delivery contract differs from frozen run; use its revision")
     engine.run_id = run["run_id"]
     champs = engine.ledger.champions(engine.run_id)
     selected = engine.selected_commit()
@@ -146,7 +148,7 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
     from .config import Constraint
     champ_values = best["metrics"]["values"]
     if task.acceptance.target and not acceptance.target_met(task.acceptance, champ_values):
-        finding("target", "block", "target %s not met (champion %s=%g)" % (
+        finding("target", "warn", "target %s not met (champion %s=%g)" % (
             task.acceptance.target.describe(), task.acceptance.target.metric,
             champ_values.get(task.acceptance.target.metric, float("nan"))))
     coverage = []
@@ -159,6 +161,12 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
             status = "met" if why is None else "not_met: " + why
             if why is not None:
                 finding("requirements", "block", "%s not met: %s" % (req.get("id"), why))
+        elif how == "automated" and req.get("gates"):
+            passed = {g["gate_id"].split("#")[0] for g in evidence["gates"] if g["status"] == "passed"}
+            missing = set(req["gates"]) - passed
+            status = "met_by_gates" if not missing else "unverified gates: " + ", ".join(sorted(missing))
+            if missing:
+                finding("requirements", "block", "%s: %s" % (req["id"], status))
         elif how == "automated":
             status = "unverified: no metric check or review evidence declared"
             finding("requirements", "block", "%s has no declared verification coverage" % req.get("id"))

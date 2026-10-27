@@ -25,7 +25,7 @@
 | T3 | 精简模型输入，保留按需证据 | T2 | R6、R4.6 | A8–A9 | resolved |
 | T4 | 放宽工作表达、验证按需、直接任务接入 | T3 | R4、R8 | A4、A7、A12 | resolved |
 | T5 | 确定性请求拒绝停止调用 | T4 | R7 | A10 | resolved |
-| T6 | 全链路回归、工程任务对照与旧 benchmark 退役 | T5 | §5–§6、R8、validation | A1–A12 + paired pilot | awaiting_confirmation |
+| T6 | 全链路回归、工程任务对照与旧 benchmark 退役 | T5 | §5–§6、R8、validation | A1–A12 + paired pilot | blocked |
 
 ## T1：完成条件合同与连续工作版本
 
@@ -150,7 +150,7 @@
 - 修正外部条件后使用已有恢复路径，历史失败和费用不丢失；不虚构缺失的 token。
 - 运行 `test_codex_and_config.py`、`test_dsh_worker.py`、`test_engine.py` 和相关研究循环测试。
 
-完成记录：2026-10-27，T5 独立提交（本提交）。Codex/DSH 将无有效执行的上下文上限与请求 schema 拒绝接入既有 infra/blocked 路径；保留真实成本和错误，不新增重试。原受影响套件通过，新增有 thread/session 的 expert/designer 拒绝计数及执行后错误分类对照；适配器套件 51 项通过。
+完成记录：2026-10-27，T5 独立提交（本提交）。Codex/DSH 将无有效执行的上下文上限与请求 schema 拒绝接入既有 infra/blocked 路径；保留真实成本和错误，不新增重试。原受影响套件通过，新增有 thread/session 的 expert/designer 拒绝计数及执行后错误分类对照；适配器套件 53 项通过。
 
 ## T6：全链路回归、工程任务对照与文档收口
 
@@ -176,4 +176,34 @@
 - 若模型服务/CLI 不可用或产品终验失败，其他可执行的代码工作仍完成，T6 保持 blocked 并区分代码验收与真实任务未通过，不声称整体验收完成。首次失败不得被静默修复重跑覆盖；再开展真实试验需新的明确预算。
 - 所有 ticket 完成记录已更新，PR 标题和描述反映最终变更、验证及限制；不自动合并 PR。
 
-完成记录：待实施。
+完成记录：2026-10-27，T6 独立提交（本提交），**离线实现与回归完成，真实任务验收 blocked**。
+
+- 独立提交：T1 `dff6766`；T2 `c1b62b1`；T3 `615434b`；T4 `90ea774`；T5 `8291fde`；T6 本提交。T4 额外受影响套件 88 passed。
+- 素材自检：`python -m unittest discover -s tools/tests -p test_dma_task_materials.py -v`，8 passed（独立于框架回归）。固定 82 输入；起始版本外置验收 exit 1，57 个失败条目，符合未实现功能预期。
+- 输入 SHA-256：`a7ec9936bec02571e25e585fc545989a894d45c018675207530882b4c127af05`；验收器 SHA-256：`e6bf9ea0d5995cd00ce439a6d0706fea1e971c4c1eb73340b8bd937ce38a7dc9`。原件在 `.tmp/dma-validation/`。
+- Linux：Debian 13.6 x86_64 / Python 3.12.14，`python -m pytest -q -rs`：215 passed、5 skipped、12 subtests passed（32.12 秒）；5 个跳过均为 Windows 专属探针。`git diff --check` 通过。Windows 本地未运行；现有 CI matrix 为 Ubuntu/Windows × Python 3.10/3.12/3.14，GitHub GraphQL/REST 均返回 Forbidden，无法读取实际 CI 结果，不声称 Windows 通过。
+- A1–A4：`test_work_versions_resume_and_select`、`test_failed_work_does_not_advance`、`test_development_local_steps_and_explicit_measurement`。A3/A5–A7：selected delivery、review evidence reuse、environment invalidation、nonchampion measurement 及 missing-evidence 反例。A8/A9：2,156 机器字段、1,000 cases、15 轮历史；默认 history≤12，旧 a1 仍可选；完整数据保留，最终实测 expert prompt 1,818 字符、context.json 32,575 字节、单个完整 evaluation.json 205,304 字节（12 行 history、11 个近期候选）；未把 2,156 机器字段逐项注入。A10：两种适配器的请求拒绝计数测试；A11：原数值优化/噪声/约束/工具链/fresh 测量测试；A12：直接 brief 来源、合同接入与端到端恢复/交付测试。
+- 增补 `requirements[].gates`，明确复用冻结门 ID 对需求的覆盖；未知门在 check 报错。没有 check、门覆盖或有效 review 的要求不自动完成。数值 target 仍为信息，显式 requirements/约束负责必要验收。
+- 单循环/角色/命令边界保留；新增语义仅写入原合同、plan、ledger 事件和报告。未新增运行产物类型或强制模型调用。param_search 从已有冠军对应 plan 参数恢复，不依赖其仍在近期窗口中。
+- 退役已跟踪 `benchmarks` 用例/执行脚本/专用测试及 FP32 评测目录与打包 tar；保留 `benchmarks/reports` 历史和框架测试，不删除未跟踪实验数据。
+
+真实 pilot 记录（未形成可比较产品结果）：
+
+| 记录项 | direct | archa |
+| --- | --- | --- |
+| 随机先后顺序 | 第 1 组 | 第 2 组，因共同 CLI 阻塞未启动 |
+| 同一起始 commit | `94261194c4cf6f2a7f59a216d61d240c30e657a4` | 同左 |
+| 模型 / CLI / Python | 请求 gpt-6.1-sol / medium；Codex 0.163.0；Python 3.12.14 | 计划相同，未调用 |
+| 开发结果 | CLI 初始化失败，未有效执行模型/产品任务，工作区无修改 | not_run |
+| 终点 / 产品正确性 | 仍为起始版本；其失败只作为已知负向控制，不算模型终验 | 无模型成果，不执行产品终验 |
+| 开发墙钟 / token | 首次启动 0.114 秒；input/output/cached token 未报告，未知 | not_run / 未测量 |
+| 共享准备 | 两个独立 Git 起点复制约 0.028 秒，素材检查单列 | 同左 |
+| 人工干预 | 无产品代写；一次 CLI sqlite_home/log_dir 路径排障，仍失败 | 无产品干预 |
+| 正式模型评价 / reviewer | 0 次有效模型调用；独立 reviewer not_run | not_run |
+| 外部阻塞 | 必需的 `/run/codex-environment/codex-home/installation_id` 创建返回 EROFS；不是模型额度或产品错误 | 同一 CLI 前置条件不可用 |
+
+原始现场：`/tmp/archa-dma-pilot/record.json`、`direct-session.jsonl`、`direct-stderr.txt`、`direct-startup2-stderr.txt`、`startup-files.txt`。登录状态为 Logged in using ChatGPT；不复制凭据、不改全局技能/其他项目 runtime。两次尝试均在 app-server 初始化阶段失败，SQLite/日志目录覆盖没有解决只读平台挂载。没有调换模型、泄露参考答案或偷偷重跑产品试验。
+
+**整体验收未完成**：恢复平台可写 Codex 运行目录后才能执行已授权的一组真实开发/外置终验/盲审；当前不能下案例可行性或框架增益结论。PR 保持当前审阅状态，不请求合并或自动标 ready。PR/CI API 返回 Forbidden，Git push 通道正常；最终 PR 元数据更新结果见交付记录。
+
+交付记录：Git push 已将 T1–T5 更新到原 PR #5 分支；T6 完成本提交后同样推送。PR 查询经 GraphQL 和 REST（含提升执行权限的读请求）均 Forbidden，实际 CI 未知；不将本地 Linux 结果代替 Windows/远端 CI。PR 元数据 PATCH 另尝试并以最终答复报告，blocked 时不标 ready、不合并。

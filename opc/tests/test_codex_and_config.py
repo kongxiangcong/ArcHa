@@ -219,7 +219,6 @@ def _write(root: Path, comp: dict | None = None, tsk: dict | None = None):
     ({"evaluator_files": []}, "nothing pins"),
     ({"editable": [".opc/eval/evaluate.py"]}, "overlaps the evaluator"),
     ({"gates": [{"id": "g", "argv": ["sh", "-c", "echo hi"], "metrics": "m"}]}, "sh -c"),
-    ({"gates": [{"id": "g", "argv": ["true"]}]}, "nothing can be measured"),
     ({"frozen": ["*.json"]}, "also frozen"),
 ])
 def test_component_validation_fails_closed(tmp_path, over, match):

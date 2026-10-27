@@ -1,9 +1,9 @@
 # 以任务完成为主线的轻量迭代改造
 
-日期：2026-10-27。状态：**待用户审核；尚未授权实施**。
+日期：2026-10-27。状态：**2026-10-27 用户已确认并授权实施；实际验收见 tickets**。
 
 基线：`main@c111a72e35051793e1bffbeb949e9e9cc4d59b6d`。分支：`codex/task-completion-spec`。
-实施清单：[tickets.md](tickets.md)。验证方案：[validation.md](validation.md)。开发交接：[development-prompt.md](development-prompt.md)。当前 PR 包含规划及已自检的测试素材，不包含 T1–T6 的框架实现或真实模型实验。
+实施清单：[tickets.md](tickets.md)。验证方案：[validation.md](validation.md)。开发交接：[development-prompt.md](development-prompt.md)。规划基线只含方案与素材；当前实施及真实模型验收结果见 tickets。
 
 ## 1. 问题与目标
 

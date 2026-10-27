@@ -1,8 +1,0 @@
-# Minimal runtime for these source-based cases, not the full upstream dev environments.
-immutabledict==4.3.1
-ordered-set==4.1.0
-typing-extensions==4.15.0
-numpy==2.3.5
-networkx==3.6.1
-simanneal==0.5.0
-pandas==2.3.3

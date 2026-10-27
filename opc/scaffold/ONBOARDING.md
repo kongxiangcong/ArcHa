@@ -121,8 +121,8 @@
 }
 ```
 
-- `requirements[].check` 可选：`promote` 时据此判定该需求 met / not_met；没有 `check` 的需求只在报告里列出，靠门或独立审核覆盖。
-- 指标缺失 = 拒绝（不是通过）。`target` 达到即停止，结果记 `target_met`。
+- `requirements[].check` 可选：`promote` 时据此判定该需求 met / not_met；没有 `check` 的需求须以 `gates: [门ID]` 声明覆盖或以独立 review 验证；缺覆盖不能自动通过。
+- 指标缺失 = 拒绝（不是通过）。`target` 达到是专家进展信号，不强制停止；报告单列 `target_met`，完成仍由终验判断。
 - 数字有噪声时设 `repeats>1`：收益必须超过 `noise_k × 重复测量的极差`。
 - 自定义规则：`"rule": ".opc/eval/accept.py:accept"`（函数 `accept(old, new, **rule_params) -> (bool, str)`，必须在 `evaluator_files` 里）。
 - worker 三选一：
@@ -243,7 +243,7 @@ opc promote   -p <project> --task <task> --confirm 3   # 晋升审核；--apply 
 
 明确任务可省略地图，在 brief Source 使用 `Task: TASK.md` 指向真实任务来源；有地图仍使用 Map。复用已确认 brief 与调查，只核对关键合同依据。
 无数值目标用 `acceptance.objective: null` 或省略 objective；不可造 0/1 进度分数。
-requirements 的 check 指向真实指标；无 check 的需求应声明 review 并由终验审阅，不能自动视为已覆盖。
+requirements 的 check 指向真实指标；需求可用 gates: [冻结门ID] 声明覆盖；无 check 或门覆盖的需求应声明 review 并由终验审阅，不能自动视为已覆盖。
 preflight 中可执行评价的功能失败是未完成基线，工具/输入/输出契约故障仍阻塞。
 普通开发默认连续积累已保存工作版本，由 designer 局部测试；expert 可用 evaluate=true 请求正式评价。
 base_attempt 同样用于停止时的交付选版。run 停止不代表完成，promote 对选定版本执行完整验收与必要 review；apply 仍显式。

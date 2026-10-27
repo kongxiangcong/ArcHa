@@ -1,7 +1,0 @@
-{
-  "source": "performance", "title": "完整内核模拟周期优化",
-  "editable": ["perf_takehome.py"], "metric": "cycles", "target": 74000,
-  "direction": "优化 KernelBuilder.build_kernel 及辅助代码；保持单核、机器规格和参考输出。可探索 SIMD、调度与 scratch 复用。",
-  "frozen": ["problem.py", "tests/**", "tests_frozen.py"],
-  "dependencies": [], "baseline_transform": "none"
-}
