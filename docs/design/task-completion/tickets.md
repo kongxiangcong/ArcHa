@@ -21,7 +21,7 @@
 | Ticket | 交付行为 | 前置 | Spec | 验收 | 状态 |
 | --- | --- | --- | --- | --- | --- |
 | T1 | 无数值目标也能积累、恢复和选择成果 | 用户确认 | R1–R3 | A1–A4、A11 | resolved |
-| T2 | 选定成果终验，证据补齐直接收尾 | T1 | R5 | A3、A5–A7 | awaiting_confirmation |
+| T2 | 选定成果终验，证据补齐直接收尾 | T1 | R5 | A3、A5–A7 | resolved |
 | T3 | 精简模型输入，保留按需证据 | T2 | R6、R4.6 | A8–A9 | awaiting_confirmation |
 | T4 | 放宽工作表达、验证按需、直接任务接入 | T3 | R4、R8 | A4、A7、A12 | awaiting_confirmation |
 | T5 | 确定性请求拒绝停止调用 | T4 | R7 | A10 | awaiting_confirmation |
@@ -76,7 +76,7 @@
 - A7：产品、安装材料、工具环境变化时不借用旧证据；数值主张属于实际交付版本。
 - 运行 `test_engine.py`、`test_research_loop.py` 及受影响 Codex/DSH reviewer 用例。
 
-完成记录：待实施。
+完成记录：2026-10-27，T2 独立提交（本提交）。选定版本完整 fresh 终验；未满足需求/约束/必需审阅均阻止交付。复用同 commit、冻结合同/评价器、工具及环境摘要的 promotion 评价，只补 review 不创建候选。84 项受影响测试通过，新增 selected/review/evidence 测试所在套件 17 项通过；真实 review 待 T6。
 
 ## T3：模型上下文去重与按需材料
 

@@ -257,12 +257,11 @@ def test_promotion_reports_unmet_target_and_applies_only_on_request(make_project
     e = engine_for(root)
     e.run()
     rep = promote(engine_for(root))
-    assert rep["promotable"] and not rep["applied"]
+    assert not rep["promotable"] and not rep["applied"]
     assert any(f["check"] == "target" for f in rep["findings"])
     assert rep["requirements"][0]["status"].startswith("not_met")
-    rep = promote(engine_for(root), apply_to="release")
-    assert rep["applied"]
-    assert git(root, "rev-parse", "release").strip() == rep["champion"]
+    with pytest.raises(OPCError, match="promotion blocked"):
+        promote(engine_for(root), apply_to="release")
 
 
 @pytest.mark.parametrize('field', ['title', 'hypothesis', 'changes', 'expected', 'falsifier'])

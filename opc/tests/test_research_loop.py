@@ -268,3 +268,30 @@ def test_failed_work_does_not_advance(make_project, engine_for, failure):
     s = e.run()
     assert s['working_version'] == s['baseline'] == s['selected_version']
     assert not any(a['candidate'] for a in e.attempt_records())
+
+
+def test_selected_delivery_and_review_reuses_exact_evidence(make_project, engine_for, monkeypatch):
+    from opc.core.promote import promote
+    from opc.core.engine import Engine
+    root = make_project(tsk=task(acceptance={}, requirements=[
+        {'id': 'R1', 'text': 'usable', 'verification': 'review'}]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), {'exhausted': True, 'base_attempt': 1}], [4]))
+    s = e.run()
+    count = []
+    original = Engine.evaluate_commit
+    def evaluate(self, *args, **kwargs):
+        count.append(args[1])
+        return original(self, *args, **kwargs)
+    monkeypatch.setattr(Engine, 'evaluate_commit', evaluate)
+    first = promote(e)
+    assert not first['complete'] and first['selected_version'] == s['selected_version']
+    monkeypatch.setattr('opc.core.promote.run_reviewer', lambda *a: {'ok': True, 'verdict': 'accept'})
+    second = promote(e, review='codex')
+    assert second['complete'] and second['evidence_source']
+    assert len(count) == 1
+    assert second['champion'] is None
+    assert len(e.attempt_records()) == 2
+    # A different selected version cannot borrow that receipt.
+    e.ledger.event(e.run_id, 'selected_version', None, commit=s['baseline'])
+    promote(e, review='codex')
+    assert len(count) == 2
