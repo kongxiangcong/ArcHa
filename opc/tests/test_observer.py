@@ -699,3 +699,34 @@ def test_numeric_measurements_retain_distinct_commit_scopes_and_conditions(clien
     assert row['scopes']['candidate']['commit']=='b'*40
     assert row['scopes']['champion']['evaluator_digest']=='other-evaluator'
     assert row['source_refs']
+
+
+def test_contract_content_is_explicit_projection_without_worker_configuration(client,project):
+    directory=project/'.opc/local/artifacts/test/dma/old-run'
+    path=directory/'frozen/task.json'
+    contract=json.loads(path.read_text(encoding='utf-8'))
+    contract['workers']={'expert':{'kind':'codex','env':{'SECRET':'MUST_NOT_PUBLISH'},'api_key':'MUST_NOT_PUBLISH'}}
+    put(path,contract)
+    old=run(client)
+    artifact=next(a for a in old['artifacts'] if 'task.json' in a['label'])
+    metadata=get(client,'/artifacts/'+ident(artifact['id']))['data']
+    assert metadata['content_is_projection'] is True
+    assert metadata['can_download'] is False
+    assert any(i['code']=='config_projection' for i in metadata['meta']['issues'])
+    content=get(client,'/artifacts/'+ident(artifact['id'])+'/content')['data']['content']
+    assert json.loads(content)['goal']=='修复满载拒绝'
+    assert 'workers' not in json.loads(content)
+    assert 'MUST_NOT_PUBLISH' not in content
+    assert client.get(BASE+'/artifacts/'+ident(artifact['id'])+'/content?download=1').status_code==404
+
+
+def test_markdown_evidence_navigation_does_not_register_protected_config(client,project):
+    directory=project/'.opc/local/artifacts/test/dma/old-run'
+    path=directory/'attempts/a000001/evidence.md'
+    path.write_text('[component](../../frozen/component.json)\n[patch](candidate.patch)',encoding='utf-8')
+    put(directory/'frozen/component.json',{'env':{'SECRET':'MUST_NOT_PUBLISH'}})
+    old=run(client)
+    artifact=next(a for a in old['artifacts'] if 'evidence.md' in a['label'])
+    metadata=get(client,'/artifacts/'+ident(artifact['id']))['data']
+    assert '../../frozen/component.json' not in metadata['link_targets']
+    assert metadata['link_targets']['candidate.patch']['kind']=='artifact'

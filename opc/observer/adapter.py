@@ -145,7 +145,12 @@ class ObserverAdapter:
                        phase=phase, availability=availability, mime=mime, size_bytes=stat.st_size if stat else None,
                        digest=None, digest_algorithm=None, key_facts=[], can_preview=bool(text and stat),
                        can_download=bool(stat and allowed), meta=meta(availability=availability))
-            self.artifact_registry[ident] = dict(dto=obj, path=p, call_owner=call_owner)
+            projected = p.name == 'task.json' and (p.parent.name == 'frozen' or 'revisions' in p.parts)
+            if projected:
+                obj['content_is_projection'] = True
+                obj['can_download'] = False
+                obj['meta']['issues'].append(issue('config_projection', '仅展示合同必要字段投影；省略 workers 等配置，内容不等于原始配置文件', ident))
+            self.artifact_registry[ident] = dict(dto=obj, path=p, call_owner=call_owner, projected=projected)
         else:
             ident = self._id('artifact', locator)
             obj = dict(id=ident, kind='ledger_record', title=title or locator, display_path='.opc/local/ledger.sqlite3 • ' + locator,
@@ -905,7 +910,8 @@ class ObserverAdapter:
                 pass
             is_evidence = len(relative_parts) >= 3 and relative_parts[1] == 'evidence'
             is_artifact = self.artifact_root.resolve() in resolved.parents
-            if existing is None and (is_evidence or is_artifact) and self._allowed(candidate) and candidate.is_file():
+            protected = candidate.name in ('component.json', 'bindings.json', 'workers.json', 'project.json', '.env') or candidate.name.endswith('-request.json')
+            if existing is None and not protected and (is_evidence or is_artifact) and self._allowed(candidate) and candidate.is_file():
                 existing = self._register(candidate, phase='task' if is_evidence else 'other')
             if existing is not None:
                 result[href] = dict(kind='artifact', id=existing['id'])
@@ -958,8 +964,15 @@ class ObserverAdapter:
             if not self._allowed(path):
                 raise ObserverError(404, 'path_denied', '产物路径超出允许范围')
             try:
-                return path.read_bytes()
-            except OSError:
+                raw = path.read_bytes()
+                if entry.get('projected'):
+                    value = parsed(raw.decode('utf-8'), {})
+                    if not isinstance(value, dict):
+                        raise ObserverError(503, 'source_unsupported', '合同配置不是可读取的对象')
+                    allowed = ('task_id', 'revision', 'component', 'goal', 'direction', 'requirements', 'acceptance', 'budget', 'base_ref')
+                    return json.dumps({k: value[k] for k in allowed if k in value}, ensure_ascii=False, indent=2).encode()
+                return raw
+            except (OSError, UnicodeError):
                 raise ObserverError(503, 'source_unreadable', '产物暂不可读') from None
         return json.dumps(entry['record'], ensure_ascii=False, indent=2).encode()
 

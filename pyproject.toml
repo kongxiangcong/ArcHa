@@ -20,7 +20,7 @@ include = ["opc*"]
 
 [tool.setuptools.package-data]
 opc = ["scaffold/*.md", "scaffold/*.py", "scaffold/*.json"]
-"opc.observer" = ["static/*.html", "static/assets/*"]
+"opc.observer" = ["static/*.html", "static/*.txt", "static/assets/*"]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
