@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>ArcHa · 只读观察原型</title>
+  <meta name="description" content="ArcHa 只读观察工作台的视觉与交互参照。全部为演示数据，未连接真实运行。">
+</head>
+<body>
+<div id="archa-run-whiteboard" lang="zh-CN">
+  <style>
+    #archa-run-whiteboard{--ab-bg:light-dark(#f5f7f9,#171b21);--ab-panel:light-dark(#ffffff,#20262e);--ab-ink:light-dark(#17232c,#ecf1f6);--ab-sub:light-dark(#556470,#afbcc8);--ab-line:light-dark(#dce3e8,#3b4651);--ab-soft:light-dark(#edf2f5,#2b343e);--ab-active:light-dark(#155f52,#91d8c4);--ab-active-bg:light-dark(#e2f1ec,#243e37);--ab-warn:light-dark(#805312,#f0c580);--ab-warn-bg:light-dark(#fcf2de,#3c3221);--ab-solid:light-dark(#20323f,#e3edf4);--ab-solid-ink:light-dark(#ffffff,#18232c);font-family:Inter,"Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;font-size:14px;line-height:1.55;color:var(--ab-ink);background:var(--ab-bg);border:1px solid var(--ab-line);border-radius:14px;overflow:clip;isolation:isolate}
+    #archa-run-whiteboard *{box-sizing:border-box}
+    #archa-run-whiteboard button{font:inherit;color:inherit;cursor:inherit}
+    #archa-run-whiteboard h2,#archa-run-whiteboard h3,#archa-run-whiteboard p{margin:0}
+    #archa-run-whiteboard h2{font-size:20px;font-weight:500;line-height:1.4}
+    #archa-run-whiteboard h3{font-size:14px;font-weight:500}
+    #archa-run-whiteboard .ab-top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 104px 15px 22px;border-bottom:1px solid var(--ab-line);background:var(--ab-panel);flex-wrap:wrap}
+    #archa-run-whiteboard .ab-brand{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:500}
+    #archa-run-whiteboard .ab-logo{display:grid;place-items:center;width:27px;height:27px;background:var(--ab-solid);color:var(--ab-solid-ink);border-radius:7px;font-size:15px}
+    #archa-run-whiteboard .ab-demo{font-size:12px;color:var(--ab-sub);display:flex;align-items:center;gap:6px}
+    #archa-run-whiteboard .ab-dot{width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block;flex:none}
+    #archa-run-whiteboard .ab-main{padding:20px 22px 16px}
+    #archa-run-whiteboard .ab-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap}
+    #archa-run-whiteboard .ab-kicker{font-size:12px;color:var(--ab-sub);margin-bottom:4px}
+    #archa-run-whiteboard .ab-goal{margin-top:6px;color:var(--ab-sub);max-width:590px}
+    #archa-run-whiteboard button:focus-visible{outline:2px solid var(--ab-active);outline-offset:3px}
+    #archa-run-whiteboard .ab-runline{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:15px;flex-wrap:wrap}
+    #archa-run-whiteboard .ab-status{display:inline-flex;align-items:center;gap:6px;color:var(--ab-active);font-size:12px;font-weight:500}
+    #archa-run-whiteboard .ab-cost{font-size:12px;color:var(--ab-sub);font-variant-numeric:tabular-nums}
+    #archa-run-whiteboard .ab-flow{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:17px 0 15px}
+    #archa-run-whiteboard .ab-stage{display:flex;align-items:flex-start;gap:9px;padding:11px 10px;text-align:left;border:1px solid var(--ab-line);border-radius:9px;background:var(--ab-panel);min-width:0}
+    #archa-run-whiteboard .ab-stage[aria-pressed="true"]{background:var(--ab-active-bg);border-color:var(--ab-active)}
+    #archa-run-whiteboard .ab-stage-index{width:23px;height:23px;flex:none;display:grid;place-items:center;border-radius:50%;background:var(--ab-soft);color:var(--ab-sub);font-size:12px}
+    #archa-run-whiteboard .ab-stage[aria-pressed="true"] .ab-stage-index{background:var(--ab-active);color:var(--ab-panel)}
+    #archa-run-whiteboard .ab-stage-name{font-weight:500;display:block}
+    #archa-run-whiteboard .ab-stage-state{display:block;font-size:12px;color:var(--ab-sub);margin-top:1px}
+    #archa-run-whiteboard .ab-reqs{display:flex;align-items:center;gap:8px 16px;flex-wrap:wrap;padding:11px 13px;border:1px solid var(--ab-line);background:var(--ab-panel);border-radius:8px;font-size:12px}
+    #archa-run-whiteboard .ab-req-label{color:var(--ab-sub);font-weight:500}
+    #archa-run-whiteboard .ab-req{display:flex;gap:5px;align-items:center}
+    #archa-run-whiteboard .ab-ok{color:var(--ab-active)}
+    #archa-run-whiteboard .ab-wait{color:var(--ab-sub)}
+    #archa-run-whiteboard .ab-content{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);gap:14px;margin-top:15px;align-items:start}
+    #archa-run-whiteboard .ab-work,#archa-run-whiteboard .ab-inspector{min-width:0;background:var(--ab-panel);border:1px solid var(--ab-line);border-radius:10px;overflow:hidden}
+    #archa-run-whiteboard .ab-sectionhead{display:flex;align-items:center;justify-content:space-between;gap:9px;padding:14px 15px;border-bottom:1px solid var(--ab-line);flex-wrap:wrap}
+    #archa-run-whiteboard .ab-rounds{display:flex;gap:4px}
+    #archa-run-whiteboard .ab-round{padding:4px 8px;border:0;border-radius:5px;background:var(--ab-soft);font-size:12px}
+    #archa-run-whiteboard .ab-round[aria-pressed="true"]{background:var(--ab-solid);color:var(--ab-solid-ink)}
+    #archa-run-whiteboard .ab-workbody{padding:14px 15px}
+    #archa-run-whiteboard .ab-replay{font-size:12px;color:var(--ab-warn);margin-bottom:10px}
+    #archa-run-whiteboard .ab-agents{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-bottom:15px}
+    #archa-run-whiteboard .ab-agent{padding:8px 6px;background:var(--ab-soft);border-radius:6px;min-width:0}
+    #archa-run-whiteboard .ab-agent-name{display:block;font-size:12px;font-weight:500}
+    #archa-run-whiteboard .ab-agent-state{display:block;font-size:12px;color:var(--ab-sub);margin-top:3px}
+    #archa-run-whiteboard .ab-agent-current{background:var(--ab-active-bg)}
+    #archa-run-whiteboard .ab-agent-current .ab-agent-state{color:var(--ab-active)}
+    #archa-run-whiteboard .ab-work-title{font-size:15px;font-weight:500;margin-bottom:9px}
+    #archa-run-whiteboard .ab-facts{display:grid;grid-template-columns:64px minmax(0,1fr);gap:7px 9px;margin:0;font-size:12px}
+    #archa-run-whiteboard .ab-facts dt{color:var(--ab-sub)}
+    #archa-run-whiteboard .ab-facts dd{margin:0;overflow-wrap:anywhere}
+    #archa-run-whiteboard .ab-scope{display:flex;align-items:flex-start;gap:8px;margin-top:13px;padding:9px 10px;border-radius:6px;background:var(--ab-warn-bg);color:var(--ab-warn);font-size:12px}
+    #archa-run-whiteboard .ab-scope-label{font-weight:500;white-space:nowrap}
+    #archa-run-whiteboard .ab-files-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:16px 0 8px;font-size:12px}
+    #archa-run-whiteboard .ab-files-head span{color:var(--ab-sub)}
+    #archa-run-whiteboard .ab-filelist{display:grid;gap:6px}
+    #archa-run-whiteboard .ab-file{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px;text-align:left;padding:9px 10px;border:1px solid var(--ab-line);border-radius:7px;background:var(--ab-panel);align-items:center}
+    #archa-run-whiteboard .ab-file[aria-pressed="true"]{background:var(--ab-soft);border-color:var(--ab-active)}
+    #archa-run-whiteboard .ab-file-name{display:block;font-size:12px;font-weight:500;overflow-wrap:anywhere}
+    #archa-run-whiteboard .ab-file-path{display:block;font-size:12px;color:var(--ab-sub);overflow-wrap:anywhere;margin-top:1px}
+    #archa-run-whiteboard .ab-file-state{font-size:12px;color:var(--ab-sub);white-space:nowrap}
+    #archa-run-whiteboard .ab-inspector-body{padding:14px 15px}
+    #archa-run-whiteboard .ab-detail-title{font-size:15px;font-weight:500;overflow-wrap:anywhere}
+    #archa-run-whiteboard .ab-path{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;color:var(--ab-sub);overflow-wrap:anywhere;margin-top:5px}
+    #archa-run-whiteboard .ab-file-meta{font-size:12px;color:var(--ab-sub);margin:9px 0 14px}
+    #archa-run-whiteboard .ab-detail-list{display:grid;gap:13px}
+    #archa-run-whiteboard .ab-detail-label{display:block;font-size:12px;color:var(--ab-sub);margin-bottom:3px}
+    #archa-run-whiteboard .ab-detail-value{font-size:13px;overflow-wrap:anywhere}
+    #archa-run-whiteboard .ab-detail-proof{margin-top:16px;padding-top:11px;border-top:1px solid var(--ab-line);font-size:12px;color:var(--ab-sub)}
+    #archa-run-whiteboard .ab-detail-switch{background:none;border:0;color:var(--ab-active);font-size:12px;padding:0;text-decoration:underline;text-underline-offset:3px}
+    #archa-run-whiteboard .ab-raw{background:var(--ab-soft);padding:10px;border-radius:6px;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;margin:13px 0 0}
+    #archa-run-whiteboard .ab-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;color:var(--ab-sub);font-size:11px;margin-top:12px}
+    #archa-run-whiteboard .ab-footer span{overflow-wrap:anywhere}
+    @media(max-width:760px){#archa-run-whiteboard .ab-content{grid-template-columns:1fr}#archa-run-whiteboard .ab-heading{gap:8px}#archa-run-whiteboard .ab-main{padding:15px}#archa-run-whiteboard .ab-stage{padding:9px 7px;gap:6px}#archa-run-whiteboard .ab-stage-index{display:none}#archa-run-whiteboard .ab-top{padding-left:15px}}
+    @media(max-width:450px){#archa-run-whiteboard .ab-flow{grid-template-columns:repeat(2,minmax(0,1fr))}#archa-run-whiteboard .ab-stage:last-child{grid-column:1/-1}#archa-run-whiteboard .ab-agents{grid-template-columns:repeat(2,minmax(0,1fr))}#archa-run-whiteboard .ab-top{padding-right:84px}#archa-run-whiteboard .ab-file{grid-template-columns:minmax(0,1fr)}#archa-run-whiteboard .ab-file-state{white-space:normal}#archa-run-whiteboard .ab-facts{grid-template-columns:55px minmax(0,1fr)}}
+    @media(pointer:coarse){#archa-run-whiteboard .ab-stage,#archa-run-whiteboard .ab-file,#archa-run-whiteboard .ab-round{min-height:44px}}
+  </style>
+  <header class="ab-top">
+    <div class="ab-brand"><span class="ab-logo" aria-hidden="true">A</span><span>ArcHa · 运行白板</span></div>
+    <div class="ab-demo"><span class="ab-dot" aria-hidden="true"></span>只读观察原型 · 全部为演示数据</div>
+  </header>
+  <main class="ab-main">
+    <div class="ab-heading">
+      <div><div class="ab-kicker">当前任务 / dma-backpressure</div><h2>为 DMA 模型增加背压</h2><p class="ab-goal">容量满时正确拒绝接收，资源释放后恢复接收，保持已有行为。</p></div>
+    </div>
+    <div class="ab-runline"><span class="ab-status" data-role="run-state" aria-live="polite"><span class="ab-dot" aria-hidden="true"></span>第 2 轮 · 开发调用中</span><span class="ab-cost" data-role="cost">示例用量：已结算 32,640 / 预算 120,000 tokens · 当前调用未结算</span></div>
+    <nav class="ab-flow" aria-label="任务流程" data-role="flow"></nav>
+    <section class="ab-reqs" aria-label="任务完成条件"><span class="ab-req-label">完成条件</span><span class="ab-req"><span class="ab-ok">✓ R1</span> 满载时拒绝接收 · 已验证</span><span class="ab-req"><span class="ab-wait">○ R2</span> 释放后恢复 · 待验证</span><span class="ab-req"><span class="ab-wait">○ R3</span> 既有行为 · 待回归</span></section>
+    <div class="ab-content">
+      <section class="ab-work" aria-label="阶段与产物">
+        <div class="ab-sectionhead"><h3 data-role="stage-heading">迭代执行</h3><div class="ab-rounds" data-role="rounds" aria-label="查看轮次"></div></div>
+        <div class="ab-workbody" data-role="workbody"></div>
+      </section>
+      <aside class="ab-inspector" aria-label="所选产物的关键信息">
+        <div class="ab-sectionhead"><h3>产物要点</h3><span class="ab-kicker" data-role="detail-state"></span></div>
+        <div class="ab-inspector-body" data-role="inspector"></div>
+      </aside>
+    </div>
+    <footer class="ab-footer"><span>状态与产物分别展示 · 生成文件不等于通过验收</span><span>所有任务、文件内容和用量均为示例</span></footer>
+  </main>
+  <script>
+    (() => {
+      const root = document.getElementById('archa-run-whiteboard');
+      const state = {stage:'loop', round:2, artifact:'plan2', raw:false};
+      const q = role => root.querySelector('[data-role="'+role+'"]');
+      const escape = value => String(value).replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
+      const artifacts = {
+        map:{name:'研究方向',file:'research-map.md',path:'.opc/research/research-map.md',status:'已确认',owner:'map 讨论',kind:'方向文件',fields:[['本次方向','完善 DMA 行为模型，优先处理容量限制与请求背压。'],['当前选择','先完成单个 DMA 队列的正确性，再考虑跨通道调度。'],['明确延后','吞吐优化、资源搜索与硬件周期精度。']],proof:'方向提供背景；地图勾选表示简报准备状态，不代表产品完成。',raw:'# 研究方向\n\n当前方向：DMA 行为建模\n当前任务：背压与恢复\n延后：吞吐优化、跨通道调度\n'},
+        brief:{name:'任务简报',file:'task-brief.md',path:'.opc/research/tasks/dma-backpressure/task-brief.md',status:'已确认',owner:'task 讨论',kind:'任务文件',fields:[['交付物','可运行的 DMA 背压实现，以及能验证约定行为的必要检查。'],['完成条件','R1 满载时拒绝接收；R2 资源释放后恢复；R3 既有行为保持正确。'],['范围与数值目标','修改模型及相关开发测试。没有吞吐、延迟等优化目标。']],proof:'后续设计、验证与终验应对应这组条件；新增建议单独呈现。',raw:'Goal: 为 DMA 模型增加背压\nDone when: R1、R2、R3 获得验证证据\nObjective: none\nOut of scope: 吞吐优化、跨通道调度\n'},
+        contract:{name:'执行合同',file:'task.json',path:'.opc/tasks/t-dma/revisions/r0001/task.json',status:'已就绪',owner:'onboard',kind:'接入文件',fields:[['任务对应','已确认简报 → t-dma / r0001。'],['验证接入','复用现有功能检查；以通过／失败验证需求，不构造进度分数。'],['执行边界','预算为示例中的 120,000 tokens。允许修改模型与相关开发测试。']],proof:'合同反映已确认要求；验证方法与具体测试文件可以因任务而异。',raw:'{\n  "task_id": "t-dma",\n  "revision": "r0001",\n  "acceptance": {"objective": null},\n  "requirements": ["R1", "R2", "R3"]\n}\n// 样例摘录，非完整可执行配置'},
+        component:{name:'可改范围与检查入口',file:'main.json',path:'.opc/components/main.json',status:'已就绪',owner:'onboard',kind:'接入文件',fields:[['可改范围','src/dma_model.py 和与该功能有关的开发测试。'],['验证入口','使用项目已有行为检查入口。正式评价由计划按需请求。'],['保护范围','冻结的验收依据与既有合同。']],proof:'页面展示既有合同中的范围，不为白板另建测试或评价器。',raw:'可改：src/dma_model.py、tests/dev/\n验证：现有功能检查\n本任务不设置数值优化排名'},
+        handoff:{name:'任务交接',file:'DECISIONS.md',path:'.opc/context/DECISIONS.md',status:'已记录',owner:'task / onboard',kind:'交接文件',fields:[['来源对应','简报路径与摘要对应 t-dma / r0001。'],['已定决定','优先完成背压与恢复；复用可用检查。'],['未决事项','无阻碍本次开发的外部条件。']],proof:'白板从实际交接关系定位任务；不把方向 ID 自动当作执行任务 ID。',raw:'task: t-dma\nrevision: r0001\nbrief: .opc/research/tasks/dma-backpressure/task-brief.md\n已定：完成 R1–R3；Objective none'},
+        plan1:{name:'第 1 轮方案',file:'plan.json',path:'attempts/a000001/plan.json',status:'已生成',owner:'专家',kind:'方案文件',fields:[['要解决的要求','R1：达到容量上限后不再接收新请求。'],['选择及理由','在请求入口检查剩余容量，复用现有队列。'],['预期观察','满载时请求不进入队列；未满载时既有行为不变。']],proof:'这是执行前方案，实际结果要看开发回报与验证证据。',raw:'{\n  "title": "实现满载背压",\n  "changes": "请求入口增加容量判断",\n  "evaluate": true\n}'},
+        patch1:{name:'第 1 轮代码变化',file:'candidate.patch',path:'attempts/a000001/candidate.patch',status:'已保存',owner:'开发 agent',kind:'代码补丁',fields:[['变更文件','src/dma_model.py'],['新增行为','满载时拒绝接收，保留请求提交方的重试机会。'],['保留成果','第 1 轮候选已保存，可作为后续开发起点。']],proof:'补丁存在说明成果已保存；R1 的通过结论来自对应检查回执。',raw:'--- a/src/dma_model.py\n+++ b/src/dma_model.py\n@@ request entry\n+ if self.inflight >= self.capacity:\n+     return False\n\n# 示意补丁'},
+        evaluation1:{name:'第 1 轮验证',file:'evaluation.json',path:'attempts/a000001/eval/evaluation.json',status:'检查通过',owner:'检查命令',kind:'验证文件',fields:[['验证对象','第 1 轮保存的候选版本。'],['结果支持','满载拒绝接收的检查通过，支持 R1。'],['未覆盖','释放后恢复以及全部既有行为回归，需要后续验证。']],proof:'局部通过仅支持已覆盖要求，不代表整个任务完成。',raw:'{\n  "gate": "capacity_boundary",\n  "status": "passed",\n  "supports": ["R1"],\n  "not_yet_verified": ["R2", "R3"]\n}\n// 样例摘录'},
+        conclusion1:{name:'第 1 轮结论',file:'conclusion 事件',path:'ledger.sqlite3 · attempt 1 / conclusion',status:'已回填',owner:'下一次专家调用',kind:'账本记录',fields:[['得到的结论','容量边界行为已获得检查支持。'],['仍缺什么','尚未证明资源释放后可以恢复接收。'],['下一步','选择第 1 轮候选继续实现并验证恢复路径。']],proof:'结论保存在已有事件中，无需新增 conclusion.md。',raw:'第 1 轮结论：R1 获得验证支持。\nR2 与 R3 尚未验证。\n下一步从第 1 轮候选继续。'},
+        plan2:{name:'第 2 轮方案',file:'plan.json',path:'attempts/a000002/plan.json',status:'已生成',owner:'专家',kind:'方案文件',fields:[['本轮补哪条缺口','R2：请求完成并释放资源后恢复接收。'],['方案与理由','修正完成事件的资源释放顺序，沿用现有队列与接口。'],['验证安排','开发 agent 先做局部检查；本轮未请求正式全量评价。']],proof:'这份方案应能回指 R2；吞吐排名不属于本次已确认目标。',raw:'{\n  "title": "修复释放后恢复接收",\n  "changes": "对齐完成事件与容量归还，做局部检查",\n  "base_attempt": 1,\n  "evaluate": false\n}'},
+        activity2:{name:'最近一次执行活动',file:'designer-events.jsonl',path:'attempts/a000002/designer/designer-events.jsonl',status:'有活动回执',owner:'开发 agent',kind:'执行日志',fields:[['最近活动','发起容量释放后的接收检查。'],['当前已知','工具调用已开始，尚未收到该调用退出结果。'],['尚不能断言','没有新回执时不能判定检查成功、失败或 agent 卡死。']],proof:'只显示已报告的动作与时间；没有事件时明确写未知。',raw:'{"type":"tool.started","action":"check resume after release"}\n// 尚未收到 tool.completed 回执'},
+        execution2:{name:'本轮开发回报',file:'execution 事件',path:'ledger.sqlite3 · attempt 2 / execution',status:'尚未回传',owner:'开发 agent',kind:'账本记录',fields:[['实际实现','当前调用尚未结束，最终实现摘要未回传。'],['设计偏差','尚未报告。'],['验证结论','待实际回执，不提前写成通过。']],proof:'已报告活动和最终回报是两类证据；白板不补造缺失摘要。',raw:'本轮 execution 事件尚未产生。'},
+        patch2:{name:'本轮候选补丁',file:'candidate.patch',path:'attempts/a000002/candidate.patch',status:'尚未保存',owner:'引擎',kind:'代码补丁',fields:[['文件状态','开发调用尚未返回，本轮候选补丁未保存。'],['已经保留','第 1 轮候选及本轮已有计划、活动回执。'],['保存边界','未保存的工作副本不能视为已验证成果。']],proof:'不把工作副本中的临时变化冒充已保存、已验证的交付版本。',raw:'本轮 candidate.patch 尚未生成。'},
+        final:{name:'最终验收',file:'promotion/report.json',path:'promotion/<终验编号>/report.json',status:'尚未执行',owner:'终验',kind:'终验文件',fields:[['将审什么','选定交付版本是否满足同一组 R1、R2、R3。'],['需要展示','每条要求的支持证据、缺口，以及必要 reviewer 的具体意见。'],['当前状态','尚未终验；当前运行状态和文件存在都不代表任务完成。']],proof:'独立审阅是否需要取决于合同；终验不会凭空为任务增加完成标准。',raw:'终验尚未执行。\n尚无 promotion/report.json。'},
+        finalreview:{name:'独立终审意见',file:'reviewer 回执',path:'promotion/<终验编号>/reviewer/',status:'按需调用',owner:'独立 reviewer',kind:'审阅记录',fields:[['审阅对象','选定成果对用户要求的满足情况，以及结论是否超出证据。'],['与准备审阅的区别','准备审阅检查接入工具；本次对象是最终交付成果。'],['当前状态','尚未调用。若任务不要求独立审阅，显示不适用。']],proof:'展示具体理由和逐项意见，不只展示 accept 或 reject。',raw:'独立终审尚未调用；无审阅回执。'}
+      };
+      const stages = [
+        {id:'map',name:'方向地图',status:'已确认 · 可选',title:'方向与边界',work:'优先完成 DMA 行为模型',facts:[['当前方向','容量约束、背压与恢复。'],['选择理由','先明确正确行为，再研究性能收益。'],['保留边界','吞吐优化与跨通道调度后续再讨论。']],files:['map']},
+        {id:'task',name:'任务目标',status:'已确认',title:'任务与完成条件',work:'完成 R1、R2、R3',facts:[['交付','实现背压与恢复，保持已有行为。'],['验收','逐条展示行为证据，不使用完成百分比分数。'],['范围','模型和相关测试；本次没有数值优化目标。']],files:['brief']},
+        {id:'onboard',name:'执行接入',status:'已就绪',title:'输入接口与验证',work:'把已确认要求连接到执行入口',facts:[['对应关系','task-brief → t-dma / r0001。'],['验证入口','复用已有检查与必要的开发测试。'],['准备边界','实际需要什么才准备什么；文件按实际生成展示。']],files:['contract','component','handoff']},
+        {id:'loop',name:'迭代执行',status:'第 2 轮 · 进行中',title:'本轮工作',files:[]},
+        {id:'delivery',name:'交付验收',status:'尚未开始',title:'交付与审阅',work:'逐条核对同一组完成条件',facts:[['验收对象','专家选定的交付版本。'],['剩余缺口','R2 待验证；R3 待回归。'],['审阅输出','要求 → 证据 → 判断；额外建议单列。']],files:['final','finalreview']}
+      ];
+      function selectedStage(){return stages.find(stage=>stage.id===state.stage);}
+      function fileIds(){
+        if(state.stage!=='loop')return selectedStage().files;
+        return state.round===1?['plan1','patch1','evaluation1','conclusion1']:['plan2','activity2','execution2','patch2'];
+      }
+      function renderFlow(){
+        q('flow').innerHTML=stages.map((stage,index)=>{
+          return '<button type="button" class="ab-stage cursor-interaction" data-stage="'+stage.id+'" aria-pressed="'+(state.stage===stage.id)+'"><span class="ab-stage-index" aria-hidden="true">'+(index+1)+'</span><span><span class="ab-stage-name">'+stage.name+'</span><span class="ab-stage-state">'+stage.status+'</span></span></button>';
+        }).join('');
+      }
+      function renderWork(){
+        const stage=selectedStage();
+        q('stage-heading').textContent=stage.title;
+        q('rounds').innerHTML=state.stage==='loop'?[1,2].map(n=>'<button type="button" class="ab-round cursor-interaction" data-round="'+n+'" aria-pressed="'+(state.round===n)+'">第 '+n+' 轮</button>').join(''):'';
+        let agents='',title=stage.work,facts=stage.facts||[],notice='',replay='';
+        if(state.stage==='loop'){
+          const past=state.round===1;
+          const rows=past?[['专家','已返回方案'],['开发 agent','已返回实现'],['评价命令','检查通过'],['独立终审','尚未执行']]:[['专家','已返回方案'],['开发 agent','调用中'],['正式评价','本轮未请求'],['独立终审','尚未执行']];
+          agents='<div class="ab-agents" aria-label="角色与执行状态">'+rows.map((row,index)=>'<div class="ab-agent '+(!past&&index===1?'ab-agent-current':'')+'"><span class="ab-agent-name">'+row[0]+'</span><span class="ab-agent-state">'+row[1]+'</span></div>').join('')+'</div>';
+          title=past?'R1 · 实现满载背压':'R2 · 修复资源释放后的恢复';
+          facts=past?[['专家选择','请求入口增加容量判断，复用原队列。'],['实际成果','候选已保存，容量边界检查通过。'],['得到结论','R1 获得支持；R2、R3 仍待验证。']]:[['专家选择','调整完成事件与资源归还顺序，沿用既有接口。'],['最近活动','正在执行容量释放后的接收检查。'],['当前结论','开发回报未返回，当前检查结果未知。']];
+          if(past)replay='<div class="ab-replay">正在回看第 1 轮 · 顶部状态仍显示当前第 2 轮</div>';
+          if(!past)notice='<div class="ab-scope"><span class="ab-scope-label">范围提醒</span><span>新增建议“加入吞吐排名”未纳入任务；不计入剩余必做项。</span></div>';
+        }
+        const files=fileIds();
+        if(!files.includes(state.artifact))state.artifact=files[0];
+        q('workbody').innerHTML=replay+agents+'<div class="ab-work-title">'+escape(title)+'</div><dl class="ab-facts">'+facts.map(row=>'<dt>'+escape(row[0])+'</dt><dd>'+escape(row[1])+'</dd>').join('')+'</dl>'+notice+'<div class="ab-files-head"><h3>产物与记录</h3><span>按实际状态展开</span></div><div class="ab-filelist">'+files.map(id=>{const a=artifacts[id];return '<button type="button" class="ab-file cursor-interaction" data-artifact="'+id+'" aria-pressed="'+(state.artifact===id)+'"><span><span class="ab-file-name">'+escape(a.name)+'</span><span class="ab-file-path">'+escape(a.file)+'</span></span><span class="ab-file-state">'+escape(a.status)+'</span></button>';}).join('')+'</div>';
+      }
+      function renderInspector(){
+        const a=artifacts[state.artifact];
+        q('detail-state').textContent=a.kind;
+        q('inspector').innerHTML='<div class="ab-detail-title">'+escape(a.name)+'</div><div class="ab-path">'+escape(a.path)+'</div><div class="ab-file-meta">'+escape(a.owner)+' · '+escape(a.status)+'</div><div class="ab-detail-list">'+a.fields.map(row=>'<div><span class="ab-detail-label">'+escape(row[0])+'</span><div class="ab-detail-value">'+escape(row[1])+'</div></div>').join('')+'</div><div class="ab-detail-proof">'+escape(a.proof)+'</div><div style="margin-top:13px"><button type="button" class="ab-detail-switch cursor-interaction" data-action="raw" aria-expanded="'+state.raw+'">'+(state.raw?'收起样例原文':'查看样例原文')+'</button></div>'+(state.raw?'<pre class="ab-raw">'+escape(a.raw)+'</pre>':'');
+      }
+      function render(){renderFlow();renderWork();renderInspector();}
+      root.addEventListener('click',event=>{
+        const button=event.target.closest('button');
+        if(!button||!root.contains(button))return;
+        if(button.dataset.stage){state.stage=button.dataset.stage;state.raw=false;state.artifact=null;render();}
+        else if(button.dataset.round){state.round=Number(button.dataset.round);state.artifact=null;state.raw=false;render();}
+        else if(button.dataset.artifact){state.artifact=button.dataset.artifact;state.raw=false;render();}
+        else if(button.dataset.action==='raw'){state.raw=!state.raw;renderInspector();}
+      });
+      render();
+    })();
+  </script>
+</div>
+</body>
+</html>
