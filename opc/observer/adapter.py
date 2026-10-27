@@ -649,7 +649,13 @@ class ObserverAdapter:
         def fact(value, kind):
             if value is None:
                 return None
-            text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)
+            # Prefer the existing author-written summary without reinterpreting it.
+            # The complete record remains available through its artifact source.
+            if isinstance(value, dict):
+                readable = next((value[k] for k in ('summary', 'text') if isinstance(value.get(k), str)), None)
+                text = readable if readable is not None else json.dumps(value, ensure_ascii=False, indent=2)
+            else:
+                text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)
             return dict(text=text, source_refs=sources.get(kind, []))
         plan = parsed(row.get('plan'), {})
         if not isinstance(plan, dict):
