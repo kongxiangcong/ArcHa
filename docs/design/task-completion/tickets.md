@@ -22,7 +22,7 @@
 | --- | --- | --- | --- | --- | --- |
 | T1 | 无数值目标也能积累、恢复和选择成果 | 用户确认 | R1–R3 | A1–A4、A11 | resolved |
 | T2 | 选定成果终验，证据补齐直接收尾 | T1 | R5 | A3、A5–A7 | resolved |
-| T3 | 精简模型输入，保留按需证据 | T2 | R6、R4.6 | A8–A9 | awaiting_confirmation |
+| T3 | 精简模型输入，保留按需证据 | T2 | R6、R4.6 | A8–A9 | resolved |
 | T4 | 放宽工作表达、验证按需、直接任务接入 | T3 | R4、R8 | A4、A7、A12 | awaiting_confirmation |
 | T5 | 确定性请求拒绝停止调用 | T4 | R7 | A10 | awaiting_confirmation |
 | T6 | 全链路回归、工程任务对照与旧 benchmark 退役 | T5 | §5–§6、R8、validation | A1–A12 + paired pilot | awaiting_confirmation |
@@ -101,7 +101,7 @@
 - A9：超过现有窗口的改善/pending 历史不会全量注入；未展示旧候选可选择，省略旧结论仍能执行有效计划。
 - 运行 `test_research_loop.py`、`test_codex_and_config.py`、`test_dsh_worker.py`；同步 scripted 策略真实依赖，不为兼容而回填全量上下文。
 
-完成记录：待实施。
+完成记录：2026-10-27，T3 独立提交（本提交）。必要指标投影、实验结构有界呈现、完整 evidence 引用、12 轮窗口与短候选目录；prompt 改为读取 research.json，结论允许按需返回。66 项受影响测试通过；新增 2,156 机器字段、1,000 cases、15 轮历史验证，research_loop 18 项通过。原始数据保留，未新增产物类型。
 
 ## T4：工作粒度、按需验证与直接接入
 

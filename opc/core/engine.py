@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..adapters.worker import Worker, WorkerCall, make_worker, validate_plan
-from ..domain import DomainAdapter, Evaluation, experimental_data, load_domain
+from ..domain import DomainAdapter, Evaluation, bounded_data, experimental_data, load_domain
 from . import accept as acceptance
 from .config import Bindings, ComponentConfig, ProjectConfig, TaskSpec, WorkerSpec
 from .ledger import Ledger
@@ -494,9 +494,15 @@ class Engine:
         attempts = self.attempt_records()
         champions = self.ledger.champions(self.run_id)
         decided = [a for a in attempts if a["outcome"] and a["plan"]]
-        keep = {a["attempt_no"] for a in decided[-HISTORY_WINDOW:]} | {
-            a["attempt_no"] for a in decided if a["conclusion"] is None
-            or a["outcome"] == Outcome.IMPROVEMENT.value}
+        keep = {a["attempt_no"] for a in decided[-HISTORY_WINDOW:]}
+        metric_names = acceptance.required_metrics(self.task.acceptance)
+        def metric_view(values):
+            return {k: values[k] for k in metric_names if k in values}
+        def measurement_view(measurement):
+            if not measurement:
+                return None
+            return {**measurement, "values": metric_view(measurement.get("values") or {}),
+                    "spread": metric_view(measurement.get("spread") or {})}
         history = []
         for a in decided:
             if a["attempt_no"] not in keep:
@@ -505,18 +511,32 @@ class Engine:
             prior = [c for c in champions if c["commit_sha"] == a["champion_before"]
                      and c["at"] <= a["finished_at"]
                      and (c["attempt_no"] is None or c["attempt_no"] <= a["attempt_no"])]
-            metrics = a["metrics"]
+            metrics = measurement_view(a["metrics"])
+            experiment = a["experiment"]
+            if experiment:
+                experiment = dict(experiment)
+                experiment.pop("values", None)
+                data = []
+                for entry in experiment.get("data", []):
+                    entry = dict(entry)
+                    payload = dict(entry.get("data") or {})
+                    if "metrics" in payload:
+                        payload["metrics"] = metric_view(payload["metrics"])
+                    entry["data"] = payload
+                    data.append(entry)
+                experiment["data"] = bounded_data(data)
+                experiment["evidence"] = str(self.attempt_dir(a["attempt_no"]) / "eval/evaluation.json")
             # No gate verdict text, worker errors or raw logs in expert context.
             history.append({
                 "attempt": a["attempt_no"],
                 **{k: plan.get(k) for k in ("title", "hypothesis", "changes", "expected", "falsifier")},
                 "plan_params": plan.get("params"), "parent": a["parent"],
                 "candidate": a["candidate"], "outcome": a["outcome"],
-                "execution": a["execution"],
-                "experiment": a["experiment"] or {
+                "execution": bounded_data(a["execution"]),
+                "experiment": experiment or {
                     "status": "not_recorded" if a["gates"] else "not_executed", "data": []},
-                "champion_before": a["comparison"] or (
-                    {"values": prior[-1]["metrics"]["values"]} if prior else None),
+                "champion_before": measurement_view(a["comparison"]) or (
+                    {"values": metric_view(prior[-1]["metrics"]["values"])} if prior else None),
                 "metrics": {k: metrics.get(k) for k in ("values", "spread", "repeats", "degraded_by")}
                 if metrics else None, "conclusion": a["conclusion"]})
         run = self.ledger.run(self.run_id)
@@ -537,10 +557,10 @@ class Engine:
         if not notes:
             notes = [".opc/context/" + p + ".md" for p in ("PROJECT", "REQUIREMENTS", "DECISIONS")]
         background = {}
-        for rel in notes:
+        for rel in notes[:2]:
             path = tree / rel
             if path.is_file() and not path.is_symlink():
-                background[rel] = path.read_text(encoding="utf-8")[:20000]
+                background[rel] = {"excerpt": path.read_text(encoding="utf-8")[:1500], "source": str(self.root / rel)}
         return {
             "attempt": n, "focus": focus,
             "task": {"goal": self.task.goal,
@@ -553,23 +573,23 @@ class Engine:
                                     "target": acc.target.describe() if acc.target else None}},
             "component": {"id": self.comp.component_id, "description": self.comp.description,
                           "editable": self.comp.editable, "scratch": self.comp.scratch},
-            "champion": {"commit": champ[0], "values": champ[1].values},
-            "baseline": {"commit": base["commit_sha"], "values": base["metrics"]["values"]},
+            "champion": {"commit": champ[0], "values": metric_view(champ[1].values)},
+            "baseline": {"commit": base["commit_sha"], "values": metric_view(base["metrics"]["values"])},
             "history": history, "background": background, "budget_left": self.budget_left(),
             "progress": {"target_met": acceptance.target_met(acc, champ[1].values),
                          "no_gain_streak": streak, "stagnation_hint": self.task.budget.max_stagnation},
             "candidates": [{"attempt": a["attempt_no"], "commit": a["candidate"],
                             "parent": a["parent"], "title": (a["plan"] or {}).get("title"),
-                            "summary": a["execution"], "conclusion": a["conclusion"],
-                            "values": (a["metrics"] or {}).get("values")}
-                           for a in attempts if a["candidate"] or a["recoverable_patch"]],
+                            "evidence": str(self.attempt_dir(a["attempt_no"]))}
+                           for a in attempts[-HISTORY_WINDOW:] if a["candidate"] or a["recoverable_patch"]],
             "tried_params": [a["plan"]["params"] for a in decided
                              if a["plan"].get("params") is not None
                              and a["outcome"] != Outcome.INFRA.value],
         }
 
     def save_conclusions(self, output: dict[str, Any], ctx: dict[str, Any], n: int) -> str | None:
-        pending = {a["attempt"] for a in ctx["history"] if a["conclusion"] is None}
+        pending = {a["attempt_no"] for a in self.attempt_records()
+                   if a["plan"] and a["outcome"] and a["conclusion"] is None}
         conclusions = output.get("conclusions", [])
         if not isinstance(conclusions, list):
             return "conclusions must be a list"
@@ -580,10 +600,6 @@ class Engine:
                     or not isinstance(row.get("conclusion"), str) or not row["conclusion"].strip()):
                 return "conclusions must identify pending attempts with nonempty text"
             seen.add(row["attempt"])
-        # Model calls review and decide together. Legacy deterministic strategies
-        # may omit conclusions; these remain visibly pending, never synthesized.
-        if self.task.expert.kind != "scripted" and seen != pending:
-            return "review all pending experiments before deciding"
         for row in conclusions:
             self.ledger.event(self.run_id, "conclusion", row["attempt"],
                               text=row["conclusion"], reviewed_by_attempt=n)

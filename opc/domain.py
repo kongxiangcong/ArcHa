@@ -33,6 +33,29 @@ def experimental_data(payload: Any) -> dict[str, Any]:
     return result
 
 
+def bounded_data(value: Any, depth: int = 0) -> Any:
+    """Bound the default view, retaining structure and representative observations.
+
+    Full evidence remains in evaluation.json; this never changes evaluation data.
+    """
+    if depth > 6:
+        return {"omitted": "nested data; see evidence"}
+    if isinstance(value, dict):
+        keys = list(value)
+        result = {k: bounded_data(value[k], depth + 1) for k in keys[:12]}
+        if len(keys) > 12:
+            result["omitted_fields"] = len(keys) - 12
+        return result
+    if isinstance(value, list):
+        if len(value) <= 6:
+            return [bounded_data(v, depth + 1) for v in value]
+        return {"count": len(value), "first": [bounded_data(v, depth + 1) for v in value[:3]],
+                "last": [bounded_data(v, depth + 1) for v in value[-2:]]}
+    if isinstance(value, str):
+        return value[:1800]
+    return value
+
+
 @dataclass
 class Evaluation:
     gates: list[GateResult]

@@ -295,3 +295,23 @@ def test_selected_delivery_and_review_reuses_exact_evidence(make_project, engine
     e.ledger.event(e.run_id, 'selected_version', None, commit=s['baseline'])
     promote(e, review='codex')
     assert len(count) == 2
+
+
+def test_context_bounds_machine_data_and_history(make_project, engine_for):
+    from opc.adapters.prompts import expert_prompt
+    payload = {'metrics': {'loss': 17, 'correct': 1, **{f'machine_{i}': i for i in range(2156)}},
+               'conditions': {'seed': 17}, 'cases': [{'id': i, 'latency': i+3} for i in range(1000)]}
+    evaluate = EVALUATE[:EVALUATE.index('(out / "metrics.json")')] + '(out / "metrics.json").write_text('+repr(json.dumps(payload))+')\n'
+    seq = Sequence([plan(i) for i in range(15)] + [stop], [4]*15)
+    e = use_sequence(engine_for(make_project(evaluate=evaluate)), seq)
+    e.run()
+    ctx = seq.contexts[-1]
+    assert len(ctx['history']) == 12 and len(ctx['candidates']) <= 12
+    assert '"machine_' not in json.dumps(ctx)
+    data = ctx['history'][-1]['experiment']['data'][0]['data']
+    assert data['conditions']['seed'] == 17 and data['cases']['count'] == 1000
+    assert data['cases']['last'][-1]['latency'] == 1002
+    raw = json.loads((e.attempt_dir(15) / 'eval/evaluation.json').read_text())
+    assert len(raw['metrics']['values']) == 2158 and len(raw['data'][0]['data']['cases']) == 1000
+    assert len(expert_prompt(ctx)) < 2000
+    assert e.save_conclusions({'conclusions': []}, ctx, 17) is None
