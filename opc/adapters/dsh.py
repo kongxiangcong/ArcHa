@@ -39,7 +39,7 @@ from typing import Any
 
 from ..core.model import Cost, OPCError, write_json, write_text
 from .prompts import designer_prompt, expert_prompt
-from .worker import EXHAUSTED_SENTINEL, WorkerCall
+from .worker import request_rejected, EXHAUSTED_SENTINEL, WorkerCall
 
 #: Wording that names an account or host condition. The structured code covers
 #: most cases; this is the fallback for a reply whose code is absent or unknown.
@@ -262,6 +262,8 @@ class DshWorker:
             call.extra["infra"] = any(m.lower() in message.lower() for m in INFRA_MARKERS)
         else:
             call.extra["infra"] = any(m.lower() in message.lower() for m in INFRA_MARKERS)
+        call.extra["infra"] = call.extra.get("infra", False) or request_rejected(
+            info["end_code"] + " " + message, bool(info["tool_calls"]))
         return call, info["text"]
 
     def propose(self, ctx: dict[str, Any], tree: Path, log_dir: Path) -> WorkerCall:

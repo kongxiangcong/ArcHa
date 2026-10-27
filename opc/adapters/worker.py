@@ -47,6 +47,14 @@ PLAN_SCHEMA: dict[str, Any] = {
 }
 
 
+def request_rejected(message: str, executed: bool) -> bool:
+    """Known provider request rejection, not a failure after useful execution."""
+    markers = ("context_length_exceeded", "context window", "input too long", "prompt is too long",
+               "maximum context length", "invalid_json_schema", "invalid schema for response_format",
+               "invalid_request_error", "invalid request schema", "context length exceeded")
+    return not executed and any(marker in message.lower() for marker in markers)
+
+
 @dataclass
 class WorkerCall:
     role: str

@@ -24,7 +24,7 @@
 | T2 | 选定成果终验，证据补齐直接收尾 | T1 | R5 | A3、A5–A7 | resolved |
 | T3 | 精简模型输入，保留按需证据 | T2 | R6、R4.6 | A8–A9 | resolved |
 | T4 | 放宽工作表达、验证按需、直接任务接入 | T3 | R4、R8 | A4、A7、A12 | resolved |
-| T5 | 确定性请求拒绝停止调用 | T4 | R7 | A10 | awaiting_confirmation |
+| T5 | 确定性请求拒绝停止调用 | T4 | R7 | A10 | resolved |
 | T6 | 全链路回归、工程任务对照与旧 benchmark 退役 | T5 | §5–§6、R8、validation | A1–A12 + paired pilot | awaiting_confirmation |
 
 ## T1：完成条件合同与连续工作版本
@@ -150,7 +150,7 @@
 - 修正外部条件后使用已有恢复路径，历史失败和费用不丢失；不虚构缺失的 token。
 - 运行 `test_codex_and_config.py`、`test_dsh_worker.py`、`test_engine.py` 和相关研究循环测试。
 
-完成记录：待实施。
+完成记录：2026-10-27，T5 独立提交（本提交）。Codex/DSH 将无有效执行的上下文上限与请求 schema 拒绝接入既有 infra/blocked 路径；保留真实成本和错误，不新增重试。原受影响套件通过，新增有 thread/session 的 expert/designer 拒绝计数及执行后错误分类对照；适配器套件 51 项通过。
 
 ## T6：全链路回归、工程任务对照与文档收口
 

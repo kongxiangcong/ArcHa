@@ -27,6 +27,9 @@ if mode == "limit":
 if mode == "schema_error":
     print(json.dumps({"type": "turn.failed", "error": {"message": "invalid_json_schema: missing required key"}}))
     sys.exit(1)
+if mode in ("input_expert", "input_designer") and ((cwd / "research.json").exists() == (mode == "input_expert")):
+    print(json.dumps({"type": "turn.failed", "error": {"message": "context_length_exceeded: input too long"}}))
+    sys.exit(1)
 if mode.startswith("onboard"):
     assert "workspace-write" in args and "onboarding" in prompt
     (cwd / ".opc/README.md").write_text("Open items: none\n")
@@ -294,3 +297,20 @@ def test_onboard_accepts_dsh_and_rejects_unknown(tmp_path):
     (tmp_path / ".opc" / "project.json").write_text("{}", encoding="utf-8")
     with pytest.raises(OPCError, match="must be codex or dsh"):
         onboard(tmp_path, "claude")
+
+
+@pytest.mark.parametrize("role", ["expert", "designer"])
+def test_request_rejection_with_thread_blocks_once(make_project, engine_for, fake_codex, monkeypatch, role):
+    monkeypatch.setenv("FAKE_CODEX_MODE", "input_"+role)
+    e = engine_for(make_project(tsk=codex_task(fake_codex)))
+    s = e.run()
+    assert s['state'] == 'blocked' and 'input too long' in s['stop_reason']
+    assert len(e.ledger.events(e.run_id, 'worker_call')) == (1 if role == 'expert' else 2)
+    assert s['spent']['search_attempts'] == 0
+
+
+def test_request_rejection_does_not_classify_executed_failure():
+    from opc.adapters.worker import request_rejected
+    assert request_rejected('context_length_exceeded', False)
+    assert not request_rejected('context_length_exceeded', True)
+    assert not request_rejected('expert reply is not JSON', False)

@@ -41,6 +41,10 @@ def emit(**ev):
 emit(type="session", sessionId=sid, cwd=str(cwd))
 emit(type="status", phase="turn_start", turn=1)
 
+if mode == "input":
+    emit(type="status", phase="turn_end", reason={"kind": "error", "error": {
+        "message": "input too long", "code": "context_length_exceeded"}})
+    sys.exit(1)
 if mode == "credential":
     emit(type="status", phase="turn_end", turn=1, reason={"kind": "error", "error": {
         "message": "no API key for provider route", "code": "MISSING_CREDENTIAL"}})
@@ -347,3 +351,11 @@ def test_expert_prompt_carries_exhaustion_rule_for_both_workers():
     assert '"exhausted"' in codex_prompt and '"exhausted"' in dsh_prompt
     assert "NO_EXPERIMENT" not in codex_prompt
     assert "NO_EXPERIMENT" in dsh_prompt
+
+
+def test_dsh_request_rejection_blocks_with_session(make_project, engine_for, fake_dsh, monkeypatch):
+    monkeypatch.setenv("FAKE_DSH_MODE", "input")
+    e = engine_for(make_project(tsk=dsh_task(fake_dsh)))
+    s = e.run()
+    assert s['state'] == 'blocked' and len(e.ledger.events(e.run_id, 'worker_call')) == 1
+    assert s['spent']['search_attempts'] == 0
