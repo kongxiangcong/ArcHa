@@ -178,7 +178,7 @@
 
 完成记录：2026-10-27，T6 独立提交（本提交），**离线实现与回归完成，真实任务验收 blocked**。
 
-- 独立提交：T1 `dff6766`；T2 `c1b62b1`；T3 `615434b`；T4 `90ea774`；T5 `8291fde`；T6 本提交。T4 额外受影响套件 88 passed。
+- 独立提交：T1 `dff6766`；T2 `c1b62b1`；T3 `615434b`；T4 `90ea774`；T5 `8291fde`；T6 `8cc47ba`；最终外部阻塞记录见本提交。T4 额外受影响套件 88 passed。
 - 素材自检：`python -m unittest discover -s tools/tests -p test_dma_task_materials.py -v`，8 passed（独立于框架回归）。固定 82 输入；起始版本外置验收 exit 1，57 个失败条目，符合未实现功能预期。
 - 输入 SHA-256：`a7ec9936bec02571e25e585fc545989a894d45c018675207530882b4c127af05`；验收器 SHA-256：`e6bf9ea0d5995cd00ce439a6d0706fea1e971c4c1eb73340b8bd937ce38a7dc9`。原件在 `.tmp/dma-validation/`。
 - Linux：Debian 13.6 x86_64 / Python 3.12.14，`python -m pytest -q -rs`：215 passed、5 skipped、12 subtests passed（32.12 秒）；5 个跳过均为 Windows 专属探针。`git diff --check` 通过。Windows 本地未运行；现有 CI matrix 为 Ubuntu/Windows × Python 3.10/3.12/3.14，GitHub GraphQL/REST 均返回 Forbidden，无法读取实际 CI 结果，不声称 Windows 通过。
@@ -194,16 +194,16 @@
 | 随机先后顺序 | 第 1 组 | 第 2 组，因共同 CLI 阻塞未启动 |
 | 同一起始 commit | `94261194c4cf6f2a7f59a216d61d240c30e657a4` | 同左 |
 | 模型 / CLI / Python | 请求 gpt-6.1-sol / medium；Codex 0.163.0；Python 3.12.14 | 计划相同，未调用 |
-| 开发结果 | CLI 初始化失败，未有效执行模型/产品任务，工作区无修改 | not_run |
+| 开发结果 | 初始沙箱初始化失败；提升权限后建立 thread，但模型代理 HTTP CONNECT 403，无有效模型/产品执行，工作区无修改 | not_run |
 | 终点 / 产品正确性 | 仍为起始版本；其失败只作为已知负向控制，不算模型终验 | 无模型成果，不执行产品终验 |
-| 开发墙钟 / token | 首次启动 0.114 秒；input/output/cached token 未报告，未知 | not_run / 未测量 |
+| 开发墙钟 / token | 首次启动 0.114 秒；提升权限后的网络尝试约 45 秒，被确认拒绝后终止；input/output/cached token 未报告，未知 | not_run / 未测量 |
 | 共享准备 | 两个独立 Git 起点复制约 0.028 秒，素材检查单列 | 同左 |
-| 人工干预 | 无产品代写；一次 CLI sqlite_home/log_dir 路径排障，仍失败 | 无产品干预 |
+| 人工干预 | 无产品代写；CLI 路径覆盖排障及提升权限启动；没有产品修复 | 无产品干预 |
 | 正式模型评价 / reviewer | 0 次有效模型调用；独立 reviewer not_run | not_run |
-| 外部阻塞 | 必需的 `/run/codex-environment/codex-home/installation_id` 创建返回 EROFS；不是模型额度或产品错误 | 同一 CLI 前置条件不可用 |
+| 外部阻塞 | 默认沙箱创建 installation_id 返回 EROFS；提升权限后解决启动，但 chatgpt.com 模型 WebSocket/HTTPS 代理返回 HTTP CONNECT 403；不是产品错误 | 同一 CLI 前置条件不可用 |
 
-原始现场：`/tmp/archa-dma-pilot/record.json`、`direct-session.jsonl`、`direct-stderr.txt`、`direct-startup2-stderr.txt`、`startup-files.txt`。登录状态为 Logged in using ChatGPT；不复制凭据、不改全局技能/其他项目 runtime。两次尝试均在 app-server 初始化阶段失败，SQLite/日志目录覆盖没有解决只读平台挂载。没有调换模型、泄露参考答案或偷偷重跑产品试验。
+原始现场：`/tmp/archa-dma-pilot/record.json`、`direct-session.jsonl`、`direct-stderr.txt`、`direct-startup2-stderr.txt`、`startup-files.txt`。登录状态为 Logged in using ChatGPT；不复制凭据、不改全局技能/其他项目 runtime。初始两次沙箱内尝试均在 app-server 初始化阶段失败；随后提升执行权限成功建立 thread，但 `wss://chatgpt.com/backend-api/codex/responses` 被代理 403 拒绝，HTTPS fallback 亦无模型响应。约 45 秒后主动终止本任务进程，避免无效重连。有效模型/工具执行为零，item.completed 中只有传输错误；usage 未报告，不能按零计费。没有调换模型、泄露参考答案或偷偷重跑产品试验。
 
-**整体验收未完成**：恢复平台可写 Codex 运行目录后才能执行已授权的一组真实开发/外置终验/盲审；当前不能下案例可行性或框架增益结论。PR 保持当前审阅状态，不请求合并或自动标 ready。PR/CI API 返回 Forbidden，Git push 通道正常；最终 PR 元数据更新结果见交付记录。
+**整体验收未完成**：需提供可用的 Codex 运行目录权限及允许模型连接的网络路由，才能执行已授权的一组真实开发/外置终验/盲审；当前不能下案例可行性或框架增益结论。PR 保持当前审阅状态，不请求合并或自动标 ready。PR/CI API 返回 Forbidden，Git push 通道正常；最终 PR 元数据更新结果见交付记录。
 
-交付记录：Git push 已将 T1–T5 更新到原 PR #5 分支；T6 完成本提交后同样推送。PR 查询经 GraphQL 和 REST（含提升执行权限的读请求）均 Forbidden，实际 CI 未知；不将本地 Linux 结果代替 Windows/远端 CI。PR 元数据 PATCH 另尝试并以最终答复报告，blocked 时不标 ready、不合并。
+交付记录：Git push 已将 T1–T5 更新到原 PR #5 分支；T6 完成本提交后同样推送。PR 查询经 GraphQL 和 REST（含提升执行权限的读请求）均 Forbidden，实际 CI 未知；不将本地 Linux 结果代替 Windows/远端 CI。PR 元数据 PATCH 已实际尝试，同样返回 Forbidden；标题/描述未能更新，未标 ready、未合并。拟更新正文保存在 `.tmp/pr5-description.md`。最终实现 `8cc47ba` 已成功推送，待本记录提交后一并同步。
