@@ -2,7 +2,7 @@
 
 日期：2026-10-27。依据：[spec.md](spec.md)，基线 `c111a72`。
 
-**当前仅完成规划。以下所有 ticket 均为 `awaiting_confirmation`，没有实施授权。**
+**2026-10-27：用户已确认 spec、tickets、validation，授权顺序实施 T1–T6 及一组预算内真实 pilot。**
 本清单是本次改造唯一的 ticket 状态入口，不另建工单系统或逐票计划/总结文件。
 
 补充：用户已确认单任务工程验证方向并授权构建素材。[validation.md](validation.md) 和任务 fixture 已准备，素材自检通过；这不是 T1–T6 实施。后续发送 [开发提示词](development-prompt.md) 即明确授权执行这些 tickets 和有预算的 paired pilot。
@@ -20,7 +20,7 @@
 
 | Ticket | 交付行为 | 前置 | Spec | 验收 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| T1 | 无数值目标也能积累、恢复和选择成果 | 用户确认 | R1–R3 | A1–A4、A11 | awaiting_confirmation |
+| T1 | 无数值目标也能积累、恢复和选择成果 | 用户确认 | R1–R3 | A1–A4、A11 | resolved |
 | T2 | 选定成果终验，证据补齐直接收尾 | T1 | R5 | A3、A5–A7 | awaiting_confirmation |
 | T3 | 精简模型输入，保留按需证据 | T2 | R6、R4.6 | A8–A9 | awaiting_confirmation |
 | T4 | 放宽工作表达、验证按需、直接任务接入 | T3 | R4、R8 | A4、A7、A12 | awaiting_confirmation |
@@ -50,7 +50,7 @@
 - A11：原数值优化的基线、候选续用、champion 比较及旧 run 恢复用例继续通过。
 - 针对性测试放入 `opc/tests/test_codex_and_config.py`、`test_engine.py`、`test_research_loop.py`，并运行受影响套件。
 
-完成记录：待实施。
+完成记录：2026-10-27，T1 独立提交（本提交）。无 objective 合同、失败基线、连续工作版本与 stop 选版；新增恢复/选版/失败 worker/越界测试。受影响 engine、research_loop、codex/config 套件通过（见提交验证）。终验留到 T2；未创建伪冠军。
 
 ## T2：选定版本交付与证据收尾
 

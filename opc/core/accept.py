@@ -21,7 +21,7 @@ OPS: dict[str, Callable[[float, float], bool]] = {
 
 
 def required_metrics(acc: Acceptance) -> list[str]:
-    names = [acc.objective_metric] + [c.metric for c in acc.constraints]
+    names = ([acc.objective_metric] if acc.objective_metric else []) + [c.metric for c in acc.constraints]
     if acc.target:
         names.append(acc.target.metric)
     return sorted(set(names))

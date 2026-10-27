@@ -25,6 +25,7 @@ class Outcome(str, enum.Enum):
     """
 
     IMPROVEMENT = "improvement"      # passed every gate and beat the champion
+    WORK = "work"                    # authorized saved work; no numeric ranking
     NO_GAIN = "no_gain"              # passed every gate, did not beat the champion
     BROKEN = "broken"                # a gate failed because of the candidate
     SANDBOX = "sandbox_violation"    # touched a path outside its editable scope

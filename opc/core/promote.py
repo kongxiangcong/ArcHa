@@ -30,6 +30,8 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
     if run is None:
         raise OPCError("task %s has no run" % engine.task.task_id)
     engine.run_id = run["run_id"]
+    if not engine.task.acceptance.objective_metric:
+        raise OPCError("delivery without objective is not yet supported")
     champs = engine.ledger.champions(engine.run_id)
     if len(champs) < 2:
         raise OPCError("run %s has no accepted candidate to promote" % engine.run_id)

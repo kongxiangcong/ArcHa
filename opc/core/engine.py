@@ -215,6 +215,10 @@ class Engine:
         finally:
             ws.drop_all()
         rep["gates"] = [g.as_dict() for g in ev.gates]
+        if ev.failure is Outcome.BROKEN and not self.task.acceptance.objective_metric:
+            rep["baseline_failure"] = ev.reason
+            rep["baseline_metrics"] = None
+            return rep
         if ev.failure is not None:
             rep["ok"] = False
             rep["problems"].append("baseline fails gate: %s (%s)" % (ev.reason, ev.failure.value))
@@ -326,6 +330,8 @@ class Engine:
                                        "controller stopped during '%s'; costs kept, no verdict"
                                        % a["state"], 0.0, Cost())
             self.log("attempt %d abandoned (was %s)" % (n, a["state"]))
+        if not self.task.acceptance.objective_metric:
+            return
         champ = self.ledger.champion(self.run_id)
         if champ is None:
             self.log("measuring baseline %s" % run["base_commit"][:12])
@@ -515,7 +521,7 @@ class Engine:
                 if metrics else None, "conclusion": a["conclusion"]})
         run = self.ledger.run(self.run_id)
         directions = [e["body"]["text"] for e in self.ledger.events(self.run_id, "direction")]
-        base = champions[0]
+        base = champions[0] if champions else {"commit_sha": run["base_commit"], "metrics": {"values": {}}}
         acc = self.task.acceptance
         streak = 0
         for a in reversed(attempts):
@@ -615,12 +621,25 @@ class Engine:
                                        (prior["plan"] or {}).get("title", "restored candidate"))
         raise OPCError("base_attempt %s has no saved candidate in this run" % selected)
 
+    def working_commit(self) -> str:
+        events = self.ledger.events(self.run_id, "working_version")
+        return events[-1]["body"]["commit"] if events else self.ledger.run(self.run_id)["base_commit"]
+
+    def selected_commit(self) -> str:
+        events = self.ledger.events(self.run_id, "selected_version")
+        if events:
+            return events[-1]["body"]["commit"]
+        champ = self.ledger.champion(self.run_id)
+        return champ[0] if champ else self.working_commit()
+
     # ---------------------------------------------------------------- attempt
     def _worker_outcome(self, call: WorkerCall) -> Outcome:
         return Outcome.INFRA if call.extra.get("infra") else Outcome.WORKER_FAILED
 
     def attempt(self, ws: Workspaces) -> tuple[Outcome, StopDecision | None]:
         champ = self.ledger.champion(self.run_id)
+        if champ is None:
+            champ = (self.working_commit(), Measurements())
         focus = None
         if self.comp.focus_areas:
             focus = self.comp.focus_areas[(self.ledger.next_attempt_no(self.run_id) - 1)
@@ -677,6 +696,11 @@ class Engine:
                 reason = plan.get("stop_reason") or "expert has no further worthwhile work"
                 if not isinstance(reason, str):
                     return finish(Outcome.WORKER_FAILED, "stop_reason must be text")
+                try:
+                    selected = self.development_parent(plan, champ[0], ws)
+                except OPCError as exc:
+                    return finish(Outcome.WORKER_FAILED, str(exc))
+                self.ledger.event(self.run_id, "selected_version", n, commit=selected)
                 self.ledger.event(self.run_id, "expert_stop", n, reason=reason)
                 finish(Outcome.NO_CHANGE, reason)
                 return Outcome.NO_CHANGE, StopDecision("closed", "expert_exhausted: " + reason)
@@ -738,6 +762,8 @@ class Engine:
             # Snapshot only authorized edits, before gates can create outputs.
             # Keep a ref even for NO_GAIN/BROKEN; selecting it never moves champion.
             candidate = self.save_candidate(ws, n, parent, patch, plan["title"])
+            if not self.task.acceptance.objective_metric:
+                self.ledger.event(self.run_id, "working_version", n, commit=candidate)
             self.hard_check()
 
             self.ledger.event(self.run_id, "experiment", n, status="started", data=[], cached=False)
@@ -751,6 +777,9 @@ class Engine:
             gates = [g.as_dict() for g in ev.gates]
             if ev.failure is not None:
                 return finish(ev.failure, ev.reason, gates=gates)
+            if not self.task.acceptance.objective_metric:
+                return finish(Outcome.WORK, "saved work; not numerically ranked", gates=gates,
+                              metrics=meas.as_dict())
             if meas.toolchain_digest != champ[1].toolchain_digest:
                 # tools changed under a live run: re-measure the champion now, or every
                 # later candidate is incomparable with it
@@ -869,7 +898,9 @@ class Engine:
         return {"run_id": self.run_id, "task": self.task.task_id, "revision": self.task.revision,
                 "state": run["state"], "stop_reason": run["stop_reason"], "result": business,
                 "champion_ref": self.ref, "champion": best["commit_sha"] if best else None,
-                "baseline": base["commit_sha"] if base else None,
+                "selected_version": self.selected_commit(),
+                "working_version": self.working_commit() if not m else None,
+                "baseline": run["base_commit"],
                 "baseline_metrics": base["metrics"]["values"] if base else None,
                 "champion_metrics": best["metrics"]["values"] if best else None,
                 "target_met": bool(best and acceptance.target_met(

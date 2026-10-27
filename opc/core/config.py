@@ -269,7 +269,7 @@ class Constraint:
 
 @dataclass
 class Acceptance:
-    objective_metric: str
+    objective_metric: str | None
     direction: str                       # minimize | maximize
     min_rel_gain: float
     constraints: list[Constraint]
@@ -334,10 +334,13 @@ class TaskSpec:
         acc = _need(d, "acceptance", where, dict)
         aw = where + " acceptance"
         _keys(acc, ACCEPTANCE_KEYS, aw)
-        obj = _need(acc, "objective", aw, dict)
+        obj = acc.get("objective")
+        if obj is not None and not isinstance(obj, dict):
+            raise OPCError("objective must be an object or null")
+        obj = obj if obj is not None else {}
         _keys(obj, OBJECTIVE_KEYS, aw + ".objective")
-        direction = _need(obj, "direction", aw + ".objective", str)
-        if direction not in ("minimize", "maximize"):
+        direction = _need(obj, "direction", aw + ".objective", str) if obj else ""
+        if obj and direction not in ("minimize", "maximize"):
             raise OPCError("%s.objective.direction must be minimize or maximize" % aw)
 
         def constraint(c: dict, w: str) -> Constraint:
@@ -354,7 +357,7 @@ class TaskSpec:
 
         target = acc.get("target")
         acceptance = Acceptance(
-            objective_metric=_need(obj, "metric", aw + ".objective", str), direction=direction,
+            objective_metric=_need(obj, "metric", aw + ".objective", str) if obj else None, direction=direction,
             min_rel_gain=float(obj.get("min_rel_gain", 0.0)),
             constraints=[constraint(c, "%s.constraints[%d]" % (aw, i))
                          for i, c in enumerate(acc.get("constraints") or [])],
@@ -363,6 +366,10 @@ class TaskSpec:
             rule=acc.get("rule"), rule_params=dict(acc.get("rule_params") or {}))
         if acceptance.target and acceptance.target.relative_to_champion is not None:
             raise OPCError("%s.target must be an absolute value" % aw)
+
+        if not acceptance.objective_metric and (acceptance.rule or any(
+                c.relative_to_champion is not None for c in acceptance.constraints)):
+            raise OPCError("relative constraints and ranking rule require an objective")
 
         b = _need(d, "budget", where, dict)
         bw = where + " budget"

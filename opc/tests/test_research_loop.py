@@ -221,3 +221,50 @@ def test_measurement_only_gain_keeps_original_control_with_same_commit(make_proj
     assert row['candidate'] == row['parent']
     assert row['champion_before']['values']['loss'] == 17
     assert row['metrics']['values']['loss'] == 9
+
+
+def test_work_versions_resume_and_select(make_project, engine_for):
+    from opc.tests.conftest import task, STRATEGY, EVALUATE, git
+    t = task(acceptance={"objective": None}, requirements=[])
+    strategy = STRATEGY.replace('x = int(7 - (ctx["champion"]["values"]["loss"] - 1) ** 0.5)', 'x = ctx["attempt"] + 2').replace('if ctx["progress"]["target_met"]:', 'if ctx["attempt"] > 2:').replace('"task target reached"}', '"done", "base_attempt": 1}')
+    root = make_project(tsk=t, strategy=strategy, evaluate=EVALUATE+'\nraise SystemExit(1)\n')
+    e = engine_for(root)
+    assert e.preflight()["ok"]
+    first = e.run(max_attempts_now=1)
+    assert first['champion'] is None
+    first_commit = first['working_version']
+    e = engine_for(root)
+    second = e.run(max_attempts_now=1)
+    assert second['working_version'] != first_commit
+    rows = e.attempt_records()
+    assert rows[1]['parent'] == first_commit
+    stopped = e.run()
+    assert stopped['selected_version'] == first_commit
+    assert not e.ledger.champions(e.run_id)
+    assert '"x": 4' in git(root, 'show', first_commit+':params.json')
+
+
+def test_no_objective_rejects_relative_ranking(make_project):
+    from opc.tests.conftest import task
+    from opc.core.config import TaskSpec
+    from opc.core.model import OPCError
+    import pytest
+    root = make_project(tsk=task(acceptance={"constraints": [
+        {"metric": "loss", "op": "<=", "relative_to_champion": 1}]}))
+    with pytest.raises(OPCError, match='require an objective'):
+        TaskSpec.load(root, 't-toy')
+
+
+@pytest.mark.parametrize('failure', ['worker', 'sandbox'])
+def test_failed_work_does_not_advance(make_project, engine_for, failure):
+    root = make_project(tsk=task(acceptance={}, requirements=[]))
+    class Failed(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            if failure == 'sandbox':
+                (tree / '.opc/strategy.py').write_text('unauthorized')
+                return WorkerCall('designer', True, Cost(), output={})
+            return WorkerCall('designer', False, Cost(), error='implementation failed')
+    e = use_sequence(engine_for(root), Failed([plan(1), stop]))
+    s = e.run()
+    assert s['working_version'] == s['baseline'] == s['selected_version']
+    assert not any(a['candidate'] for a in e.attempt_records())
