@@ -315,3 +315,15 @@ def test_context_bounds_machine_data_and_history(make_project, engine_for):
     assert len(raw['metrics']['values']) == 2158 and len(raw['data'][0]['data']['cases']) == 1000
     assert len(expert_prompt(ctx)) < 2000
     assert e.save_conclusions({'conclusions': []}, ctx, 17) is None
+
+
+def test_development_local_steps_and_explicit_measurement(make_project, engine_for):
+    seq = Sequence([{'title': 'build', 'changes': 'implement'},
+                    {'title': 'build', 'changes': 'implement', 'evaluate': True}, stop], [4, 7])
+    e = use_sequence(engine_for(make_project(tsk=task(acceptance={}, requirements=[]))), seq)
+    e.run()
+    rows = e.attempt_records()
+    assert rows[0]['experiment'] is None and rows[0]['metrics'] is None
+    assert rows[1]['experiment']['status'] == 'completed'
+    assert rows[1]['parent'] == rows[0]['candidate']
+    assert not e.ledger.champions(e.run_id)

@@ -121,3 +121,13 @@ def test_onboard_rejects_rewriting_research_inputs(tmp_path, monkeypatch, action
     result = onboard(tmp_path, "codex")
     assert not result["ok"]
     assert result["changed_protected_opc"] == [".opc/research/evidence.md"]
+
+
+def test_direct_task_source_without_map(tmp_path):
+    body = brief_project(tmp_path)
+    (tmp_path / 'TASK.md').write_text('Confirmed engineering requirements', encoding='utf-8')
+    (tmp_path / 'task-brief.md').write_text(body.replace('Map: map.md', 'Task: TASK.md'), encoding='utf-8')
+    report, _ = load_brief(tmp_path, 'task-brief.md')
+    assert report['ok'] and report['map'] is None and report['task_source'] == 'TASK.md'
+    (tmp_path / 'TASK.md').unlink()
+    assert not load_brief(tmp_path, 'task-brief.md')[0]['ok']

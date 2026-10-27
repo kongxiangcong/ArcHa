@@ -12,7 +12,7 @@ from typing import Any, Protocol
 from ..core.config import WorkerSpec
 from ..core.model import Cost, OPCError
 
-PLAN_FIELDS = ("title", "hypothesis", "changes", "expected", "falsifier")
+PLAN_FIELDS = ("title", "changes")
 
 #: The one reply every model worker may give instead of a plan, meaning "no further
 #: experiment is worth its budget". Shared so neither worker's termination depends
@@ -22,11 +22,13 @@ EXHAUSTED_SENTINEL = "NO_EXPERIMENT"
 PLAN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": [*PLAN_FIELDS, "exhausted", "base_attempt", "conclusions", "stop_reason"],
+    "required": [*PLAN_FIELDS, "hypothesis", "expected", "falsifier", "evaluate",
+                 "exhausted", "base_attempt", "conclusions", "stop_reason"],
     "properties": {
         "title": {"type": "string", "description": "short name of the experiment"},
         "hypothesis": {"type": "string", "description": "why this should improve the objective"},
         "changes": {"type": "string", "description": "method and experiment for the designer to implement"},
+        "evaluate": {"type": ["boolean", "null"], "description": "formal evaluation: null uses objective-dependent default"},
         "base_attempt": {"type": ["integer", "null"],
                          "description": "null: champion; 0: initial baseline; positive: saved candidate attempt"},
         "conclusions": {"type": "array", "items": {
@@ -88,6 +90,8 @@ def validate_plan(plan: Any) -> str | None:
     if files is not None and (not isinstance(files, list) or not all(
             isinstance(f, str) and f.strip() for f in files)):
         return "plan.files must be a list of paths when supplied"
+    if plan.get("evaluate") is not None and type(plan["evaluate"]) is not bool:
+        return "plan.evaluate must be boolean or null"
     base = plan.get("base_attempt")
     if base is not None and (type(base) is not int or base < 0):
         return "plan.base_attempt must be null or a nonnegative attempt number"

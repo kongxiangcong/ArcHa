@@ -274,7 +274,7 @@ class DshWorker:
         if text.strip() == EXHAUSTED_SENTINEL:
             call.exhausted = True
             return call
-        plan = extract_json(text, require=("title",))
+        plan = extract_json(text)
         if plan is None:
             call.ok, call.error = False, "expert reply holds no JSON object: %s" % text[:200]
             return call

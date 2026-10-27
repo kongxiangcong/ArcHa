@@ -231,10 +231,19 @@ opc promote   -p <project> --task <task> --confirm 3   # 晋升审核；--apply 
 
 简报只给目标范围、交付物和候选验收条件；基线、可改/冻结路径、预算、worker 和自主权边界由起草时根据仓库实际情况确定。先用提示词中的完整简报和它索引的相关 evidence，区分已定决定、建议和未知；源 map 只补读本任务的范围与依赖。复用已有调查结论和来源定位，核对影响合同的关键源码；证据缺失、冲突或与当前源码不符时再扩读。简报的 Open decisions 是起草时要处理或保留的事项，无需上游另做调查或补写交接材料。
 
-- 字段映射：`Goal:` → `task.goal`，`Direction:` → `task.direction`，`- R*:` → `task.requirements[]`（`verification` 原样保留），`Objective:` → `acceptance.objective`。`Objective: none` 或 `evaluator=待建/未知` 都写成 blocking Open item。`Done when` 和交付物 `D*` 写入 `.opc/context/REQUIREMENTS.md`。
+- 字段映射：`Goal:` → `task.goal`，`Direction:` → `task.direction`，`- R*:` → `task.requirements[]`（`verification` 原样保留），`Objective:` → `acceptance.objective`。`Objective: none` 映射 acceptance.objective=null，不是阻塞项；`evaluator=待建/未知` 等真实验收缺口写成 blocking Open item。`Done when` 和交付物 `D*` 写入 `.opc/context/REQUIREMENTS.md`。
 - 把本任务在 map/简报中的相关背景、方向、完成标准、约束、已有能力写入 `.opc/context/` 的精简材料，并用 `context_files` 选择这些 Markdown 文件；未选择时使用 PROJECT、REQUIREMENTS、DECISIONS 三份材料。专家在只有研究材料的目录运行，不读取源码或其他 `context_files`，每份材料最多读取前 20000 字符。designer 负责读代码、定位文件和实现。
 - 每个验收 gate 写明真实命令/评价器是否存在。缺失的实现、用户未定的预算、无法表达的研究语义都作为 blocking Open items 写入 `.opc/README.md`，保持 `execution_enabled=false`；不要用模板默认数或虚构优化分数代替。
 - 只有内容与 `opc.scaffold.task_template(task_id, component_id)` 完全一致的 revision 才是可直接填写的空模板。部分填写、仍含 TODO 的合同也不是空模板。已有真实内容的 revision 保留：不同研究任务创建独立 task；同一任务的合同变更创建新 revision，并记录对应简报。
 - 无源码补丁的测量可复用冻结评价命令，强制新测量；未执行、缓存结果、测量失败分别如实记录。额外诊断需由现有门输出结构化数据，不扩建通用实验调度。每轮独立研究审核、多任务依赖调度不在当前流程内。
 
 简报就绪仅指可以起草；`brief-check`、`check` 和 `preflight` 都不判断研究结论是否成立。
+
+## 完成条件与直接任务
+
+明确任务可省略地图，在 brief Source 使用 `Task: TASK.md` 指向真实任务来源；有地图仍使用 Map。复用已确认 brief 与调查，只核对关键合同依据。
+无数值目标用 `acceptance.objective: null` 或省略 objective；不可造 0/1 进度分数。
+requirements 的 check 指向真实指标；无 check 的需求应声明 review 并由终验审阅，不能自动视为已覆盖。
+preflight 中可执行评价的功能失败是未完成基线，工具/输入/输出契约故障仍阻塞。
+普通开发默认连续积累已保存工作版本，由 designer 局部测试；expert 可用 evaluate=true 请求正式评价。
+base_attempt 同样用于停止时的交付选版。run 停止不代表完成，promote 对选定版本执行完整验收与必要 review；apply 仍显式。

@@ -27,7 +27,7 @@ python3 <project>/.opc/archa.py brief-check -p <project> --brief <brief>
 
 1. `check -p <project> --task <task-id> --revision <revision>`，处理合同问题；未提交接入文件及因此未进入基线的评价器留到下一步解决。
 2. 检查 Git 差异，仅提交本次执行所需、已核对的接入文件，使合同与评价器在基线中可用。保留用户其他修改和暂存内容；存在无法分离的修改时说明阻塞，不用整体暂存或清理工作区解决。遵守项目提交约定。
-3. 重跑 check，要求全部通过，再运行 `preflight -p <project> --task <task-id> --revision <revision>`，确认基线门和指标通过。明确的环境问题可在授权范围内修复；需要更改冻结评价标准或目标时先回到合同修订。
+3. 重跑 check，要求全部通过，再运行 `preflight -p <project> --task <task-id> --revision <revision>`，确认执行通道工作；无 objective 时功能门失败可作为未完成基线，保留失败事实。工具、输入和输出契约故障仍阻塞。明确的环境问题可在授权范围内修复；需要更改冻结评价标准或目标时先回到合同修订。
 
 检查或 preflight 失败时不启动 run；如果本次才打开执行开关且准备失败，将其恢复为关闭并如实记录。恢复已有 run 时保持其冻结合同，仍核对 check 和环境，不为了通过检查原地改动旧 revision。
 
@@ -40,3 +40,5 @@ python3 <project>/.opc/archa.py run -p <project> --task <task-id> --revision <re
 由引擎完成决策、候选执行、评价、接纳与反馈，沿用合同方向和预算。跟踪进程及 `status`，直到完成、暂停或阻塞；预算耗尽、搜索枯竭和用户暂停都应保留，不自动反复重启。用户要求暂停或停止时调用对应 `pause` / `stop` 命令，等引擎确认状态。
 
 结束后调用 `report -p <project> --task <task-id> --revision <revision>`，报告实际 run/revision、停止原因、目标达成情况、冠军提交与指标、交付物及报告路径、剩余问题。区分“达到目标”和“预算内最好结果”；本技能不自动 promote 到用户分支。
+
+无 objective 时默认从工作版本继续；有 objective 保持冠军默认起点，expert 可用 base_attempt 选择任何已保存候选，也可在停止时选版。run 停止与任务完成分开；promote 对选定版本执行完整验收及合同所需 review，未满足条件不得声明完成。独立 review 回执不需要新 designer 候选。

@@ -23,7 +23,7 @@
 | T1 | 无数值目标也能积累、恢复和选择成果 | 用户确认 | R1–R3 | A1–A4、A11 | resolved |
 | T2 | 选定成果终验，证据补齐直接收尾 | T1 | R5 | A3、A5–A7 | resolved |
 | T3 | 精简模型输入，保留按需证据 | T2 | R6、R4.6 | A8–A9 | resolved |
-| T4 | 放宽工作表达、验证按需、直接任务接入 | T3 | R4、R8 | A4、A7、A12 | awaiting_confirmation |
+| T4 | 放宽工作表达、验证按需、直接任务接入 | T3 | R4、R8 | A4、A7、A12 | resolved |
 | T5 | 确定性请求拒绝停止调用 | T4 | R7 | A10 | awaiting_confirmation |
 | T6 | 全链路回归、工程任务对照与旧 benchmark 退役 | T5 | §5–§6、R8、validation | A1–A12 + paired pilot | awaiting_confirmation |
 
@@ -127,7 +127,7 @@
 - 运行 `opc/tests/test_brief.py`、`test_codex_and_config.py`、`test_dsh_worker.py`、`test_research_loop.py` 以及 `tools/tests/test_brief.py`、`test_research_skills.py`、`test_skill_installer.py`。
 - 此票修改仓库内技能文件并随本分支提交，不触碰全局技能安装或用户项目 runtime。
 
-完成记录：待实施。
+完成记录：2026-10-27，T4 独立提交（本提交）。放宽为 title/changes，删除文字去重，evaluate 意图控制正式测量；开发测试遵从 editable/frozen。直接 Task 来源可省略地图，none objective 接入和技能同步。指定套件 104 passed/2 skipped；新增直接来源与默认局部/显式正式评价测试。全量 prompt 注入旧断言同步为单份材料读取。
 
 ## T5：无有效执行的请求拒绝不重试
 

@@ -725,21 +725,6 @@ class Engine:
                 outside = [f for f in plan.get("files") or [] if not self.comp.is_editable(f)]
                 if outside:
                     why = "plan names non-editable paths: %s" % ", ".join(outside)
-            if why is None:
-                key = (plan.get("title"), tuple(sorted(plan.get("files") or [])), plan.get("changes"),
-                       plan.get("base_attempt"),
-                       json.dumps(plan.get("params"), sort_keys=True))
-                retryable = (Outcome.INFRA.value, Outcome.ABANDONED.value)
-                for a in self.ledger.attempts(self.run_id):
-                    p = a["plan"] or {}
-                    if a["outcome"] in retryable:
-                        continue
-                    if a["attempt_no"] != n and (p.get("title"), tuple(sorted(p.get("files") or [])),
-                                                 p.get("changes"),
-                                                 p.get("base_attempt"),
-                                                 json.dumps(p.get("params"), sort_keys=True)) == key:
-                        why = "repeats attempt %d" % a["attempt_no"]
-                        break
             write_json(adir / "plan.json", plan)
             self.ledger.update_attempt(self.run_id, n, "planned", plan=plan)
             if why:
@@ -782,6 +767,9 @@ class Engine:
                 self.ledger.event(self.run_id, "working_version", n, commit=candidate)
             self.hard_check()
 
+            if not (plan.get("evaluate") if plan.get("evaluate") is not None else
+                    bool(self.task.acceptance.objective_metric)):
+                return finish(Outcome.WORK, "saved work; formal evaluation not requested")
             self.ledger.event(self.run_id, "experiment", n, status="started", data=[], cached=False)
             ev, meas, eval_tree = self.evaluate_commit(ws, candidate, "", adir / "eval",
                                                        "a%06d/eval" % n, fresh=not patch.strip())

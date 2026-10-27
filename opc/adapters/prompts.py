@@ -21,7 +21,7 @@ but use the JSON stop object to preserve conclusions and stop_reason."""
 EXHAUSTION_RULE = """Decide whether any worthwhile work remains toward the task, including
 capability development and diagnosis, within the budget. Reaching a target or a
 streak without gain is information for your decision. If finished, set "exhausted":
-true and give stop_reason after reviewing pending results; otherwise set it false."""
+true and give stop_reason after interpreting relevant results; otherwise set it false."""
 
 
 def expert_prompt(ctx: dict[str, Any], plain_text_reply: bool = False) -> str:
@@ -31,6 +31,7 @@ working version, relevant history and evidence references. That file is the sing
 presentation of the context. Choose one worthwhile step or stop. The designer
 locates code and implements your plan; do not investigate source code or raw logs.
 You may read relevant research notes and structured evidence at the supplied paths.
+An accepted improvement does not by itself establish its proposed mechanism.
 Missing measurements are unmeasured, never zero. Cached results are historical,
 not new measurements. Execution failure alone does not refute a hypothesis.
 Interpret relevant results in conclusions [{"attempt": 1, "conclusion": "interpretation"}];
@@ -38,7 +39,11 @@ you need not clear every pending conclusion. Decide next work in the same reply.
 base_attempt: null uses the default working version (champion for numeric tasks),
 0 uses the initial baseline, positive numbers select any saved candidate, including
 ones outside the recent view. Selection also applies when stopping.
-Return a plan or exhausted=true with stop_reason. Research fields may describe
+Return title and changes describing one executable step, or exhausted=true with stop_reason.
+Research fields may be empty. evaluate=null defaults to formal evaluation for numeric
+tasks and local designer validation otherwise; true requests formal evaluation, false
+skips it. A step may include continuous implementation, local testing and fixes.
+Research fields may describe
 conditions, controls, expected observations and uncertainty. Do not invent evidence.
 """ + rules
 
@@ -54,10 +59,11 @@ Rules:
 - Generated scratch paths: {json.dumps(comp.get('scratch') or [])}. Local checks may write
   these outputs; they are discarded and never included in the candidate patch. Frozen
   tests/evaluators and .opc/ remain protected even if a scratch pattern matches them.
-- Do not touch tests, evaluators, golden data or anything under .opc/.
+- Development tests within editable paths may be changed. Do not touch frozen
+  tests, evaluators, golden data or anything under .opc/.
 - Do not run `git commit`; leave changes in the working tree.
-- Keep the change minimal and self-consistent. If a quick local check exists you may run it,
-  but the official evaluation happens elsewhere.
+- Complete the step with continuous implementation, local checks and fixes.
+  Formal frozen evaluation, when requested, happens elsewhere.
 - Run checks unchanged; do not monkeypatch evaluators or suppress their report writes.
   If a check requires undeclared outputs, report that limitation instead of altering it.
 
