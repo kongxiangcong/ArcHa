@@ -50,8 +50,9 @@ class ParamSearch:
         current = next((a for a in reversed(ctx.get("history") or [])
                         if a.get("candidate") == ctx["champion"]["commit"]
                         and a.get("plan_params")), None)
-        if current:
-            for key, value in current["plan_params"].items():
+        params = ctx["champion"].get("params") or (current["plan_params"] if current else None)
+        if params:
+            for key, value in params.items():
                 put(cfg, key, value)
         point = self._point(cfg)
         tried_keys = {json.dumps(t, sort_keys=True) for t in ctx.get("tried_params") or []}

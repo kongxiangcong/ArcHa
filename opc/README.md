@@ -80,10 +80,16 @@ reviewer 不再继承 expert，onboard 也会读取独立设置。DSH 覆盖需�
 
 专家只读取任务相关的 `.opc/context/*.md`、目标/完成标准/约束、逐轮设计、执行摘要、结构化实验数据和结论。源码、完整门判决和原始日志留在实现/证据侧。`context_files` 中的源码路径不再注入专家；旧接入应把必要背景迁到 `.opc/context/`，无需修改可改范围。
 
-计划的 `changes` 表达方法与实验，不必提供 `files`。`base_attempt: null`（省略同义）从当前冠军继续，`0` 从初始基线继续，正整数选择本 run 已保存的候选。候选由 Git 引用 `refs/opc-candidates/<task>/<run>/a<N>` 保留，`candidate.patch` 相对实际 parent；账本事件记录 parent、候选与冠军比较基线。未涨分也可选用，冠军仍走冻结的接纳规则。不会自动合并不同候选；若最终冠军不是目标分支的后代，promote 仍要求人工合并。
+计划的 `changes` 表达方法与实验，不必提供 `files`。`base_attempt: null`（省略同义）从当前工作版本继续（数值任务默认冠军），`0` 从初始基线继续，正整数选择本 run 已保存的候选。候选由 Git 引用 `refs/opc-candidates/<task>/<run>/a<N>` 保留，`candidate.patch` 相对实际 parent；账本事件记录 parent、候选与冠军比较基线。未涨分也可选用，冠军仍走冻结的接纳规则。不会自动合并不同候选；若选定交付版本不是目标分支的后代，promote 仍要求人工合并。
 
-下一次已有专家调用先返回 `conclusions: [{"attempt": N, "conclusion": "..."}]` 复盘待处理轮次，再规划或通过 `exhausted: true` 与 `stop_reason` 结束。结论挂回原轮次；资源/暂停/故障不触发补调，报告的 `pending_conclusions` 如实列出待复盘。阈值、`max_stagnation` 只作为专家进展信号；预算上限、基础设施故障和用户控制继续约束执行。`result=exploration_stopped` 表示专家结束探索，`result=target_met` 与独立的 `target_met` 布尔字段表示测量达到目标，停止理由单独保留，任务终验仍使用原 promote。
+下一次已有专家调用可按需返回 `conclusions: [{"attempt": N, "conclusion": "..."}]` 复盘相关轮次，无需清空全部 pending，再规划或通过 `exhausted: true` 与 `stop_reason` 结束。结论挂回原轮次；资源/暂停/故障不触发补调，报告的 `pending_conclusions` 如实列出待复盘。阈值、`max_stagnation` 只作为专家进展信号；预算上限、基础设施故障和用户控制继续约束执行。`result=exploration_stopped` 表示专家结束探索，`result=target_met` 与独立的 `target_met` 布尔字段表示测量达到目标，停止理由单独保留，任务终验使用 promote 检查选定版本。
 
-默认命令领域从 metrics 文件保留数值指标及 `conditions`、`controls`、`cases`、`samples`、`results` 实验字段和各次重复输出，不透传嵌入的日志/判决全文，标记缓存来源。无补丁也运行冻结门，跳过缓存获取新数据；未执行不写成有测量。自定义领域可通过 `Evaluation.data` 返回必要数据，原标量 `values` 接口继续可用。没有数据的旧记录不补造测量或解释。
+默认命令领域从 metrics 文件保留数值指标及 `conditions`、`controls`、`cases`、`samples`、`results` 实验字段和各次重复输出，不透传嵌入的日志/判决全文，标记缓存来源。明确请求正式测量且无补丁时运行冻结门，跳过缓存获取新数据；未执行不写成有测量。自定义领域可通过 `Evaluation.data` 返回必要数据，原标量 `values` 接口继续可用。没有数据的旧记录不补造测量或解释。
 
 Codex/DSH 计划接口使用上述字段；旧 `NO_EXPERIMENT` 仍识别，但有待复盘时模型须返回 JSON 结论再结束。确定性 scripted 策略的 `propose(ctx, tree)` 中 tree 也成为材料目录，应从 ctx 读取状态；旧策略若依赖源码路径需迁移。内置参数搜索已适配。旧 scripted 策略省略结论时保留待复盘，不冒充模型解释。
+
+## 工作成果与交付
+
+acceptance.objective 可省略/null。默认工作版本累积已成功保存的授权修改，不创建数值冠军；有 objective 时保持原排名语义。base_attempt（含停止回复）可选择已有候选或 0 基线。普通步骤默认局部验证，evaluate=true 请求冻结评价；数值任务默认正式评价，evaluate=false 可暂不测量。
+requirements[].gates 可声明已有冻结门对需求的覆盖；check 使用真实指标，review 需要独立审阅。未验证、未满足及有未满足条件的 review 都阻止完整交付。promote 检查 selected_version，run 停止本身不是任务完成。
+默认模型上下文只含必要指标、有界近期实验与证据位置，完整事实留已有 ledger/评价文件。已知无有效执行的请求拒绝会 blocked，不会原样重试。

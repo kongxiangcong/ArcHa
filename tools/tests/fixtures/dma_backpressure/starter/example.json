@@ -1,0 +1,44 @@
+{
+  "config": {
+    "queue_depth": 1,
+    "bytes_per_cycle": 2,
+    "setup_cycles": 1
+  },
+  "memory": [
+    1,
+    2,
+    3,
+    4,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "descriptors": [
+    {
+      "id": "a",
+      "kind": "dma",
+      "src": 0,
+      "dst": 4,
+      "nbytes": 4
+    },
+    {
+      "id": "b",
+      "kind": "dma",
+      "src": 4,
+      "dst": 8,
+      "nbytes": 4
+    },
+    {
+      "id": "c",
+      "kind": "compute",
+      "src": 0,
+      "nbytes": 4,
+      "cycles": 2
+    }
+  ]
+}

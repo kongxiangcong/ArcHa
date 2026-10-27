@@ -257,15 +257,14 @@ def test_promotion_reports_unmet_target_and_applies_only_on_request(make_project
     e = engine_for(root)
     e.run()
     rep = promote(engine_for(root))
-    assert rep["promotable"] and not rep["applied"]
+    assert not rep["promotable"] and not rep["applied"]
     assert any(f["check"] == "target" for f in rep["findings"])
     assert rep["requirements"][0]["status"].startswith("not_met")
-    rep = promote(engine_for(root), apply_to="release")
-    assert rep["applied"]
-    assert git(root, "rev-parse", "release").strip() == rep["champion"]
+    with pytest.raises(OPCError, match="promotion blocked"):
+        promote(engine_for(root), apply_to="release")
 
 
-@pytest.mark.parametrize('field', ['title', 'hypothesis', 'changes', 'expected', 'falsifier'])
+@pytest.mark.parametrize('field', ['title', 'changes'])
 @pytest.mark.parametrize('value', [None, '', '  ', 42])
 def test_plan_requires_existing_text_fields(field, value):
     from opc.adapters.worker import validate_plan
@@ -299,7 +298,8 @@ def test_next_expert_receives_original_plan_and_measured_evidence(make_project, 
     assert previous['metrics']['values']['loss'] != 17
     for plain_text in (False, True):
         prompt = expert_prompt(ctx, plain_text_reply=plain_text)
-        assert json.dumps(ctx['history'], ensure_ascii=False, indent=2) in prompt
+        assert 'Read research.json' in prompt
+        assert json.dumps(ctx['history'], ensure_ascii=False, indent=2) not in prompt
         assert 'does not by itself establish its proposed mechanism' in prompt
 
 

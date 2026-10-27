@@ -56,14 +56,16 @@ def load_brief(root: Path, brief: str | Path) -> tuple[dict, str]:
             problems.append(problem)
     source = sections.get("Source", "")
     maps = re.findall(r"^Map: (.+)$", source, re.M)
+    tasks = re.findall(r"^Task: (.+)$", source, re.M)
+    sources = maps if maps else tasks
     statuses = re.findall(r"^Status: (.+)$", source, re.M)
     map_rel = None
     map_digest = None
-    if len(maps) != 1:
-        problems.append("Source needs exactly one Map: <project-relative path>")
+    if len(sources) != 1 or (maps and tasks):
+        problems.append("Source needs exactly one Map: or Task: <project-relative path>")
     else:
         try:
-            source_path = Path(maps[0].strip())
+            source_path = Path(sources[0].strip())
             if source_path.is_absolute():
                 raise ValueError("map path must be relative")
             map_path = (root / source_path).resolve()
@@ -80,6 +82,7 @@ def load_brief(root: Path, brief: str | Path) -> tuple[dict, str]:
         problems.append("Source Status must be ready-for-onboard (drafts remain discussable)")
     return {
         "ok": not problems, "brief": rel, "sha256": hashlib.sha256(raw).hexdigest(),
-        "map": map_rel, "map_sha256": map_digest, "problems": problems,
+        "map": map_rel if maps else None, "map_sha256": map_digest if maps else None,
+        "task_source": map_rel if not maps else None, "source_sha256": map_digest, "problems": problems,
         "check_scope": "structure and source only; not semantic review or execution readiness",
     }, body

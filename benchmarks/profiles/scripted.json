@@ -1,5 +1,0 @@
-{
-  "kind": "scripted",
-  "budget": {"max_attempts": 20, "max_wall_seconds": 7200, "max_tokens": 4000000, "max_stagnation": 6, "max_consecutive_infra": 3},
-  "workers": {}
-}

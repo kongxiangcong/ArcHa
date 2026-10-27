@@ -27,6 +27,9 @@ if mode == "limit":
 if mode == "schema_error":
     print(json.dumps({"type": "turn.failed", "error": {"message": "invalid_json_schema: missing required key"}}))
     sys.exit(1)
+if mode in ("input_expert", "input_designer") and ((cwd / "research.json").exists() == (mode == "input_expert")):
+    print(json.dumps({"type": "turn.failed", "error": {"message": "context_length_exceeded: input too long"}}))
+    sys.exit(1)
 if mode.startswith("onboard"):
     assert "workspace-write" in args and "onboarding" in prompt
     (cwd / ".opc/README.md").write_text("Open items: none\n")
@@ -154,7 +157,7 @@ def test_token_budget_stops_before_overspending(make_project, engine_for, fake_c
 
 @pytest.mark.parametrize("mode,ok", [("onboard", True), ("onboard_stray", False)])
 def test_onboard_writes_only_under_opc(make_project, fake_codex, monkeypatch, mode, ok):
-    from opc.scaffold.onboard import onboard
+    from opc.scaffold.onboard import _draft as onboard
     root = make_project()
     with open(root / "params.json", "a") as f:
         f.write(" ")  # already dirty before the agent runs
@@ -216,7 +219,6 @@ def _write(root: Path, comp: dict | None = None, tsk: dict | None = None):
     ({"evaluator_files": []}, "nothing pins"),
     ({"editable": [".opc/eval/evaluate.py"]}, "overlaps the evaluator"),
     ({"gates": [{"id": "g", "argv": ["sh", "-c", "echo hi"], "metrics": "m"}]}, "sh -c"),
-    ({"gates": [{"id": "g", "argv": ["true"]}]}, "nothing can be measured"),
     ({"frozen": ["*.json"]}, "also frozen"),
 ])
 def test_component_validation_fails_closed(tmp_path, over, match):
@@ -287,10 +289,36 @@ def test_codex_expert_can_declare_exhaustion(make_project, engine_for, fake_code
 
 
 def test_onboard_accepts_dsh_and_rejects_unknown(tmp_path):
-    from opc.scaffold.onboard import onboard
+    from opc.scaffold.onboard import _draft as onboard
     with pytest.raises(OPCError, match="init --apply"):
         onboard(tmp_path, "dsh")
     (tmp_path / ".opc").mkdir()
     (tmp_path / ".opc" / "project.json").write_text("{}", encoding="utf-8")
     with pytest.raises(OPCError, match="must be codex or dsh"):
         onboard(tmp_path, "claude")
+
+
+@pytest.mark.parametrize("role", ["expert", "designer"])
+def test_request_rejection_with_thread_blocks_once(make_project, engine_for, fake_codex, monkeypatch, role):
+    monkeypatch.setenv("FAKE_CODEX_MODE", "input_"+role)
+    e = engine_for(make_project(tsk=codex_task(fake_codex)))
+    s = e.run()
+    assert s['state'] == 'blocked' and 'input too long' in s['stop_reason']
+    assert len(e.ledger.events(e.run_id, 'worker_call')) == (1 if role == 'expert' else 2)
+    assert s['spent']['search_attempts'] == 0
+
+
+def test_request_rejection_does_not_classify_executed_failure():
+    from opc.adapters.worker import request_rejected
+    assert request_rejected('context_length_exceeded', False)
+    assert not request_rejected('context_length_exceeded', True)
+    assert not request_rejected('expert reply is not JSON', False)
+
+
+def test_nested_usage_is_not_assumed_to_be_in_parent_total():
+    events = '\n'.join(json.dumps(e) for e in [
+        {'type':'item.completed','item':{'type':'collab_agent_tool_call'}},
+        {'type':'turn.completed','usage':{'input_tokens':100,'output_tokens':20,'cached_input_tokens':80}}])
+    info = parse_events(events)
+    assert info['tokens'] == 120  # cached input is already part of input_tokens
+    assert not info['usage_complete']

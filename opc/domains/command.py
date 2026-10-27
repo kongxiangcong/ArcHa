@@ -112,7 +112,7 @@ class CommandDomain:
             return GateStatus.PASSED
         if code == self.comp.skip_exit_code:
             return GateStatus.SKIPPED
-        if code is None or code == EX_TEMPFAIL:
+        if code is None or code in (EX_TEMPFAIL, 126, 127):
             return GateStatus.INFRA
         if any(p in tail for p in self.comp.infra_patterns):
             return GateStatus.INFRA

@@ -68,13 +68,19 @@ def cmd_status(a) -> int:
             continue
         champ = ledger.champion(r["run_id"])
         attempts = ledger.attempts(r["run_id"])
+        work = ledger.events(r["run_id"], "working_version")
+        selected = ledger.events(r["run_id"], "selected_version")
+        default_commit = champ[0] if champ else work[-1]["body"]["commit"] if work else r["base_commit"]
         rows.append({"run_id": r["run_id"], "task": r["task_id"], "revision": r["revision"],
                      "state": r["state"], "stop_reason": r["stop_reason"],
+                     "preparation": [x["body"] for x in ledger.events(r["run_id"], "preparation")][-1:],
                      "control": ledger.control(r["run_id"]), "attempts": len(attempts),
                      "last": [{"n": x["attempt_no"], "outcome": x["outcome"] or x["state"],
                                "reason": (x["reason"] or "")[:100]} for x in attempts[-5:]],
                      "champion": champ[0][:12] if champ else None,
                      "champion_metrics": champ[1].values if champ else None,
+                     "working_version": work[-1]["body"]["commit"] if work else None,
+                     "selected_version": selected[-1]["body"]["commit"] if selected else default_commit,
                      "spent": ledger.totals(r["run_id"])})
     _print(rows)
     return 0
@@ -121,7 +127,8 @@ def cmd_brief_check(a) -> int:
 
 def cmd_onboard(a) -> int:
     from .scaffold.onboard import onboard
-    report = onboard(Path(a.project), a.agent, brief=a.brief)
+    report = onboard(Path(a.project), a.agent, brief=a.brief, prepare=a.prepare, task_id=a.task,
+                     max_tokens=a.max_tokens, max_wall_seconds=a.max_wall_seconds, prior_tokens=a.prior_tokens, prior_wall_seconds=a.prior_wall_seconds, record_usage_only=a.record_usage)
     _print(report)
     return 0 if report["ok"] else 1
 
@@ -148,6 +155,13 @@ def main(argv=None) -> int:
     p = add("onboard", cmd_onboard, task=False)
     p.add_argument("--agent", default="codex", choices=["codex", "dsh"])
     p.add_argument("--brief", help="project-relative task-brief.md from discussion")
+    p.add_argument("--prepare", action="store_true", default=True, help="complete scoped preparation and read-only review; never start formal experiments")
+    p.add_argument("--record-usage", action="store_true", help="update cumulative host usage without dispatching workers")
+    p.add_argument("--task", default="t-main")
+    p.add_argument("--max-tokens", type=int)
+    p.add_argument("--max-wall-seconds", type=float)
+    p.add_argument("--prior-wall-seconds", type=float)
+    p.add_argument("--prior-tokens", type=int, help="cumulative host/nested input+output including cached input, excluding metered worker receipts")
     p = add("brief-check", cmd_brief_check, task=False)
     p.add_argument("--brief", required=True)
     add("check", cmd_check)
@@ -163,7 +177,7 @@ def main(argv=None) -> int:
         p.set_defaults(command=c)
     add("report", cmd_report)
     p = add("promote", cmd_promote)
-    p.add_argument("--confirm", type=int, default=0, help="repeat baseline and champion N times")
+    p.add_argument("--confirm", type=int, default=0, help="repeat baseline and selected delivery N times for numeric comparison")
     p.add_argument("--review", default=None, choices=[None, "codex", "dsh"])
     p.add_argument("--apply", default=None, metavar="BRANCH")
     a = ap.parse_args(argv)

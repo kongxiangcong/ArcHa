@@ -11,7 +11,7 @@ from opc.core.model import Cost, OPCError
 from opc.core.promote import run_reviewer
 from opc.core.worker_config import CONFIG_PATH, load_worker_config
 from opc.scaffold import init
-from opc.scaffold.onboard import onboard
+from opc.scaffold.onboard import _draft as onboard
 from opc.tests.conftest import task, write
 from opc.tests.test_codex_and_config import fake_codex  # noqa: F401
 from opc.tests.test_dsh_worker import fake_dsh  # noqa: F401

@@ -1,7 +1,0 @@
-{
-  "source": "performance", "title": "实现保守的 VLIW 指令打包器",
-  "editable": ["perf_takehome.py"], "metric": "bundles", "target": 1100,
-  "direction": "只实现 KernelBuilder.build 的直线 ALU 打包；保持 RAW/WAR/WAW 依赖与 slot 限制，遇到其他引擎保守串行。",
-  "frozen": ["problem.py", "tests/**", "tests_frozen.py"],
-  "dependencies": [], "baseline_transform": "none"
-}

@@ -182,7 +182,7 @@ from types import SimpleNamespace
 import sys
 sys.path.insert(0, sys.argv[1])
 from opc.scaffold.brief import SECTIONS
-from opc.scaffold.onboard import onboard
+from opc.scaffold.onboard import _draft as onboard
 from opc.core.model import OPCError
 from opc.adapters.codex import CodexWorker
 import opc.core.engine, opc.core.promote, opc.adapters.dsh, opc.adapters.scripted
@@ -224,3 +224,15 @@ assert (root / '.opc/local/onboard/task-brief.md').read_text() == brief.read_tex
     subprocess.run([sys.executable, "-B", "-c", script, str(project / ".opc/runtime"), str(project)],
                    cwd=tmp_path, check=True, capture_output=True, text=True)
     initialize.verify(project / ".opc/runtime")
+
+
+def test_deployed_cli_refuses_unmetered_preparation(tmp_path, runtime):
+    project = tmp_path / 'metered-project'
+    project.mkdir()
+    initialize.initialize(project, runtime)
+    cli = project / '.opc/archa.py'
+    help_result = subprocess.run([sys.executable, str(cli), 'onboard', '--help'], capture_output=True, text=True)
+    assert help_result.returncode == 0 and '--prior-wall-seconds' in help_result.stdout
+    result = subprocess.run([sys.executable, str(cli), 'onboard', '-p', str(project)], capture_output=True, text=True)
+    assert result.returncode != 0 and 'accounting_unknown' in result.stdout
+    assert not (project / '.opc/project.json').exists()  # no drafting/model dispatch

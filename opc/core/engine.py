@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..adapters.worker import Worker, WorkerCall, make_worker, validate_plan
-from ..domain import DomainAdapter, Evaluation, experimental_data, load_domain
+from ..domain import DomainAdapter, Evaluation, bounded_data, experimental_data, load_domain
 from . import accept as acceptance
 from .config import Bindings, ComponentConfig, ProjectConfig, TaskSpec, WorkerSpec
 from .ledger import Ledger
@@ -55,6 +55,13 @@ class Engine:
         self.bindings = Bindings.load(self.project)
         self.ledger = Ledger(self.root / ".opc" / "local" / "ledger.sqlite3")
         self.ref = "refs/heads/opc/%s" % task_id
+        preparations = [r for r in self.ledger.runs() if r["task_id"] == task_id and r["revision"] == "preparation"]
+        self.preparation = preparations[-1]["run_id"] if preparations else None
+        if self.preparation:
+            limits = self.ledger.events(self.preparation, "preparation_budget")
+            if limits:
+                self.task.budget.max_tokens = min(self.task.budget.max_tokens or limits[0]["body"]["tokens"], limits[0]["body"]["tokens"])
+                self.task.budget.max_wall_seconds = min(self.task.budget.max_wall_seconds, limits[0]["body"]["wall_seconds"])
         self.log = log
         self.run_id: str | None = None
         self._domain: DomainAdapter | None = None
@@ -91,6 +98,18 @@ class Engine:
             base = rev_parse(self.root, self.task.base_ref)
         except OPCError as exc:
             return {"ok": False, "problems": [str(exc)], "warnings": warnings}
+        if self.preparation:
+            events = self.ledger.events(self.preparation, "preparation")
+            receipt = events[-1]["body"] if events else {}
+            if self.ledger.events(self.preparation, "accounting_unknown"):
+                problems.append("preparation accounting incomplete; no new dispatch")
+            if receipt.get("state") != "ready":
+                problems.append("preparation not ready: " + receipt.get("reason", "unmetered draft"))
+            else:
+                for rel, digest in receipt.get("files", {}).items():
+                    data = git("show", base + ":" + rel, cwd=self.root, binary=True)
+                    if hashlib.sha256(data).hexdigest() != digest:
+                        problems.append("prepared acceptance changed since review: " + rel)
         dirty = dirty_paths(self.root)
         from .config import denied
         frozen_dirty = [p for p in dirty if denied(p, self.evaluator_patterns() + [".opc/**"])
@@ -114,6 +133,14 @@ class Engine:
             warnings.append("expert no longer reads source context_files; put task background, "
                             "criteria, constraints and capabilities in .opc/context/*.md: "
                             + ", ".join(source_context[:8]))
+        if (self.comp.adapter == "command" and acceptance.required_metrics(self.task.acceptance)
+                and not any(g.metrics for g in self.comp.gates)):
+            problems.append("required numeric metrics have no declared output")
+        gate_ids = {g.gate_id for g in self.comp.gates}
+        for req in self.task.requirements:
+            missing = set(req.get("gates") or []) - gate_ids
+            if missing:
+                problems.append("requirement %s names unknown gates: %s" % (req.get("id"), sorted(missing)))
         for p in self.comp.editable:
             if p in (".", "**", "*"):
                 problems.append("editable %r covers the whole project" % p)
@@ -210,11 +237,17 @@ class Engine:
         out = self.root / ".opc" / "local" / "preflight"
         try:
             ev, meas, tree = self.evaluate_commit(ws, rep["base_commit"], "", out, "baseline")
+            if self.preparation:
+                self.ledger.charge(self.preparation, None, "preflight", Cost(ev.seconds, 0, 0.0))
             rep["toolchain"] = self.domain(tree).toolchain()[1]
             self.workers(tree)
         finally:
             ws.drop_all()
         rep["gates"] = [g.as_dict() for g in ev.gates]
+        if ev.failure is Outcome.BROKEN and not self.task.acceptance.objective_metric:
+            rep["baseline_failure"] = ev.reason
+            rep["baseline_metrics"] = None
+            return rep
         if ev.failure is not None:
             rep["ok"] = False
             rep["problems"].append("baseline fails gate: %s (%s)" % (ev.reason, ev.failure.value))
@@ -326,6 +359,8 @@ class Engine:
                                        "controller stopped during '%s'; costs kept, no verdict"
                                        % a["state"], 0.0, Cost())
             self.log("attempt %d abandoned (was %s)" % (n, a["state"]))
+        if not self.task.acceptance.objective_metric:
+            return
         champ = self.ledger.champion(self.run_id)
         if champ is None:
             self.log("measuring baseline %s" % run["base_commit"][:12])
@@ -348,7 +383,7 @@ class Engine:
 
     # ----------------------------------------------------------------- budget
     def spent(self) -> dict[str, Any]:
-        t = self.ledger.totals(self.run_id)
+        t = self.ledger.task_totals(self.task.task_id) if self.preparation else self.ledger.totals(self.run_id)
         attempts = self.ledger.attempts(self.run_id)
         t["search_attempts"] = sum(1 for a in attempts if a["outcome"] and
                                    Outcome(a["outcome"]).counts_as_search)
@@ -368,6 +403,8 @@ class Engine:
     def admit(self) -> None:
         """Ask before spending. The estimate is the mean decided attempt so far."""
         b, s = self.task.budget, self.spent()
+        if self.preparation:
+            self.hard_check()
         if s["search_attempts"] >= b.max_attempts:
             raise BudgetExhausted("max_attempts", "%d search attempts used" % s["search_attempts"])
         done = [a for a in self.ledger.attempts(self.run_id) if a["cost"]]
@@ -388,9 +425,15 @@ class Engine:
     def hard_check(self) -> None:
         """Between steps of one attempt: stop as soon as a cap is crossed."""
         b, s = self.task.budget, self.spent()
-        if s["wall_seconds"] > b.max_wall_seconds:
+        if self.preparation:
+            receipts = self.ledger.events(self.preparation, "preparation")
+            if not receipts or receipts[-1]["body"].get("state") != "ready":
+                raise OPCError("preparation is not ready; no formal dispatch")
+        if self.preparation and self.ledger.events(self.preparation, "accounting_unknown"):
+            raise OPCError("usage accounting incomplete; no new dispatch")
+        if s["wall_seconds"] >= b.max_wall_seconds:
             raise BudgetExhausted("max_wall_seconds", "crossed mid-attempt")
-        if b.max_tokens is not None and s["tokens"] > b.max_tokens:
+        if b.max_tokens is not None and s["tokens"] >= b.max_tokens:
             raise BudgetExhausted("max_tokens", "crossed mid-attempt")
 
     def stop_condition(self) -> StopDecision | None:
@@ -488,9 +531,15 @@ class Engine:
         attempts = self.attempt_records()
         champions = self.ledger.champions(self.run_id)
         decided = [a for a in attempts if a["outcome"] and a["plan"]]
-        keep = {a["attempt_no"] for a in decided[-HISTORY_WINDOW:]} | {
-            a["attempt_no"] for a in decided if a["conclusion"] is None
-            or a["outcome"] == Outcome.IMPROVEMENT.value}
+        keep = {a["attempt_no"] for a in decided[-HISTORY_WINDOW:]}
+        metric_names = acceptance.required_metrics(self.task.acceptance)
+        def metric_view(values):
+            return {k: values[k] for k in metric_names if k in values}
+        def measurement_view(measurement):
+            if not measurement:
+                return None
+            return {**measurement, "values": metric_view(measurement.get("values") or {}),
+                    "spread": metric_view(measurement.get("spread") or {})}
         history = []
         for a in decided:
             if a["attempt_no"] not in keep:
@@ -499,23 +548,37 @@ class Engine:
             prior = [c for c in champions if c["commit_sha"] == a["champion_before"]
                      and c["at"] <= a["finished_at"]
                      and (c["attempt_no"] is None or c["attempt_no"] <= a["attempt_no"])]
-            metrics = a["metrics"]
+            metrics = measurement_view(a["metrics"])
+            experiment = a["experiment"]
+            if experiment:
+                experiment = dict(experiment)
+                experiment.pop("values", None)
+                data = []
+                for entry in experiment.get("data", []):
+                    entry = dict(entry)
+                    payload = dict(entry.get("data") or {})
+                    if "metrics" in payload:
+                        payload["metrics"] = metric_view(payload["metrics"])
+                    entry["data"] = payload
+                    data.append(entry)
+                experiment["data"] = bounded_data(data)
+                experiment["evidence"] = str(self.attempt_dir(a["attempt_no"]) / "eval/evaluation.json")
             # No gate verdict text, worker errors or raw logs in expert context.
             history.append({
                 "attempt": a["attempt_no"],
                 **{k: plan.get(k) for k in ("title", "hypothesis", "changes", "expected", "falsifier")},
                 "plan_params": plan.get("params"), "parent": a["parent"],
                 "candidate": a["candidate"], "outcome": a["outcome"],
-                "execution": a["execution"],
-                "experiment": a["experiment"] or {
+                "execution": bounded_data(a["execution"]),
+                "experiment": experiment or {
                     "status": "not_recorded" if a["gates"] else "not_executed", "data": []},
-                "champion_before": a["comparison"] or (
-                    {"values": prior[-1]["metrics"]["values"]} if prior else None),
+                "champion_before": measurement_view(a["comparison"]) or (
+                    {"values": metric_view(prior[-1]["metrics"]["values"])} if prior else None),
                 "metrics": {k: metrics.get(k) for k in ("values", "spread", "repeats", "degraded_by")}
                 if metrics else None, "conclusion": a["conclusion"]})
         run = self.ledger.run(self.run_id)
         directions = [e["body"]["text"] for e in self.ledger.events(self.run_id, "direction")]
-        base = champions[0]
+        base = champions[0] if champions else {"commit_sha": run["base_commit"], "metrics": {"values": {}}}
         acc = self.task.acceptance
         streak = 0
         for a in reversed(attempts):
@@ -531,10 +594,10 @@ class Engine:
         if not notes:
             notes = [".opc/context/" + p + ".md" for p in ("PROJECT", "REQUIREMENTS", "DECISIONS")]
         background = {}
-        for rel in notes:
+        for rel in notes[:2]:
             path = tree / rel
             if path.is_file() and not path.is_symlink():
-                background[rel] = path.read_text(encoding="utf-8")[:20000]
+                background[rel] = {"excerpt": path.read_text(encoding="utf-8")[:1500], "source": str(self.root / rel)}
         return {
             "attempt": n, "focus": focus,
             "task": {"goal": self.task.goal,
@@ -542,28 +605,32 @@ class Engine:
                      "requirements": self.task.requirements,
                      "acceptance": {"objective": {"metric": acc.objective_metric,
                                                   "direction": acc.direction,
-                                                  "min_rel_gain": acc.min_rel_gain},
+                                                  "min_rel_gain": acc.min_rel_gain} if acc.objective_metric else None,
                                     "constraints": [c.describe() for c in acc.constraints],
                                     "target": acc.target.describe() if acc.target else None}},
             "component": {"id": self.comp.component_id, "description": self.comp.description,
                           "editable": self.comp.editable, "scratch": self.comp.scratch},
-            "champion": {"commit": champ[0], "values": champ[1].values},
-            "baseline": {"commit": base["commit_sha"], "values": base["metrics"]["values"]},
+            "working_version": {"commit": champ[0]},
+            "champion": {"commit": champ[0], "values": metric_view(champ[1].values),
+                         "params": next((a["plan"].get("params") for a in reversed(attempts)
+                             if a["candidate"] == champ[0] and a["plan"] and a["plan"].get("params")), None)
+                         if self.task.expert.kind == "scripted" else None} if acc.objective_metric else None,
+            "baseline": {"commit": base["commit_sha"], "values": metric_view(base["metrics"]["values"])},
             "history": history, "background": background, "budget_left": self.budget_left(),
             "progress": {"target_met": acceptance.target_met(acc, champ[1].values),
                          "no_gain_streak": streak, "stagnation_hint": self.task.budget.max_stagnation},
             "candidates": [{"attempt": a["attempt_no"], "commit": a["candidate"],
                             "parent": a["parent"], "title": (a["plan"] or {}).get("title"),
-                            "summary": a["execution"], "conclusion": a["conclusion"],
-                            "values": (a["metrics"] or {}).get("values")}
-                           for a in attempts if a["candidate"] or a["recoverable_patch"]],
+                            "evidence": str(self.attempt_dir(a["attempt_no"]))}
+                           for a in attempts[-HISTORY_WINDOW:] if a["candidate"] or a["recoverable_patch"]],
             "tried_params": [a["plan"]["params"] for a in decided
                              if a["plan"].get("params") is not None
                              and a["outcome"] != Outcome.INFRA.value],
         }
 
     def save_conclusions(self, output: dict[str, Any], ctx: dict[str, Any], n: int) -> str | None:
-        pending = {a["attempt"] for a in ctx["history"] if a["conclusion"] is None}
+        pending = {a["attempt_no"] for a in self.attempt_records()
+                   if a["plan"] and a["outcome"] and a["conclusion"] is None}
         conclusions = output.get("conclusions", [])
         if not isinstance(conclusions, list):
             return "conclusions must be a list"
@@ -574,10 +641,6 @@ class Engine:
                     or not isinstance(row.get("conclusion"), str) or not row["conclusion"].strip()):
                 return "conclusions must identify pending attempts with nonempty text"
             seen.add(row["attempt"])
-        # Model calls review and decide together. Legacy deterministic strategies
-        # may omit conclusions; these remain visibly pending, never synthesized.
-        if self.task.expert.kind != "scripted" and seen != pending:
-            return "review all pending experiments before deciding"
         for row in conclusions:
             self.ledger.event(self.run_id, "conclusion", row["attempt"],
                               text=row["conclusion"], reviewed_by_attempt=n)
@@ -615,12 +678,25 @@ class Engine:
                                        (prior["plan"] or {}).get("title", "restored candidate"))
         raise OPCError("base_attempt %s has no saved candidate in this run" % selected)
 
+    def working_commit(self) -> str:
+        events = self.ledger.events(self.run_id, "working_version")
+        return events[-1]["body"]["commit"] if events else self.ledger.run(self.run_id)["base_commit"]
+
+    def selected_commit(self) -> str:
+        events = self.ledger.events(self.run_id, "selected_version")
+        if events:
+            return events[-1]["body"]["commit"]
+        champ = self.ledger.champion(self.run_id)
+        return champ[0] if champ else self.working_commit()
+
     # ---------------------------------------------------------------- attempt
     def _worker_outcome(self, call: WorkerCall) -> Outcome:
         return Outcome.INFRA if call.extra.get("infra") else Outcome.WORKER_FAILED
 
     def attempt(self, ws: Workspaces) -> tuple[Outcome, StopDecision | None]:
         champ = self.ledger.champion(self.run_id)
+        if champ is None:
+            champ = (self.working_commit(), Measurements())
         focus = None
         if self.comp.focus_areas:
             focus = self.comp.focus_areas[(self.ledger.next_attempt_no(self.run_id) - 1)
@@ -632,6 +708,13 @@ class Engine:
 
         def charge(role: str, cost: Cost, call: WorkerCall | None = None) -> None:
             nonlocal total
+            if call is not None and self.preparation:
+                kind = self.task.expert.kind if role == "expert" else (self.task.designer or self.task.expert).kind
+                if kind in ("codex", "dsh") and not call.extra.get("usage_complete", False):
+                    call.ok = False
+                    call.error = "usage unavailable; stop dispatch until actual accounting is reconciled"
+                    call.extra["infra"] = True
+                    self.ledger.event(self.preparation, "accounting_unknown", None, reason=call.error)
             total = total.add(cost)
             self.ledger.charge(self.run_id, n, role, cost)
             if call is not None:
@@ -677,6 +760,11 @@ class Engine:
                 reason = plan.get("stop_reason") or "expert has no further worthwhile work"
                 if not isinstance(reason, str):
                     return finish(Outcome.WORKER_FAILED, "stop_reason must be text")
+                try:
+                    selected = self.development_parent(plan, champ[0], ws)
+                except OPCError as exc:
+                    return finish(Outcome.WORKER_FAILED, str(exc))
+                self.ledger.event(self.run_id, "selected_version", n, commit=selected)
                 self.ledger.event(self.run_id, "expert_stop", n, reason=reason)
                 finish(Outcome.NO_CHANGE, reason)
                 return Outcome.NO_CHANGE, StopDecision("closed", "expert_exhausted: " + reason)
@@ -685,21 +773,6 @@ class Engine:
                 outside = [f for f in plan.get("files") or [] if not self.comp.is_editable(f)]
                 if outside:
                     why = "plan names non-editable paths: %s" % ", ".join(outside)
-            if why is None:
-                key = (plan.get("title"), tuple(sorted(plan.get("files") or [])), plan.get("changes"),
-                       plan.get("base_attempt"),
-                       json.dumps(plan.get("params"), sort_keys=True))
-                retryable = (Outcome.INFRA.value, Outcome.ABANDONED.value)
-                for a in self.ledger.attempts(self.run_id):
-                    p = a["plan"] or {}
-                    if a["outcome"] in retryable:
-                        continue
-                    if a["attempt_no"] != n and (p.get("title"), tuple(sorted(p.get("files") or [])),
-                                                 p.get("changes"),
-                                                 p.get("base_attempt"),
-                                                 json.dumps(p.get("params"), sort_keys=True)) == key:
-                        why = "repeats attempt %d" % a["attempt_no"]
-                        break
             write_json(adir / "plan.json", plan)
             self.ledger.update_attempt(self.run_id, n, "planned", plan=plan)
             if why:
@@ -738,8 +811,13 @@ class Engine:
             # Snapshot only authorized edits, before gates can create outputs.
             # Keep a ref even for NO_GAIN/BROKEN; selecting it never moves champion.
             candidate = self.save_candidate(ws, n, parent, patch, plan["title"])
+            if not self.task.acceptance.objective_metric:
+                self.ledger.event(self.run_id, "working_version", n, commit=candidate)
             self.hard_check()
 
+            if not (plan.get("evaluate") if plan.get("evaluate") is not None else
+                    bool(self.task.acceptance.objective_metric)):
+                return finish(Outcome.WORK, "saved work; formal evaluation not requested")
             self.ledger.event(self.run_id, "experiment", n, status="started", data=[], cached=False)
             ev, meas, eval_tree = self.evaluate_commit(ws, candidate, "", adir / "eval",
                                                        "a%06d/eval" % n, fresh=not patch.strip())
@@ -751,6 +829,9 @@ class Engine:
             gates = [g.as_dict() for g in ev.gates]
             if ev.failure is not None:
                 return finish(ev.failure, ev.reason, gates=gates)
+            if not self.task.acceptance.objective_metric:
+                return finish(Outcome.WORK, "saved work; not numerically ranked", gates=gates,
+                              metrics=meas.as_dict())
             if meas.toolchain_digest != champ[1].toolchain_digest:
                 # tools changed under a live run: re-measure the champion now, or every
                 # later candidate is incomparable with it
@@ -869,7 +950,9 @@ class Engine:
         return {"run_id": self.run_id, "task": self.task.task_id, "revision": self.task.revision,
                 "state": run["state"], "stop_reason": run["stop_reason"], "result": business,
                 "champion_ref": self.ref, "champion": best["commit_sha"] if best else None,
-                "baseline": base["commit_sha"] if base else None,
+                "selected_version": self.selected_commit(),
+                "working_version": self.working_commit() if not m else None,
+                "baseline": run["base_commit"],
                 "baseline_metrics": base["metrics"]["values"] if base else None,
                 "champion_metrics": best["metrics"]["values"] if best else None,
                 "target_met": bool(best and acceptance.target_met(

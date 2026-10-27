@@ -4,7 +4,7 @@
 
 “做什么”要明确，“怎么做”留白：目标、完成状态、交付物和验收条件必须写出来，可以是当前证据下的暂定版本，随后续证据调整；基线 ref、可改/冻结路径、预算、worker、自主权边界和引擎适配属于 onboard 起草合同的工作，已知的约束写进 Open decisions 供起草参考。
 
-字段与合同的对应：`Goal` → `task.goal`，`Direction` → `task.direction`，`R*` → `task.requirements[]`，`Objective` → `acceptance.objective`。引擎要求数值指标；任务没有自然的数值指标时写 `Objective: none: <原因>`，onboard 会把它记为需要适配的阻塞项，而不是编造分数。
+字段与合同的对应：`Goal` → `task.goal`，`Direction` → `task.direction`，`R*` → `task.requirements[]`，`Objective` → `acceptance.objective`。任务没有自然数值目标时写 `Objective: none: <原因>`，映射为 acceptance.objective=null，使用 requirements 与 gates 验收，不编造分数。无地图时将 Map 行替换为 Task: <真实任务文件的项目相对路径>。
 
 新简报在大纲确认后以 `ready-for-onboard` 生成，仅表示可以据此起草合同；`draft` 保留给已有简报重新讨论的状态，不用于提前创建未确认的简报。把 TODO 替换为实际内容或“未知 + 原因”。`brief-check` 只看结构和字段是否存在，不判断内容是否合理。
 

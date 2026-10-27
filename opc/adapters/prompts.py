@@ -21,64 +21,31 @@ but use the JSON stop object to preserve conclusions and stop_reason."""
 EXHAUSTION_RULE = """Decide whether any worthwhile work remains toward the task, including
 capability development and diagnosis, within the budget. Reaching a target or a
 streak without gain is information for your decision. If finished, set "exhausted":
-true and give stop_reason after reviewing pending results; otherwise set it false."""
+true and give stop_reason after interpreting relevant results; otherwise set it false."""
 
 
 def expert_prompt(ctx: dict[str, Any], plain_text_reply: bool = False) -> str:
-    task, comp = ctx["task"], ctx["component"]
-    format_rules = (TEXT_REPLY_RULES if plain_text_reply else "") + "\n" + EXHAUSTION_RULE
-    return f"""You are the EXPERT role in an automatic research loop. You design ONE
-experiment or stop exploration. The designer reads and implements code; a frozen
-evaluator measures results. You do not edit files or inspect source code.
-
-## Task
-Goal: {task['goal']}
-User direction: {task.get('direction') or '(none)'}
-Requirements: {json.dumps(task.get('requirements') or [], ensure_ascii=False)}
-Acceptance: {task['acceptance']}
-Component: {comp['id']}; {comp.get('description') or ''}
-Focus: {ctx.get('focus') or '(free choice)'}
-
-## Current champion
-commit {ctx['champion']['commit'][:12]}; metrics: {json.dumps(ctx['champion']['values'])}
-Baseline metrics: {json.dumps(ctx['baseline']['values'])}
-
-## Previous experiments
-{_history(ctx)}
-
-Use the original hypothesis, changes, expected effect and falsifier alongside actual
-execution and experimental data. champion_before is the comparison baseline; parent
-is the actual development starting point. Missing measurements mean unmeasured, not
-zero or a refuted hypothesis. Failed implementation or execution alone does not refute
-a hypothesis; an accepted improvement does not by itself establish its proposed mechanism.
-cached=true means reused historical data, not a new measurement. started without a
-completed result means incomplete execution, not evidence that the hypothesis failed.
-First review each history row with conclusion=null. Return conclusions as
-[{{"attempt": 1, "conclusion": "short interpretation of that original design and result"}}].
-Mention support, uncertainty, deviations and capability changes where relevant.
-These are your interpretations, not independent reviews. Do not invent measurements.
-Then choose the next experiment or stop in this SAME reply. First round: conclusions=[].
-
-## Progress signals
-{json.dumps(ctx.get('progress') or {})}
-
-## Budget left
-{json.dumps(ctx.get('budget_left') or {})}
-
-## Research background
-{json.dumps(ctx.get('background') or {}, ensure_ascii=False, indent=2)}
-The working directory contains only research materials. Work from background,
-decisions, experimental data and conclusions. Do not seek code, raw logs or evaluator
-verdicts. The designer locates files and implementation details.
-
-Return a JSON object with title, hypothesis, changes (method, conditions, controls
-and observations for the designer to implement), expected, falsifier, base_attempt
-(null for champion, 0 for initial baseline, or an available candidate attempt number),
-conclusions, exhausted, stop_reason. Code file paths are not required. When stopping,
-experiment text may be empty; retain conclusions and stop_reason.
-Available candidates: {json.dumps(ctx.get('candidates') or [])}
-{format_rules}
-"""
+    rules = (TEXT_REPLY_RULES if plain_text_reply else "") + "\n" + EXHAUSTION_RULE
+    return """You are the EXPERT. Read research.json for the current task, budget,
+working version, relevant history and evidence references. That file is the single
+presentation of the context. Choose one worthwhile step or stop. The designer
+locates code and implements your plan; do not investigate source code or raw logs.
+You may read relevant research notes and structured evidence at the supplied paths.
+An accepted improvement does not by itself establish its proposed mechanism.
+Missing measurements are unmeasured, never zero. Cached results are historical,
+not new measurements. Execution failure alone does not refute a hypothesis.
+Interpret relevant results in conclusions [{"attempt": 1, "conclusion": "interpretation"}];
+you need not clear every pending conclusion. Decide next work in the same reply.
+base_attempt: null uses the default working version (champion for numeric tasks),
+0 uses the initial baseline, positive numbers select any saved candidate, including
+ones outside the recent view. Selection also applies when stopping.
+Return title and changes describing one executable step, or exhausted=true with stop_reason.
+Research fields may be empty. evaluate=null defaults to formal evaluation for numeric
+tasks and local designer validation otherwise; true requests formal evaluation, false
+skips it. A step may include continuous implementation, local testing and fixes.
+Research fields may describe
+conditions, controls, expected observations and uncertainty. Do not invent evidence.
+""" + rules
 
 
 def designer_prompt(plan: dict[str, Any], ctx: dict[str, Any]) -> str:
@@ -92,10 +59,11 @@ Rules:
 - Generated scratch paths: {json.dumps(comp.get('scratch') or [])}. Local checks may write
   these outputs; they are discarded and never included in the candidate patch. Frozen
   tests/evaluators and .opc/ remain protected even if a scratch pattern matches them.
-- Do not touch tests, evaluators, golden data or anything under .opc/.
+- Development tests within editable paths may be changed. Do not touch frozen
+  tests, evaluators, golden data or anything under .opc/.
 - Do not run `git commit`; leave changes in the working tree.
-- Keep the change minimal and self-consistent. If a quick local check exists you may run it,
-  but the official evaluation happens elsewhere.
+- Complete the step with continuous implementation, local checks and fixes.
+  Formal frozen evaluation, when requested, happens elsewhere.
 - Run checks unchanged; do not monkeypatch evaluators or suppress their report writes.
   If a check requires undeclared outputs, report that limitation instead of altering it.
 
@@ -104,7 +72,7 @@ Rules:
 
 ## Objective context
 Goal: {ctx['task']['goal']}
-Champion metrics: {json.dumps(ctx['champion']['values'])}
+Numeric champion (when applicable): {json.dumps(ctx.get('champion'))}
 
 Actual development parent: {json.dumps(ctx.get('parent') or {})}
 

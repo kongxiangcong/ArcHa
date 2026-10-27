@@ -8,6 +8,8 @@ produces a report and, only with an explicit flag, moves a branch the user named
 from __future__ import annotations
 
 import json
+import os
+import hashlib
 import subprocess
 import time
 from pathlib import Path
@@ -15,7 +17,7 @@ from typing import Any
 
 from . import accept as acceptance
 from .engine import Engine
-from .model import Measurements, OPCError, write_json, write_text
+from .model import Cost, Measurements, OPCError, write_json, write_text
 from .workspace import cas_update_ref, git, read_ref
 
 
@@ -29,13 +31,15 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
     run = engine.ledger.latest_run(engine.task.task_id)
     if run is None:
         raise OPCError("task %s has no run" % engine.task.task_id)
+    if run["task_digest"] != engine.task.digest:
+        raise OPCError("delivery contract differs from frozen run; use its revision")
     engine.run_id = run["run_id"]
     champs = engine.ledger.champions(engine.run_id)
-    if len(champs) < 2:
-        raise OPCError("run %s has no accepted candidate to promote" % engine.run_id)
-    base, best = champs[0], champs[-1]
+    selected = engine.selected_commit()
+    base = {"commit_sha": run["base_commit"], "metrics": champs[0]["metrics"] if champs else {"values": {}}}
+    best = {"commit_sha": selected, "metrics": {"values": {}}}
     root, task = engine.root, engine.task
-    pid = "promotion-%d" % int(time.time())
+    pid = "promotion-%d" % time.time_ns()
     out = engine.artifact_dir() / "promotion" / pid
     findings: list[dict[str, str]] = []
 
@@ -69,12 +73,45 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
             finding("evidence", "warn", "champion seq %d was judged without gates %s"
                     % (cur["seq"], cur["metrics"]["degraded_by"]))
 
-    # 4. single-measurement wins: repeat baseline and champion to see the gain survive noise
+    # Full delivery evidence belongs to the selected commit, never another champion.
+    key = {"commit": selected, "evaluator": now, "toolchain": engine.toolchain_digest(selected),
+           "task": task.digest, "environment": hashlib.sha256(json.dumps({
+               "process": dict(os.environ), "component": engine.comp.env, "gates": [g.env for g in engine.comp.gates]},
+               sort_keys=True).encode()).hexdigest()}
+    evidence = None
+    evidence_source = None
+    if confirm_repeats == 0:
+        for path in sorted((engine.artifact_dir() / "promotion").glob("*/report.json"), reverse=True):
+            previous = json.loads(path.read_text(encoding="utf-8"))
+            if previous.get("evidence_key") == key and previous.get("evaluation"):
+                evidence = previous["evaluation"]
+                evidence_source = str(path)
+                break
+    if evidence is None:
+        ws = engine.workspaces("delivery")
+        try:
+            ev, meas, tree = engine.evaluate_commit(ws, selected, "", out / "eval", "selected", fresh=True)
+            engine.ledger.charge(engine.run_id, None, "evaluator", Cost(ev.seconds, 0, 0.0))
+            evidence = {"failure": ev.failure.value if ev.failure else None, "reason": ev.reason,
+                        "gates": [g.as_dict() for g in ev.gates], "metrics": meas.as_dict() if meas else None}
+        finally:
+            ws.drop_all()
+    if evidence["failure"] or any(g["status"] != "passed" for g in evidence["gates"]):
+        finding("gates", "block", evidence["reason"] or "not all required gates passed")
+    best["metrics"] = evidence["metrics"] or {"values": {}}
+    values = best["metrics"]["values"]
+    for metric in acceptance.required_metrics(task.acceptance):
+        if metric not in values:
+            finding("metrics", "block", "required metric missing: " + metric)
+    for constraint in task.acceptance.constraints:
+        why = acceptance.check(constraint, values, base["metrics"]["values"])
+        if why:
+            finding("constraints", "block", why)
     m = task.acceptance.objective_metric
-    claimed = acceptance.relative_gain(task.acceptance, base["metrics"]["values"][m],
-                                       best["metrics"]["values"][m])
+    claimed = (acceptance.relative_gain(task.acceptance, base["metrics"]["values"][m], values[m])
+               if m and m in values and m in base["metrics"]["values"] else None)
     confirm = None
-    if confirm_repeats > 1:
+    if m and claimed is not None and confirm_repeats > 1:
         ws = engine.workspaces("promotion")
         samples: dict[str, list[float]] = {"baseline": [], "champion": []}
         try:
@@ -82,7 +119,7 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
                                                                      best["commit_sha"])):
                 for i in range(confirm_repeats):
                     ev, meas, tree = engine.evaluate_commit(ws, commit, "", out / "confirm" /
-                                                            ("%s-%d" % (label, i)), label)
+                                                            ("%s-%d" % (label, i)), label, fresh=True)
                     ws.drop(tree)
                     if ev.failure is not None:
                         finding("reproduce", "block", "%s failed on repeat %d: %s"
@@ -102,7 +139,7 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
                 finding("reproduce", "block", "worst-case gain %.2f%% over %d repeats does not "
                         "clear %.2f%%" % (100 * worst, confirm_repeats,
                                           100 * task.acceptance.min_rel_gain))
-    else:
+    elif claimed is not None:
         finding("reproduce", "warn", "gain %.2f%% rests on single measurements; pass "
                 "--confirm N to repeat" % (100 * claimed))
 
@@ -123,13 +160,19 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
             why = acceptance.check(c, champ_values, None)
             status = "met" if why is None else "not_met: " + why
             if why is not None:
-                finding("requirements", "warn", "%s not met: %s" % (req.get("id"), why))
+                finding("requirements", "block", "%s not met: %s" % (req.get("id"), why))
+        elif how == "automated" and req.get("gates"):
+            passed = {g["gate_id"].split("#")[0] for g in evidence["gates"] if g["status"] == "passed"}
+            missing = set(req["gates"]) - passed
+            status = "met_by_gates" if not missing else "unverified gates: " + ", ".join(sorted(missing))
+            if missing:
+                finding("requirements", "block", "%s: %s" % (req["id"], status))
         elif how == "automated":
-            status = "enforced_per_attempt (no separate check declared)"
+            status = "unverified: no metric check or review evidence declared"
+            finding("requirements", "block", "%s has no declared verification coverage" % req.get("id"))
         else:
             status = "needs_review"
-            if not review:
-                finding("requirements", "warn", "%s needs independent review" % req.get("id"))
+
         coverage.append({"id": req.get("id"), "text": req.get("text"), "verification": how,
                          "status": status})
 
@@ -149,18 +192,29 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
             finding("review", "block", "reviewer returned no usable verdict (%r); a reply that "
                     "does not judge the change cannot pass it" % verdict)
         elif verdict == "accept_with_conditions":
-            finding("review", "warn", "reviewer accepted with conditions: %s"
+            finding("review", "block", "reviewer accepted with conditions: %s"
                     % reviewer.get("summary", ""))
 
+    for row in coverage:
+        if row["status"] == "needs_review":
+            if reviewer and reviewer.get("ok") and reviewer.get("verdict") == "accept":
+                row["status"] = "met_by_review"
+            else:
+                finding("requirements", "block", "%s needs independent review" % row["id"])
     blocked = any(f["severity"] == "block" for f in findings)
     report = {"promotion_id": pid, "run_id": engine.run_id, "task": task.task_id,
-              "baseline": base["commit_sha"], "champion": best["commit_sha"], "files": files,
+              "baseline": base["commit_sha"], "selected_version": selected,
+              "champion": champs[-1]["commit_sha"] if champs else None, "files": files,
+              "evidence_key": key, "evaluation": evidence, "evidence_source": evidence_source,
+              "stop_reason": run["stop_reason"], "complete": not blocked,
               "objective": m, "claimed_gain": claimed, "confirm": confirm,
               "baseline_metrics": base["metrics"]["values"],
-              "champion_metrics": best["metrics"]["values"], "requirements": coverage,
+              "selected_metrics": best["metrics"]["values"],
+              "champion_metrics": champs[-1]["metrics"]["values"] if champs else None, "requirements": coverage,
               "findings": findings, "reviewer": reviewer, "promotable": not blocked,
               "applied": False}
 
+    write_json(out / "report.json", report)
     if apply_to:
         if blocked:
             raise OPCError("promotion blocked: %s" % "; ".join(f["text"] for f in findings
@@ -194,6 +248,8 @@ def _is_ancestor(repo: Path, a: str, b: str) -> bool:
 
 def run_reviewer(engine: Engine, kind: str, out: Path, patch: str, base: dict, best: dict,
                  coverage: list[dict]) -> dict[str, Any]:
+    if engine.preparation:
+        engine.hard_check()
     if kind not in ("codex", "dsh"):
         raise OPCError("the reviewer must be codex or dsh")
     # Both workers expose the same private _run(role, prompt, tree, log_dir,
@@ -232,7 +288,8 @@ The working directory is a read-only checkout of the champion."""
     try:
         tree = ws.checkout("reviewer", best["commit_sha"])
         from .worker_config import worker_options
-        worker = worker_cls(worker_options(engine.worker_config, "reviewer"))
+        worker = worker_cls(worker_options(engine.worker_config, "reviewer",
+            {"timeout_s": engine.budget_left()["wall_seconds"]} if engine.preparation else {}))
         call, text = worker._run("reviewer", prompt, tree, out / "reviewer", "read-only", schema)
     finally:
         ws.drop_all()
@@ -240,6 +297,9 @@ The working directory is a read-only checkout of the champion."""
     engine.ledger.event(engine.run_id, "worker_call", None, role="reviewer",
                         call_id=call.call_id, ok=call.ok, tokens=call.cost.tokens,
                         error=call.error[:300])
+    if engine.preparation and not call.extra.get("usage_complete", False):
+        engine.ledger.event(engine.preparation, "accounting_unknown", None, reason="reviewer usage missing")
+        call.ok, call.error = False, "reviewer usage missing; no further dispatch"
     if not call.ok:
         return {"ok": False, "error": call.error, "call_id": call.call_id}
     try:
@@ -259,8 +319,8 @@ The working directory is a read-only checkout of the champion."""
 def render(r: dict[str, Any]) -> str:
     lines = ["# Promotion report %s" % r["promotion_id"], "",
              "- run: `%s`, task `%s`" % (r["run_id"], r["task"]),
-             "- baseline `%s` -> champion `%s`" % (r["baseline"][:12], r["champion"][:12]),
-             "- objective `%s`: claimed gain %+.2f%%" % (r["objective"], 100 * r["claimed_gain"]),
+             "- baseline `%s` -> champion `%s`" % (r["baseline"][:12], r["selected_version"][:12]),
+             "- objective `%s`: claimed gain %+.2f%%" % (r["objective"], 100 * (r["claimed_gain"] or 0)),
              "- files: %s" % ", ".join(r["files"]),
              "- **promotable: %s**" % r["promotable"], "", "## Findings", ""]
     for f in r["findings"] or [{"severity": "-", "check": "-", "text": "none"}]:

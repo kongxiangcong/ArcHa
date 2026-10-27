@@ -10,7 +10,7 @@ task-brief 技能在用户确认简报后自动调用上述流程并核对产出
 
 - `Goal:` → `task.goal`；`Direction:` → `task.direction`；Question and use、Done when 和交付物 `D*` → `.opc/context/REQUIREMENTS.md`。
 - `- R*:` → `task.requirements[]`（`verification` 原样对应；`evaluator=待建/未知` 成为 Open item）。
-- `Objective:` → `acceptance.objective`；数值必须由真实评价器产生，`none` 表示当前引擎无法原生表达，起草时记为阻塞项。
+- `Objective:` → `acceptance.objective`；数值必须由真实评价器产生，`none` 映射 objective=null，完成条件使用 requirements、冻结 gates 和必要 review；不构造伪分数。
 - In/Out → 起草时细化成可改/冻结路径和基线 ref。
 - Open decisions → `.opc/README.md` Open items，未定预算不能用模板默认值冒充授权。
 

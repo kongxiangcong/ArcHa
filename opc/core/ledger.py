@@ -125,7 +125,7 @@ class Ledger:
         return row
 
     def latest_run(self, task_id: str) -> sqlite3.Row | None:
-        return self.db.execute("SELECT * FROM runs WHERE task_id=? ORDER BY created_at DESC, "
+        return self.db.execute("SELECT * FROM runs WHERE task_id=? AND revision != 'preparation' ORDER BY created_at DESC, "
                                "rowid DESC LIMIT 1", (task_id,)).fetchone()
 
     def runs(self) -> list[sqlite3.Row]:
@@ -250,6 +250,13 @@ class Ledger:
                             "COALESCE(SUM(usd),0), COALESCE(MIN(usd_known),1) FROM charges "
                             "WHERE run_id=?", (run_id,)).fetchone()
         return {"wall_seconds": r[0], "tokens": r[1], "usd": r[2], "usd_known": bool(r[3])}
+
+    def task_totals(self, task_id: str) -> dict[str, Any]:
+        records = [self.totals(r["run_id"]) for r in self.runs() if r["task_id"] == task_id]
+        return {"wall_seconds": sum(r["wall_seconds"] for r in records),
+                "tokens": sum(r["tokens"] for r in records),
+                "usd": sum(r["usd"] for r in records),
+                "usd_known": all(r["usd_known"] for r in records)}
 
     # ----------------------------------------------------------------- control
     def set_control(self, run_id: str, command: str) -> None:

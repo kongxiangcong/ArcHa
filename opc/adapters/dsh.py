@@ -39,7 +39,7 @@ from typing import Any
 
 from ..core.model import Cost, OPCError, write_json, write_text
 from .prompts import designer_prompt, expert_prompt
-from .worker import EXHAUSTED_SENTINEL, WorkerCall
+from .worker import request_rejected, EXHAUSTED_SENTINEL, WorkerCall
 
 #: Wording that names an account or host condition. The structured code covers
 #: most cases; this is the fallback for a reply whose code is absent or unknown.
@@ -74,7 +74,9 @@ def parse_events(text: str) -> dict[str, Any]:
     event as a success.
     """
     session_id, tokens, complete = "", 0, True
+    usage_seen = False
     tool_calls = 0
+    output_tokens = 0
     last_text = ""
     runner_error = ""
     end_kind: str | None = None
@@ -100,7 +102,9 @@ def parse_events(text: str) -> dict[str, Any]:
         elif kind == "status" and ev.get("phase") == "step_end":
             usage = ev.get("usage")
             if isinstance(usage, dict):
+                usage_seen = True
                 tokens += _sum_usage(usage)
+                output_tokens += int(usage.get("outputTokens") or 0)
             else:
                 complete = False
         elif kind == "status" and ev.get("phase") == "turn_end":
@@ -113,8 +117,8 @@ def parse_events(text: str) -> dict[str, Any]:
         # An aborted turn can still end with an empty final event; the runner
         # error is the better explanation when it exists.
         last_text = ""
-    return {"session_id": session_id, "tokens": tokens, "usage_complete": complete,
-            "tool_calls": tool_calls, "text": last_text, "runner_error": runner_error,
+    return {"session_id": session_id, "tokens": tokens, "usage_complete": complete and usage_seen,
+            "tool_calls": tool_calls, "output_tokens": output_tokens, "text": last_text, "runner_error": runner_error,
             "end_kind": end_kind, "end_code": end_code, "end_message": end_message}
 
 
@@ -262,6 +266,8 @@ class DshWorker:
             call.extra["infra"] = any(m.lower() in message.lower() for m in INFRA_MARKERS)
         else:
             call.extra["infra"] = any(m.lower() in message.lower() for m in INFRA_MARKERS)
+        call.extra["infra"] = call.extra.get("infra", False) or request_rejected(
+            info["end_code"] + " " + message, bool(info["tool_calls"] or info["output_tokens"]))
         return call, info["text"]
 
     def propose(self, ctx: dict[str, Any], tree: Path, log_dir: Path) -> WorkerCall:
@@ -274,7 +280,7 @@ class DshWorker:
         if text.strip() == EXHAUSTED_SENTINEL:
             call.exhausted = True
             return call
-        plan = extract_json(text, require=("title",))
+        plan = extract_json(text)
         if plan is None:
             call.ok, call.error = False, "expert reply holds no JSON object: %s" % text[:200]
             return call

@@ -20,18 +20,20 @@ from typing import Any
 
 from ..core.model import Cost, OPCError, write_json, write_text
 from .prompts import designer_prompt, expert_prompt
-from .worker import EXHAUSTED_SENTINEL, PLAN_SCHEMA, WorkerCall
+from .worker import EXHAUSTED_SENTINEL, PLAN_SCHEMA, WorkerCall, request_rejected
 
 #: account/host conditions: retrying the attempt cannot help, the run must block
 INFRA_MARKERS = ("usage limit", "rate limit", "429", "unauthorized", "401", "not logged in",
                  "Connection", "timed out", "network", "stream disconnected", "quota",
                  "error loading config", "requires a newer version of codex",
-                 "failed to initialize in-process app-server", "invalid_json_schema",
-                 "invalid schema for response_format")
+                 "failed to initialize in-process app-server")
 
 
 def parse_events(text: str) -> dict[str, Any]:
     thread, tokens, errors, failed, last_agent = "", 0, [], False, ""
+    unmetered_nested = False
+    usage_complete = False
+    executed = False
     for line in text.splitlines():
         try:
             ev = json.loads(line)
@@ -42,16 +44,26 @@ def parse_events(text: str) -> dict[str, Any]:
             thread = ev.get("thread_id", "")
         usage = ev.get("usage")
         if isinstance(usage, dict):
+            usage_complete = "input_tokens" in usage and "output_tokens" in usage
             tokens += int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
         if t in ("turn.failed", "error"):
             failed = failed or t == "turn.failed"
             msg = ev.get("message") or (ev.get("error") or {}).get("message") or ""
             errors.append(msg)
         item = ev.get("item") or {}
+        if "collab" in item.get("type", ""):
+            unmetered_nested = True
+        if item.get("type") == "command_execution":
+            import re
+            if re.search(r"\b(codex|dsh)(?:\.exe)?\s", item.get("command", "")):
+                unmetered_nested = True
+        if t in ("item.started", "item.completed") and item.get("type") in (
+                "command_execution", "mcp_tool_call", "file_change", "agent_message"):
+            executed = True
         if t == "item.completed" and item.get("type") == "agent_message":
             last_agent = item.get("text", "")
     return {"thread_id": thread, "tokens": tokens, "errors": errors, "failed": failed,
-            "last_agent": last_agent}
+            "last_agent": last_agent, "executed": executed, "usage_complete": usage_complete and not unmetered_nested}
 
 
 class CodexWorker:
@@ -121,7 +133,7 @@ class CodexWorker:
         cost = Cost(time.time() - t0, info["tokens"], None)
         text = last.read_text(errors="replace", encoding="utf-8") if last.exists() else info["last_agent"]
         call = WorkerCall(role, ok=False, cost=cost, call_id=info["thread_id"],
-                          log_dir=str(log_dir))
+                          log_dir=str(log_dir), extra={"usage_complete": info["usage_complete"]})
         if timed_out:
             call.error, call.extra["infra"] = "codex timed out after %ss" % self.timeout, True
         elif info["failed"] or p.returncode != 0:
@@ -132,7 +144,7 @@ class CodexWorker:
             infra = not info["thread_id"] or any(m.lower() in msg.lower() for m in INFRA_MARKERS)
             msg = msg[-2000:]
             call.error = msg
-            call.extra["infra"] = infra
+            call.extra["infra"] = infra or request_rejected(msg, info["executed"])
         else:
             call.ok = True
         return call, text

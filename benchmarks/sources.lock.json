@@ -1,5 +1,0 @@
-{
-  "performance": {"url": "https://github.com/anthropics/original_performance_takehome.git", "commit": "5452f74bd977807ac2e74f3d29432b9df6f25197"},
-  "jobshop": {"url": "https://github.com/Pabloo22/job_shop_lib.git", "commit": "1216c9a0e18ddd19eee22dace6c697b28a163714"},
-  "xdsl": {"url": "https://github.com/xdslproject/xdsl.git", "commit": "f76e4d9abf820700172a8b2c7fd42fca6579e9f5"}
-}
