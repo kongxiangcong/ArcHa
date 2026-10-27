@@ -17,7 +17,7 @@
 | O3 | 原型白板、地图、任务/run/revision 导航 | O2 | D2、D4、R1–R3、R7 | A01、A04–A05、A15 | resolved |
 | O4 | 产物、Markdown、表格、只读调用 | O3 | D1、R3–R6、R10 | A04–A09、A14–A15 | resolved |
 | O5 | 刷新、分页、错误滞后与选择保持 | O2–O4 | D3、R3、R9、R11–R12 | A05、A08、A10–A11、A13 | resolved |
-| O6 | 包装安装、浏览器验收、回归与使用说明 | O1–O5 | D7–D8、R7、§9–10 | A12、A15–A16，全矩阵收口 | in_progress |
+| O6 | 包装安装、浏览器验收、回归与使用说明 | O1–O5 | D7–D8、R7、§9–10 | A12、A15–A16，全矩阵收口 | resolved |
 
 每票只有通过相应验证后才改 resolved；限制和未跑项在下方保留。全部 D1–D8 和 A01–A16 均由上表覆盖。无需新增业务文件、控制路由、模型密钥、外部平台或新的执行语义。
 
@@ -55,7 +55,7 @@
 
 范围：Python observer extra、静态打包、demo/project 独立入口、现有 README 使用与升级适配说明、浏览器脚本与截图。前置 O1–O5。
 验证：干净 checkout 安装/构建/启动；核心无 extra 仍可用；相关回归/类型构建；A01–A16 证据汇总。实测平台 Linux/Chromium；Windows/WSL、真实用户运行包需明确未验证。
-实际结果：前端类型检查/生产构建 PASS。README 包含安装、演示、真实项目和升级适配说明。隔离环境安装声明精确依赖 PASS；wheel 与干净归档验证中。
+实际结果：PASS。`ca9c1df` 干净 Git 归档上 npm ci/build/pip wheel 成功；wheel 包含静态 HTML/CSS/JS 与第三方许可说明。安装至隔离环境后，在源码目录外以 `python -I -m opc.observer` 分别启动 --demo / --project，API、生产资源及实际 Chromium 任务/轮次浏览均通过。无 Node 常驻服务。另一个无 observer 依赖的 venv 中原 CLI 导入及 --help 通过。
 
 ## 当前验证证据
 
@@ -69,3 +69,23 @@
 - 最终 `work/observer-clean-venv/bin/python -m pytest opc/tests/test_observer.py -q`：44 PASS（3.08s）；完整 `opc/tests tools/tests` 回归在最终新增两个配置投影测试前为 263 PASS / 5 SKIP / 12 subtests PASS（34.22s）。跳过项来自现有测试的平台/可用性条件；无真实模型/设备试验。
 - 最终 `work/observer-clean-venv/bin/python tools/observer_browser_smoke.py`：12 PASS；新增相对任务/证据链接、raw HTML 不执行/外部图片零请求、大文件分页后截短自动回到 offset 0；生产 CSP 保持生效。配置合同显式标为必要字段投影，无 workers/环境配置原件下载。原件与投影不混称。
 - 独立审查原始问题均已修复：历史 digest 冲突不套目标、URL 默认选择稳定、已选 run 始终在选择器、内容版本/截断重读、成功响应内的滞后提示、安全相对链接、SourceRef 形状和结构不兼容统一错误。每项以对应源码/测试复验，未将静态审查当作浏览器通过。
+
+## 最终收口
+
+O1–O6 全部 **resolved**，无未完成开发票或外部阻塞。各项验收基于当前格式的源材料夹具，未声称真实用户运行包已验证。
+
+| 验收 | 结果与依据 |
+| --- | --- |
+| A01–A03 | PASS：源适配测试覆盖地图/直接/仅 brief/仅合同与 run、明确 SHA 关联/歧义/修改、冻结 revision/冲突/准备独立性；浏览器额外验证 r2 合同选择不能改写 r1 运行目标。 |
+| A04–A05 | PASS：五阶段、轮次、产物/原文、深链接恢复；缺实际成果/结论如实未知，写入器回填旧轮次结论。 |
+| A06–A07 | PASS：方法与结果分离，候选保存/运行结束不等于通过；正反终验、证据版本/评价条件、数值四范围由后端测试核对。 |
+| A08–A11 | PASS：两 provider、未知事件、只读工具、未知 USD、增量/半行/截断/替换/复用日志、WAL 写入、保留选择和滞后恢复。浏览器补验大原文后续页被截短也自动重读。 |
+| A12–A14 | PASS：静态源业务文件/数据库不变，执行入口零调用；缺失/不兼容降级，外置根与越界拒绝；Markdown 主动内容不执行，外部图片零请求；配置仅必要字段投影。 |
+| A15 | PASS：Chromium 154.0.8037.57，1440×900 / 390×844 截图实际查看；Tab/Enter、焦点、无横向溢出、减少动画及放大文本。 |
+| A16 | PASS：干净归档安装/构建/wheel、精确 observer 依赖、目录外 demo/project 启动与浏览器、无观察依赖 core CLI。 |
+
+打包核验命令：干净归档 `npm --prefix web ci` → `npm --prefix web run build` → `python -m pip wheel . --no-deps`；新 venv 安装 wheel。观察依赖独立环境使用 FastAPI 0.119.1 / Uvicorn 0.38.0 / Pydantic 2.12.3；核心 venv 以 `--no-deps` 安装同一 wheel 并确认没有 FastAPI。安装后 package 路径为 site-packages，两个模式各以独立 Python 进程提供同一个 HTTP 服务，真实 Chromium 浏览成功。
+
+前端构建有 Vite 单 JS chunk 大于 500kB 的体积提示（约 846kB / gzip 266kB）；类型/构建通过，未把该提示掩盖为性能测量。组件组合按 spec 锁定，首版未扩展性能优化票。Starlette TestClient 对新 anyio 有一个弃用提示，不影响已执行验收。
+
+最终交付限制：Linux / Python 3.12.14 / Node 24.19.0 / Chromium 实测；Python 最低声明保留 3.10，未单独运行 3.10 矩阵；Windows/WSL、非 Chromium、原生 IME/屏幕阅读器和用户真实运行包均 NOT_RUN。无 UI 模态/发送输入/拖动分隔条，相关专用控件测试 NOT_APPLICABLE。无部署、无自动合并、无真实模型调用。
