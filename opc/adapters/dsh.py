@@ -74,6 +74,7 @@ def parse_events(text: str) -> dict[str, Any]:
     event as a success.
     """
     session_id, tokens, complete = "", 0, True
+    usage_seen = False
     tool_calls = 0
     output_tokens = 0
     last_text = ""
@@ -101,6 +102,7 @@ def parse_events(text: str) -> dict[str, Any]:
         elif kind == "status" and ev.get("phase") == "step_end":
             usage = ev.get("usage")
             if isinstance(usage, dict):
+                usage_seen = True
                 tokens += _sum_usage(usage)
                 output_tokens += int(usage.get("outputTokens") or 0)
             else:
@@ -115,7 +117,7 @@ def parse_events(text: str) -> dict[str, Any]:
         # An aborted turn can still end with an empty final event; the runner
         # error is the better explanation when it exists.
         last_text = ""
-    return {"session_id": session_id, "tokens": tokens, "usage_complete": complete,
+    return {"session_id": session_id, "tokens": tokens, "usage_complete": complete and usage_seen,
             "tool_calls": tool_calls, "output_tokens": output_tokens, "text": last_text, "runner_error": runner_error,
             "end_kind": end_kind, "end_code": end_code, "end_message": end_message}
 

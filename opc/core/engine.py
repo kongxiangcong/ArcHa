@@ -55,6 +55,13 @@ class Engine:
         self.bindings = Bindings.load(self.project)
         self.ledger = Ledger(self.root / ".opc" / "local" / "ledger.sqlite3")
         self.ref = "refs/heads/opc/%s" % task_id
+        preparations = [r for r in self.ledger.runs() if r["task_id"] == task_id and r["revision"] == "preparation"]
+        self.preparation = preparations[-1]["run_id"] if preparations else None
+        if self.preparation:
+            limits = self.ledger.events(self.preparation, "preparation_budget")
+            if limits:
+                self.task.budget.max_tokens = min(self.task.budget.max_tokens or limits[0]["body"]["tokens"], limits[0]["body"]["tokens"])
+                self.task.budget.max_wall_seconds = min(self.task.budget.max_wall_seconds, limits[0]["body"]["wall_seconds"])
         self.log = log
         self.run_id: str | None = None
         self._domain: DomainAdapter | None = None
@@ -91,6 +98,18 @@ class Engine:
             base = rev_parse(self.root, self.task.base_ref)
         except OPCError as exc:
             return {"ok": False, "problems": [str(exc)], "warnings": warnings}
+        if self.preparation:
+            events = self.ledger.events(self.preparation, "preparation")
+            receipt = events[-1]["body"] if events else {}
+            if self.ledger.events(self.preparation, "accounting_unknown"):
+                problems.append("preparation accounting incomplete; no new dispatch")
+            if receipt.get("state") != "ready":
+                problems.append("preparation not ready: " + receipt.get("reason", "unmetered draft"))
+            else:
+                for rel, digest in receipt.get("files", {}).items():
+                    data = git("show", base + ":" + rel, cwd=self.root, binary=True)
+                    if hashlib.sha256(data).hexdigest() != digest:
+                        problems.append("prepared acceptance changed since review: " + rel)
         dirty = dirty_paths(self.root)
         from .config import denied
         frozen_dirty = [p for p in dirty if denied(p, self.evaluator_patterns() + [".opc/**"])
@@ -218,6 +237,8 @@ class Engine:
         out = self.root / ".opc" / "local" / "preflight"
         try:
             ev, meas, tree = self.evaluate_commit(ws, rep["base_commit"], "", out, "baseline")
+            if self.preparation:
+                self.ledger.charge(self.preparation, None, "preflight", Cost(ev.seconds, 0, 0.0))
             rep["toolchain"] = self.domain(tree).toolchain()[1]
             self.workers(tree)
         finally:
@@ -362,7 +383,7 @@ class Engine:
 
     # ----------------------------------------------------------------- budget
     def spent(self) -> dict[str, Any]:
-        t = self.ledger.totals(self.run_id)
+        t = self.ledger.task_totals(self.task.task_id) if self.preparation else self.ledger.totals(self.run_id)
         attempts = self.ledger.attempts(self.run_id)
         t["search_attempts"] = sum(1 for a in attempts if a["outcome"] and
                                    Outcome(a["outcome"]).counts_as_search)
@@ -382,6 +403,8 @@ class Engine:
     def admit(self) -> None:
         """Ask before spending. The estimate is the mean decided attempt so far."""
         b, s = self.task.budget, self.spent()
+        if self.preparation:
+            self.hard_check()
         if s["search_attempts"] >= b.max_attempts:
             raise BudgetExhausted("max_attempts", "%d search attempts used" % s["search_attempts"])
         done = [a for a in self.ledger.attempts(self.run_id) if a["cost"]]
@@ -402,9 +425,11 @@ class Engine:
     def hard_check(self) -> None:
         """Between steps of one attempt: stop as soon as a cap is crossed."""
         b, s = self.task.budget, self.spent()
-        if s["wall_seconds"] > b.max_wall_seconds:
+        if self.preparation and self.ledger.events(self.preparation, "accounting_unknown"):
+            raise OPCError("usage accounting incomplete; no new dispatch")
+        if s["wall_seconds"] >= b.max_wall_seconds:
             raise BudgetExhausted("max_wall_seconds", "crossed mid-attempt")
-        if b.max_tokens is not None and s["tokens"] > b.max_tokens:
+        if b.max_tokens is not None and s["tokens"] >= b.max_tokens:
             raise BudgetExhausted("max_tokens", "crossed mid-attempt")
 
     def stop_condition(self) -> StopDecision | None:
@@ -679,6 +704,13 @@ class Engine:
 
         def charge(role: str, cost: Cost, call: WorkerCall | None = None) -> None:
             nonlocal total
+            if call is not None and self.preparation:
+                kind = self.task.expert.kind if role == "expert" else (self.task.designer or self.task.expert).kind
+                if kind in ("codex", "dsh") and not call.extra.get("usage_complete", False):
+                    call.ok = False
+                    call.error = "usage unavailable; stop dispatch until actual accounting is reconciled"
+                    call.extra["infra"] = True
+                    self.ledger.event(self.preparation, "accounting_unknown", None, reason=call.error)
             total = total.add(cost)
             self.ledger.charge(self.run_id, n, role, cost)
             if call is not None:

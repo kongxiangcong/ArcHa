@@ -404,3 +404,71 @@ def test_numeric_contract_still_requires_metric_output(make_project, engine_for)
     comp['gates'][0].pop('metrics')
     e = engine_for(make_project(comp=comp))
     assert not e.static_check()['ok']
+
+
+@pytest.mark.parametrize('case', ['ready', 'device', 'budget', 'unknown'])
+def test_metered_preparation_to_formal_execution(make_project, engine_for, monkeypatch, case):
+    from opc.scaffold.onboard import onboard
+    from opc.adapters.codex import CodexWorker
+    from opc.tests.conftest import EVALUATE
+    import subprocess, sys
+    root = make_project(tsk=task(acceptance={}, requirements=[]))
+    evaluator = root / '.opc/eval/evaluate.py'
+    evaluator.unlink()
+    git(root, 'add', '-A'); git(root, 'commit', '-qm', 'missing evaluator')
+    calls = []
+    def run(self, role, prompt, tree, log, sandbox, schema):
+        calls.append(role)
+        log.mkdir(parents=True, exist_ok=True)
+        if role == 'onboard':
+            assert 'No nested model dispatch' in prompt and 'bounded' in prompt
+            if case == 'device':
+                device = root / '.opc/local/device'
+                device.write_text('simulated restricted device'); device.chmod(0)
+                try:
+                    device.read_bytes()
+                except PermissionError as exc:
+                    (log / 'probe.txt').write_text(str(exc))
+                finally:
+                    device.chmod(0o600)
+                response = {'state':'external_blocked', 'reason':'observed device read permission denied; owner must grant access',
+                            'evidence':['.opc/local/onboard/probe.txt']}
+            else:
+                # Fake worker executes real positive and negative controls of the new evaluator.
+                code = EVALUATE+'\nraise SystemExit(0 if x == 7 else 1)\n'
+                evaluator.write_text(code)
+                scratch = log / 'control'; scratch.mkdir()
+                outcomes = []
+                for x in (7,3):
+                    (scratch / 'params.json').write_text(json.dumps({'x':x}))
+                    outcomes.append(subprocess.run([sys.executable,str(evaluator),'--out',str(scratch/'out')], cwd=scratch).returncode)
+                assert outcomes == [0,1]
+                (log / 'controls.json').write_text(json.dumps(outcomes))
+                response={'state':'ready','reason':'tooling controls verified','evidence':['.opc/local/onboard/controls.json']}
+        else:
+            assert sandbox == 'read-only'
+            assert json.loads((root/'.opc/local/onboard/controls.json').read_text()) == [0,1]
+            response={'verdict':'accept', 'reason':'controls reject incorrect product, no device experiment'}
+        return WorkerCall(role,True,Cost(1,80 if role=='onboard' else 20,None),
+                          extra={'usage_complete':case!='unknown'}),json.dumps(response)
+    monkeypatch.setattr(CodexWorker,'_run',run)
+    kw=dict(prepare=True,task_id='t-toy',max_tokens=90 if case=='budget' else 1000,
+            max_wall_seconds=600,prior_tokens=10,prior_wall_seconds=0)
+    r=onboard(root,'codex',**kw)
+    if case!='ready':
+        assert r['preparation']=={'device':'external_blocked','budget':'budget_exhausted','unknown':'accounting_unknown'}[case]
+        assert calls==['onboard'] and not engine_for(root).static_check()['ok']
+        if case=='budget':
+            assert evaluator.exists()
+            assert not onboard(root,'codex',**kw)['ok'] and calls==['onboard']
+        return
+    assert r['ok'] and calls==['onboard','reviewer']
+    git(root,'add','.opc/eval'); git(root,'commit','-qm','reviewed acceptance frozen')
+    e=use_sequence(engine_for(root),Sequence([plan(1),stop],[7]))
+    assert e.static_check()['ok'] and e.preflight()['ok']
+    result=e.run()
+    assert result['champion'] is None and result['spent']['tokens']==110
+    assert result['budget_left']['tokens']==890
+    evaluator.write_text(EVALUATE)
+    git(root,'add','.opc/eval'); git(root,'commit','-qm','changed standard')
+    assert not engine_for(root).static_check()['ok']

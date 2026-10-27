@@ -157,7 +157,7 @@ def test_token_budget_stops_before_overspending(make_project, engine_for, fake_c
 
 @pytest.mark.parametrize("mode,ok", [("onboard", True), ("onboard_stray", False)])
 def test_onboard_writes_only_under_opc(make_project, fake_codex, monkeypatch, mode, ok):
-    from opc.scaffold.onboard import onboard
+    from opc.scaffold.onboard import _draft as onboard
     root = make_project()
     with open(root / "params.json", "a") as f:
         f.write(" ")  # already dirty before the agent runs
@@ -289,7 +289,7 @@ def test_codex_expert_can_declare_exhaustion(make_project, engine_for, fake_code
 
 
 def test_onboard_accepts_dsh_and_rejects_unknown(tmp_path):
-    from opc.scaffold.onboard import onboard
+    from opc.scaffold.onboard import _draft as onboard
     with pytest.raises(OPCError, match="init --apply"):
         onboard(tmp_path, "dsh")
     (tmp_path / ".opc").mkdir()
@@ -313,3 +313,12 @@ def test_request_rejection_does_not_classify_executed_failure():
     assert request_rejected('context_length_exceeded', False)
     assert not request_rejected('context_length_exceeded', True)
     assert not request_rejected('expert reply is not JSON', False)
+
+
+def test_nested_usage_is_not_assumed_to_be_in_parent_total():
+    events = '\n'.join(json.dumps(e) for e in [
+        {'type':'item.completed','item':{'type':'collab_agent_tool_call'}},
+        {'type':'turn.completed','usage':{'input_tokens':100,'output_tokens':20,'cached_input_tokens':80}}])
+    info = parse_events(events)
+    assert info['tokens'] == 120  # cached input is already part of input_tokens
+    assert not info['usage_complete']

@@ -9,7 +9,7 @@ from opc.cli import main
 from opc.core.model import OPCError
 from opc.scaffold import init
 from opc.scaffold.brief import SECTIONS, load_brief
-from opc.scaffold.onboard import onboard
+from opc.scaffold.onboard import _draft as onboard
 
 
 def brief_project(tmp_path):

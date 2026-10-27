@@ -248,6 +248,8 @@ def _is_ancestor(repo: Path, a: str, b: str) -> bool:
 
 def run_reviewer(engine: Engine, kind: str, out: Path, patch: str, base: dict, best: dict,
                  coverage: list[dict]) -> dict[str, Any]:
+    if engine.preparation:
+        engine.hard_check()
     if kind not in ("codex", "dsh"):
         raise OPCError("the reviewer must be codex or dsh")
     # Both workers expose the same private _run(role, prompt, tree, log_dir,
@@ -286,7 +288,8 @@ The working directory is a read-only checkout of the champion."""
     try:
         tree = ws.checkout("reviewer", best["commit_sha"])
         from .worker_config import worker_options
-        worker = worker_cls(worker_options(engine.worker_config, "reviewer"))
+        worker = worker_cls(worker_options(engine.worker_config, "reviewer",
+            {"timeout_s": engine.budget_left()["wall_seconds"]} if engine.preparation else {}))
         call, text = worker._run("reviewer", prompt, tree, out / "reviewer", "read-only", schema)
     finally:
         ws.drop_all()
@@ -294,6 +297,9 @@ The working directory is a read-only checkout of the champion."""
     engine.ledger.event(engine.run_id, "worker_call", None, role="reviewer",
                         call_id=call.call_id, ok=call.ok, tokens=call.cost.tokens,
                         error=call.error[:300])
+    if engine.preparation and not call.extra.get("usage_complete", False):
+        engine.ledger.event(engine.preparation, "accounting_unknown", None, reason="reviewer usage missing")
+        call.ok, call.error = False, "reviewer usage missing; no further dispatch"
     if not call.ok:
         return {"ok": False, "error": call.error, "call_id": call.call_id}
     try:

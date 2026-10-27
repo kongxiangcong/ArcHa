@@ -218,3 +218,15 @@ Apache License 2.0，见 [LICENSE](LICENSE)。
 无 objective 允许功能未完成但执行通道可用的基线，默认从已保存工作版本连续开发，designer 可在授权范围内增加开发测试和局部调试。expert 的 evaluate=true 可请求正式评价。
 base_attempt 同样适用于停止回复；run 停止、预算用尽、数值 target 达标和任务完成分别报告。promote 对 selected_version 完整终验，只有满足必要条件才允许显式 apply；同版本补 review 可复用仍适用的评价。
 旧 benchmark 执行工具与 FP32 包已退役，历史报告保留，框架回归仍为 python -m pytest -q。
+
+## 自主准备
+
+授权范围及总预算确定后，缺失评价器/负控/证据与用量工具属于 agent 的准备待办：
+
+```bash
+opc onboard -p . --brief <brief> --prepare --task <task-id> --max-tokens <授权总额> --max-wall-seconds <授权秒数> --prior-wall-seconds <累计主流程及外部嵌套秒数> --prior-tokens <累计主流程及外部嵌套用量>
+```
+
+该命令仅做准备和只读审阅，不启动正式设备实验。pending 由 agent 继续，ready 仍需提交冻结文件和 check/preflight，external_blocked 必须带真实观测证据与外部下一步。未声明可靠用量时停止派发；input 包含 cached input，主流程与外部嵌套用量由调用者累计报告，命令内 worker/reviewer 自动记账。正式 run 沿用同一账本与授权总额，不能以 new-run 重置准备消耗。onboard 默认采用同一计量准备路径；未提供可靠预算和主流程累计用量/耗时，不会派发模型。
+
+已部署的 runtime 和全局技能不会自动升级；使用前核对项目入口 --help 与已安装技能内容。本仓库修改只影响后续明确部署的副本。
