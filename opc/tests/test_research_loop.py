@@ -423,14 +423,11 @@ def test_metered_preparation_to_formal_execution(make_project, engine_for, monke
         if role == 'onboard':
             assert 'No nested model dispatch' in prompt and 'bounded' in prompt
             if case == 'device':
-                device = root / '.opc/local/device'
-                device.write_text('simulated restricted device'); device.chmod(0)
-                try:
-                    device.read_bytes()
-                except PermissionError as exc:
-                    (log / 'probe.txt').write_text(str(exc))
-                finally:
-                    device.chmod(0o600)
+                # Portable denial fixture: exercises a failed probe receipt, not real hardware.
+                probe = subprocess.run([sys.executable, '-c',
+                    "raise PermissionError('device permission denied by fixture')"], capture_output=True, text=True)
+                assert probe.returncode != 0
+                (log / 'probe.txt').write_text(probe.stderr)
                 response = {'state':'external_blocked', 'reason':'observed device read permission denied; owner must grant access',
                             'evidence':['.opc/local/onboard/probe.txt']}
             else:
@@ -463,12 +460,15 @@ def test_metered_preparation_to_formal_execution(make_project, engine_for, monke
             assert not onboard(root,'codex',**kw)['ok'] and calls==['onboard']
         return
     assert r['ok'] and calls==['onboard','reviewer']
+    kw['prior_tokens'] = 12
+    assert onboard(root,'codex',record_usage_only=True,**kw)['ok']
+    assert calls == ['onboard','reviewer']
     git(root,'add','.opc/eval'); git(root,'commit','-qm','reviewed acceptance frozen')
     e=use_sequence(engine_for(root),Sequence([plan(1),stop],[7]))
     assert e.static_check()['ok'] and e.preflight()['ok']
     result=e.run()
-    assert result['champion'] is None and result['spent']['tokens']==110
-    assert result['budget_left']['tokens']==890
+    assert result['champion'] is None and result['spent']['tokens']==112
+    assert result['budget_left']['tokens']==888
     evaluator.write_text(EVALUATE)
     git(root,'add','.opc/eval'); git(root,'commit','-qm','changed standard')
     assert not engine_for(root).static_check()['ok']

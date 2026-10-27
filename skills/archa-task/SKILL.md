@@ -72,3 +72,5 @@ python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --brief <br
 准备 agent 可在 .opc 内建立评价器、负控、原件采集/保存与监控工具，进行授权的有界设备能力探测；不自动开展正式手机实验。未探测不是外部阻塞，失败须保留命令、权限错误与原始回执。pending 表示 agent 继续准备；ready 只表示审阅通过，正式实验尚未开始；external_blocked 必须给出观测证据、缺失外部条件、责任人与下一步。
 准备调用后只读 reviewer 核对需求、评价器及负控回执，审阅通过的文件摘要在既有 ledger 中冻结。提交被审文件，check/preflight 通过且用户允许正式执行才进入 run。“本步只准备”时到此结束，不能自动启动设备实验。产品未实现的功能失败是未完成基线，不能变造评分过门。
 已有正式 run 时不原地改冻结合同/评价器：保留旧 revision/run，准备新 revision 并重新审阅冻结；预算账本沿用。旧部署 runtime/全局技能不会自动更新，先核对入口 --help 是否支持 --prepare，不以仓库源码代替已安装行为。
+
+每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用已有冻结回执。无法取得可靠累计量时停止后续模型派发。

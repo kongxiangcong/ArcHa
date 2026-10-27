@@ -230,3 +230,5 @@ opc onboard -p . --brief <brief> --prepare --task <task-id> --max-tokens <授权
 该命令仅做准备和只读审阅，不启动正式设备实验。pending 由 agent 继续，ready 仍需提交冻结文件和 check/preflight，external_blocked 必须带真实观测证据与外部下一步。未声明可靠用量时停止派发；input 包含 cached input，主流程与外部嵌套用量由调用者累计报告，命令内 worker/reviewer 自动记账。正式 run 沿用同一账本与授权总额，不能以 new-run 重置准备消耗。onboard 默认采用同一计量准备路径；未提供可靠预算和主流程累计用量/耗时，不会派发模型。
 
 已部署的 runtime 和全局技能不会自动升级；使用前核对项目入口 --help 与已安装技能内容。本仓库修改只影响后续明确部署的副本。
+
+每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用已有冻结回执。无法取得可靠累计量时停止后续模型派发。

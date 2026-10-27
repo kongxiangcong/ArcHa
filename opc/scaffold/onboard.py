@@ -124,7 +124,7 @@ def _draft(project_root: Path, agent: str, brief: str | Path | None = None) -> d
 
 def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             prepare: bool = True, task_id: str = "t-main", max_tokens: int | None = None,
-            max_wall_seconds: float | None = None, prior_tokens: int | None = None, prior_wall_seconds: float | None = None) -> dict[str, Any]:
+            max_wall_seconds: float | None = None, prior_tokens: int | None = None, prior_wall_seconds: float | None = None, record_usage_only: bool = False) -> dict[str, Any]:
     """Develop readiness within scope; never dispatch a formal experiment here.
 
     prior_tokens is cumulative host/nested usage outside the worker receipts,
@@ -198,6 +198,12 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             remaining()
         except OPCError as exc:
             return finish("budget_exhausted", str(exc))
+        if record_usage_only:
+            previous_receipts = ledger.events(rid, "preparation")
+            previous_receipt = previous_receipts[-1]["body"] if previous_receipts else {}
+            state = previous_receipt.get("state", "pending")
+            return finish(state, "usage updated; " + previous_receipt.get("reason", "preparation remains"),
+                          files=previous_receipt.get("files", {}), evidence=previous_receipt.get("evidence", []))
         # Reuse the existing onboard worker and its scope checks; it develops .opc
         # tooling, not product code or formal device experiments.
         started = time.monotonic()

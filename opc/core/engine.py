@@ -425,6 +425,10 @@ class Engine:
     def hard_check(self) -> None:
         """Between steps of one attempt: stop as soon as a cap is crossed."""
         b, s = self.task.budget, self.spent()
+        if self.preparation:
+            receipts = self.ledger.events(self.preparation, "preparation")
+            if not receipts or receipts[-1]["body"].get("state") != "ready":
+                raise OPCError("preparation is not ready; no formal dispatch")
         if self.preparation and self.ledger.events(self.preparation, "accounting_unknown"):
             raise OPCError("usage accounting incomplete; no new dispatch")
         if s["wall_seconds"] >= b.max_wall_seconds:
