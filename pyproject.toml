@@ -5,6 +5,9 @@ description = "Domain-independent engine for automatic, budgeted, evidence-bound
 requires-python = ">=3.10"
 dependencies = []
 
+[project.optional-dependencies]
+observer = ["fastapi==0.119.1", "uvicorn==0.38.0", "pydantic==2.12.3"]
+
 [project.scripts]
 opc = "opc.cli:main"
 
@@ -17,6 +20,7 @@ include = ["opc*"]
 
 [tool.setuptools.package-data]
 opc = ["scaffold/*.md", "scaffold/*.py", "scaffold/*.json"]
+"opc.observer" = ["static/*.html", "static/assets/*"]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
