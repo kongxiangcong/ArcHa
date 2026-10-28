@@ -60,7 +60,7 @@ python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --brief <br
 
 使用项目已有的起草 worker 配置（CLI 默认 codex，需要 dsh 时加 `--agent dsh`）。核对返回的 `ok`、越界修改和受保护输入变化；失败时保留诊断，修复明确原因后再继续，不把 worker 返回成功当作合同完成。
 
-依据消费链核对目标、交付物、验收条件、评价器、范围、基线、预算与 worker。自动解决已确认范围内能从证据确定的事项；只将必须由用户决定的范围/预算或有实际证据的外部条件列为 external_blocked；评价器、负控、证据采集/保存、用量监控和未知设备能力列为 pending，由当前 agent 在预算内开发核验，不要求另建任务。保持 `execution_enabled=false`，用项目入口运行 `check -p <project> --task <task-id> --revision <revision>`。执行关闭、接入文件尚未提交以及因此尚未进入基线的评价器属于待 loop 完成的准备项；其他问题修复或列为阻塞，不把所有非零退出都当作预期。不运行 preflight 或 run。
+依据消费链核对目标、交付物、验收条件、评价器、范围、基线、预算与 worker。自动解决已确认范围内能从证据确定的事项；只将必须由用户决定的范围/预算或有实际证据的外部条件列为 external_blocked；必要评价器接入、关键失败路径、证据采集和未知设备能力列为 pending，由当前 agent 在预算内开发核验，不要求另建任务。保持 `execution_enabled=false`，用项目入口运行 `check -p <project> --task <task-id> --revision <revision>`。执行关闭、接入文件尚未提交以及因此尚未进入基线的评价器属于待 loop 完成的准备项；其他问题修复或列为阻塞，不把所有非零退出都当作预期。不运行 preflight 或 run。
 
 在 `.opc/context/DECISIONS.md` 记录本次交接：简报的项目相对路径及当前 SHA-256、对应 task ID、revision、合同路径、已定执行预算和剩余阻塞项。从实际生成的合同核对 ID，不把地图 ID 当作引擎 ID。保留其他任务记录。已投入执行的合同修改沿用新 revision/run 流程。
 
@@ -69,8 +69,8 @@ python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --brief <br
 ## 自主准备与冻结
 
 发现准备待办时使用已有 onboard 命令的 `--prepare --task <task-id> --brief <brief> --max-tokens <授权总额> --max-wall-seconds <授权秒数> --prior-wall-seconds <累计主流程及外部嵌套秒数> --prior-tokens <累计主流程及外部嵌套用量>`。总量包含 cached input，不能填猜测的 0；正常 worker 与只读 reviewer 由 ledger 自动记账，不重复计入 prior-tokens。未知用量停止新增派发。准备与正式 run 共用同一授权总额，不能新建 run 重置。
-准备 agent 可在 .opc 内建立评价器、负控、原件采集/保存与监控工具，进行授权的有界设备能力探测；不自动开展正式手机实验。未探测不是外部阻塞，失败须保留命令、权限错误与原始回执。pending 表示 agent 继续准备；ready 只表示审阅通过，正式实验尚未开始；external_blocked 必须给出观测证据、缺失外部条件、责任人与下一步。
-准备调用后只读 reviewer 核对需求、评价器及负控回执，审阅通过的文件摘要在既有 ledger 中冻结。提交被审文件，check/preflight 通过且用户允许正式执行才进入 run。“本步只准备”时到此结束，不能自动启动设备实验。产品未实现的功能失败是未完成基线，不能变造评分过门。
+准备 agent 可在 .opc 内完成必要评价器、关键失败路径与原件采集接入，进行授权的有界设备能力探测；不自动开展正式手机实验。未探测不是外部阻塞，失败须保留命令、权限错误与原始回执。pending 表示 agent 继续准备；ready 只表示必要接入检查完成，正式实验尚未开始；external_blocked 必须给出观测证据、缺失外部条件、责任人与下一步。
+准备默认不调用 reviewer；合同 preparation_review=true 时进行针对性独立审核。当前任务及实际共享评价依赖摘要在 ledger 中冻结。提交被审文件，check/preflight 通过且用户允许正式执行才进入 run。“本步只准备”时到此结束，不能自动启动设备实验。产品未实现的功能失败是未完成基线，不能变造评分过门。
 已有正式 run 时不原地改冻结合同/评价器：保留旧 revision/run，准备新 revision 并重新审阅冻结；预算账本沿用。旧部署 runtime/全局技能不会自动更新，先核对入口 --help 是否支持 --prepare，不以仓库源码代替已安装行为。
 
 每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用已有冻结回执。无法取得可靠累计量时停止后续模型派发。

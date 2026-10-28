@@ -112,7 +112,7 @@ class Engine:
                         problems.append("prepared acceptance changed since review: " + rel)
         dirty = dirty_paths(self.root)
         from .config import denied
-        frozen_dirty = [p for p in dirty if denied(p, self.evaluator_patterns() + [".opc/**"])
+        frozen_dirty = [p for p in dirty if denied(p, self.evaluator_patterns() + [self.task.path.relative_to(self.root).as_posix(), ".opc/project.json"])
                         and not p.startswith(".opc/local/") and not self.comp.is_scratch(p)]
         if frozen_dirty:
             problems.append("uncommitted evaluator/.opc files (runs use the committed version): "
@@ -405,13 +405,19 @@ class Engine:
     def admit(self) -> None:
         """Ask before spending. The estimate is the mean decided attempt so far."""
         b, s = self.task.budget, self.spent()
-        if self.preparation:
+        if self.preparation or getattr(self, "_delivery_accounting", False):
             self.hard_check()
         if s["search_attempts"] >= b.max_attempts:
             raise BudgetExhausted("max_attempts", "%d search attempts used" % s["search_attempts"])
         done = [a for a in self.ledger.attempts(self.run_id) if a["cost"]]
         est_wall = sum(a["cost"]["wall_seconds"] for a in done) / len(done) if done else 0.0
         est_tok = sum(a["cost"]["tokens"] for a in done) / len(done) if done else 0.0
+        if getattr(self, "_reserve_delivery", False):
+            reserve = self.ledger.db.execute(
+                "SELECT MAX(c.wall_seconds), MAX(c.tokens) FROM charges c JOIN runs r ON c.run_id=r.run_id "
+                "WHERE r.task_id=? AND c.role IN ('evaluator','reviewer')", (self.task.task_id,)).fetchone()
+            est_wall += reserve[0] or 0
+            est_tok += reserve[1] or 0
         if s["wall_seconds"] + est_wall > b.max_wall_seconds:
             raise BudgetExhausted("max_wall_seconds", "spent %.0fs, next ~%.0fs, cap %.0fs"
                                   % (s["wall_seconds"], est_wall, b.max_wall_seconds))
@@ -427,6 +433,13 @@ class Engine:
     def hard_check(self) -> None:
         """Between steps of one attempt: stop as soon as a cap is crossed."""
         b, s = self.task.budget, self.spent()
+        if getattr(self, "_delivery_accounting", False):
+            if any(self.ledger.unresolved_accounting(r["run_id"]) for r in self.ledger.runs() if r["task_id"] == self.task.task_id):
+                raise OPCError("usage accounting incomplete; no delivery dispatch")
+            if self.ledger.control(self.run_id) in ("pause", "stop"):
+                raise OPCError("user paused/stopped delivery")
+            if b.max_usd is not None and (not s["usd_known"] or s["usd"] >= b.max_usd):
+                raise BudgetExhausted("max_usd", "delivery budget unavailable")
         if self.preparation:
             receipts = self.ledger.events(self.preparation, "preparation")
             if not receipts or receipts[-1]["body"].get("state") != "ready":
@@ -710,13 +723,13 @@ class Engine:
 
         def charge(role: str, cost: Cost, call: WorkerCall | None = None) -> None:
             nonlocal total
-            if call is not None and self.preparation:
+            if call is not None and (self.preparation or getattr(self, "_delivery_accounting", False)):
                 kind = self.task.expert.kind if role == "expert" else (self.task.designer or self.task.expert).kind
                 if kind in ("codex", "dsh") and not call.extra.get("usage_complete", False):
                     call.ok = False
                     call.error = "usage unavailable; stop dispatch until actual accounting is reconciled"
                     call.extra["infra"] = True
-                    self.ledger.event(self.preparation, "accounting_unknown", None, reason=call.error)
+                    self.ledger.event(self.preparation or self.run_id, "accounting_unknown", None, reason=call.error)
             total = total.add(cost)
             self.ledger.charge(self.run_id, n, role, cost)
             if call is not None:
@@ -886,8 +899,11 @@ class Engine:
         if not registered or registered[-1]["body"]["complete"] or report.get("complete"):
             raise OPCError("repair requires a registered failed promotion")
         self.run_id = source["run_id"]
+        self._delivery_accounting = True
         if source["state"] != "closed" or self.ledger.control(self.run_id) in ("pause", "stop"):
             raise OPCError("repair cannot override pause/stop or an active run")
+        if registered[-1]["body"].get("report_sha256") != hashlib.sha256(path.read_bytes()).hexdigest():
+            raise OPCError("promotion report changed after registration")
         if report["selected_version"] != self.selected_commit():
             raise OPCError("repair must start from the selected candidate")
         if any(f["check"] in ("evaluator", "scope") for f in report["findings"] if f["severity"] == "block"):

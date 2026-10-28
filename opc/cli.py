@@ -51,6 +51,8 @@ def cmd_preflight(a) -> int:
 
 def cmd_run(a) -> int:
     e = _engine(a, log=lambda s: print("[opc] " + s, flush=True))
+    e._reserve_delivery = a.deliver
+    e._delivery_accounting = a.deliver
     if a.repair_promotion:
         s = e.repair_delivery(a.repair_promotion)
     else:

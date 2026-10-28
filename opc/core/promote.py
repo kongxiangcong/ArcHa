@@ -51,7 +51,12 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
         document = Path(standards_confirmation)
         if not document.is_absolute():
             document = engine.root / document
-        confirmation = json.loads(document.read_text(encoding="utf-8"))
+        try:
+            confirmation = json.loads(document.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise OPCError("cannot read standards confirmation: " + str(exc)) from exc
+        if not isinstance(confirmation, dict):
+            raise OPCError("standards confirmation must be an object")
         changes = {k:{"old":frozen.get(k), "new":engine.task.raw.get(k)}
                    for k in ("requirements", "acceptance") if frozen.get(k) != engine.task.raw.get(k)}
         if (not changes or confirmation.get("confirmed_by") != "user" or
@@ -152,9 +157,11 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
             for label, commit in (("baseline", base["commit_sha"]), ("champion",
                                                                      best["commit_sha"])):
                 for i in range(confirm_repeats):
+                    engine.hard_check()
                     ev, meas, tree = engine.evaluate_commit(ws, commit, "", out / "confirm" /
                                                             ("%s-%d" % (label, i)), label, fresh=True)
                     ws.drop(tree)
+                    engine.ledger.charge(engine.run_id, None, "evaluator", Cost(ev.seconds, 0, 0.0))
                     if ev.failure is not None:
                         finding("reproduce", "block", "%s failed on repeat %d: %s"
                                 % (label, i, ev.reason))
@@ -280,7 +287,8 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
     write_text(out / "PROMOTION.md", render(report))
     report["report_dir"] = str(out)
     engine.ledger.event(engine.run_id, "promotion_report", promotion_id=pid,
-                        report_path=str(out / "report.json"), selected_commit=selected, complete=not blocked)
+                        report_path=str(out / "report.json"), selected_commit=selected, complete=not blocked,
+                        report_sha256=hashlib.sha256((out / "report.json").read_bytes()).hexdigest())
     return report
 
 
@@ -291,8 +299,7 @@ def _is_ancestor(repo: Path, a: str, b: str) -> bool:
 
 def run_reviewer(engine: Engine, kind: str, out: Path, patch: str, base: dict, best: dict,
                  coverage: list[dict]) -> dict[str, Any]:
-    if engine.preparation:
-        engine.hard_check()
+    engine.hard_check()
     if kind not in ("codex", "dsh"):
         raise OPCError("the reviewer must be codex or dsh")
     # Both workers expose the same private _run(role, prompt, tree, log_dir,
@@ -332,7 +339,7 @@ The working directory is a read-only checkout of the champion."""
         tree = ws.checkout("reviewer", best["commit_sha"])
         from .worker_config import worker_options
         worker = worker_cls(worker_options(engine.worker_config, "reviewer",
-            {"timeout_s": engine.budget_left()["wall_seconds"]} if engine.preparation else {}))
+            {"timeout_s": engine.budget_left()["wall_seconds"]} if engine.preparation or getattr(engine, "_delivery_accounting", False) else {}))
         call, text = worker._run("reviewer", prompt, tree, out / "reviewer", "read-only", schema)
     finally:
         ws.drop_all()
@@ -340,8 +347,8 @@ The working directory is a read-only checkout of the champion."""
     engine.ledger.event(engine.run_id, "worker_call", None, role="reviewer",
                         call_id=call.call_id, ok=call.ok, tokens=call.cost.tokens,
                         error=call.error[:300])
-    if engine.preparation and not call.extra.get("usage_complete", False):
-        engine.ledger.event(engine.preparation, "accounting_unknown", None, reason="reviewer usage missing")
+    if not call.extra.get("usage_complete", False):
+        engine.ledger.event(engine.preparation or engine.run_id, "accounting_unknown", None, reason="reviewer usage missing")
         call.ok, call.error = False, "reviewer usage missing; no further dispatch"
     if not call.ok:
         return {"ok": False, "error": call.error, "call_id": call.call_id}

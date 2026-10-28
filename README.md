@@ -275,3 +275,10 @@ python tools/observer_browser_smoke.py
 实施/验收记录及已知边界见 [观察工作台 tickets](docs/design/observer-workbench/tickets.md)。当前格式的离线夹具验证不代表用户实际部署已验证；未识别来源以 partial/unsupported 和具体诊断降级，不迁移源数据。
 
 当前来源适配只采纳可核对的明确关联。例如 `.opc/context/DECISIONS.md` 中一条 `task=<执行任务ID> revision=r0001 brief=<项目内简报路径> sha256=<完整SHA256>` 可绑定合同和简报；同一绑定出现多个不同 SHA 会标记歧义，不按标题或时间猜测。现有材料不满足该约定时仍可作为未关联对象浏览，观察器不会补写关联。
+
+
+### 准备、终验与标准重审
+
+准备默认执行必要接入检查；任务可声明 `preparation_review: true` 保留独立准备审核。正常 loop 使用 `opc run -p PROJECT --task TASK --deliver`，完成结论来自 `delivery.complete`，不会自动 apply。失败后的范围内修复使用 `--repair-promotion <promotion/report.json> --deliver`；仅 reviewer 不可用时重试 `opc promote --source-run RUN --review codex`。
+
+用户明确修订标准后，以新 revision 调用 `opc promote -p PROJECT --task TASK --revision NEW --source-run OLD_RUN --standards-confirmation confirmation.json`。旧合同和失败报告保留；仅允许纯验收变化，预算和执行语义不可通过该入口修改。格式、测试和边界见 [实施方案与说明](docs/design/task-delivery/spec.md)。

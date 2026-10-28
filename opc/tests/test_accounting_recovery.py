@@ -269,3 +269,24 @@ def test_default_preparation_has_no_reviewer_and_scoped_files(make_project, monk
     assert preparation_files(root, 't-toy') == before
     (root / '.opc/eval/evaluate.py').write_text('changed shared evaluator')
     assert preparation_files(root, 't-toy') != before
+
+
+def test_preparation_review_retry_does_not_repeat_development(make_project, monkeypatch):
+    from opc.adapters.worker import WorkerCall
+    from opc.tests.conftest import task
+    root = make_project(tsk=task(preparation_review=True))
+    calls = []
+    def worker(self, role, prompt, tree, log, sandbox, schema):
+        calls.append(role)
+        log.mkdir(parents=True)
+        if role == 'onboard':
+            (log / 'checks.txt').write_text('necessary checks')
+            reply = dict(state='ready', evidence=[(log / 'checks.txt').relative_to(root).as_posix()])
+        else:
+            reply = dict(verdict='reject' if len(calls) == 2 else 'accept')
+        return WorkerCall(role, True, Cost(0, 0, None), extra={'usage_complete':True}), json.dumps(reply)
+    monkeypatch.setattr('opc.adapters.codex.CodexWorker._run', worker)
+    kw = dict(task_id='t-toy', max_tokens=100, max_wall_seconds=600, prior_tokens=0, prior_wall_seconds=0)
+    assert onboard(root, 'codex', **kw)['preparation'] == 'pending'
+    assert onboard(root, 'codex', **kw)['ok']
+    assert calls == ['onboard', 'reviewer', 'reviewer']

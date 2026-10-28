@@ -264,3 +264,61 @@ onboard 的成功仅表明可以进入执行，不表明科学结论成立。执
 不要求证明具体 token 节省比例；不为性能验证重跑已接受的 PIM onboard；不修改用户既有实验或全局环境；不默认部署到外部项目；不自动 push、merge 或 apply。
 
 
+
+
+## 11. 实施结果（2026-10-28）
+
+本节记录本次实际实施；前文是原始输入方案。用户后续要求独立 tickets，因此增加 tickets.md 并按顺序提交。
+
+- D1：默认必要接入检查，preparation_review=true 保留明确准备审核；当前任务/component/evaluator_files 冻结，独立审核重试复用摘要相同的文件和证据。
+- D2：run --deliver 自动终验明确来源；repair-promotion 验证已登记报告和 SHA-256，从 selected commit 建新 run，记录来源与 findings，保留旧 run。loop 技能消费 findings 自主修复；reviewer 故障仅重试 promote。
+- D3：显式 source-run + 新 revision + 用户确认文件进入纯标准重审；执行合同与验收合同分别记录。同候选、评价器、工具链、环境的已有测量可复用，判定重新生成。requirement.required 默认 true；false 的诊断要求及其独占 gates 不阻断，硬性要求、未声明 gates 和基础设施失败保持阻断。
+- D4：整合 task 累计预算、未知用量、用户控制、报告绑定、准备审核复用、技能说明和 CLI 离线行为验证。
+
+### 新接口
+
+```sh
+# 默认准备；仅明确要求独立准备审阅的合同设置 preparation_review: true
+python -m opc onboard -p PROJECT --task TASK --max-tokens TOKENS --max-wall-seconds SECONDS --prior-tokens HOST_TOKENS --prior-wall-seconds HOST_SECONDS
+
+# 正常执行与终验，默认不 apply
+python -m opc run -p PROJECT --task TASK --revision r0001 --deliver
+
+# 已登记终验失败的范围内修复；旧 run、旧报告不变
+python -m opc run -p PROJECT --task TASK --revision r0001 --repair-promotion PATH_TO_REPORT_JSON --deliver
+
+# 仅重试审核，不重新开发；仍适用的测量可复用
+python -m opc promote -p PROJECT --task TASK --revision r0001 --source-run RUN --review codex
+
+# 用户明确修订标准后，同候选重审
+python -m opc promote -p PROJECT --task TASK --revision r0002 --source-run RUN --standards-confirmation confirmation.json
+```
+
+确认文件必须显式匹配来源、旧新 revision 和实际变更。changes 只列发生变化的 requirements / acceptance，old/new 使用对应字段的完整原值，不接受仅写“同意降标”。例如仅 requirements 变化：
+
+```json
+{
+  "confirmed_by": "user",
+  "source_run": "run-...",
+  "from_revision": "r0001",
+  "to_revision": "r0002",
+  "changes": {
+    "requirements": {
+      "old": [{"id":"R1","text":"阈值要求","check":{"metric":"error","op":"<=","value":0}}],
+      "new": [{"id":"R1","text":"诊断误差","check":{"metric":"error","op":"<=","value":0},"required":false}]
+    }
+  }
+}
+```
+
+文件是用户决定的显式记录，不能由模型自行生成用户同意。代码校验内容对应性，不提供用户身份认证。禁止通过此入口改变目标、预算、执行字段、objective 或 component/evaluator；这类变化走新的冻结合同/执行路径。
+
+### 实际验证与限制
+
+main@7558159 基线：290 passed、5 skipped、12 subtests passed。最终全仓：299 passed、5 skipped、12 subtests passed；git diff --check 通过。使用 `PYTHONPATH=/workspace/work/test-deps python -m pytest -q`，测试全部使用临时 Git 项目、scripted workers 或本地模拟子进程。新增覆盖默认零准备审核、显式审核重试不重复开发、选定候选失败修复、用户停止、标准确认与历史失败保留、测量复用、硬性/诊断门差异、CLI 自动终验及暂停零派发。既有 observer、合同兼容和用量恢复测试同时通过。
+
+loop 的多轮修复决策保留在源码技能中；run --deliver 是一次执行后的自动终验，不是常驻控制器。CLI 命令顺序已离线执行，未声称真实模型能正确执行所有技能决策。混合必需与诊断条件的单一 gate 仍需用户明确修订评价器并走新冻结路径，不能整体降为诊断来掩盖硬性失败。
+
+测量复用仅接受现有键能证明一致的内容；不能确认时调用现有评价入口，不建立通用的逐 gate 增量缓存。执行 gate 使用既有超时；终验前检查剩余预算、reviewer 使用剩余时间，不能预先保证外部工具单次调用的实际成本。run --deliver 的执行调度根据已记录 evaluator/reviewer 成本留余量，无历史成本时不伪造预算估计。预算不足则返回未完成终验。
+
+没有真实模型/研究实验验证；没有改动 PIM、全局技能、外部 runtime，没有自动 apply 或合并。旧无 --deliver 的 run 命令和旧合同默认硬性门语义保持可用。源码技能与 runtime 的外部部署由用户另行决定。

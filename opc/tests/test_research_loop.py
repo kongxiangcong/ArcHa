@@ -559,3 +559,40 @@ def test_confirmed_revision_reuses_measurements_without_rewriting_failure(make_p
     path.write_text(json.dumps(new))
     with pytest.raises(OPCError, match='cannot change execution'):
         promote(Engine(root, 't-toy', 'r0002'), source_run=s['run_id'], standards_confirmation=receipt)
+
+
+def test_cli_delivery_consumes_selected_run_and_never_applies(make_project, engine_for, monkeypatch, capsys):
+    from opc.cli import main
+    root = make_project(tsk=task(acceptance={}, requirements=[]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), stop], [7]))
+    monkeypatch.setattr('opc.cli._engine', lambda *a, **k: e)
+    before = git(root, 'rev-parse', 'HEAD')
+    assert main(['run','-p',str(root),'--task','t-toy','--deliver']) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result['complete']
+    assert result['delivery']['run_id'] == result['run_id']
+    assert result['delivery']['selected_version'] == result['selected_version']
+    assert not result['delivery']['applied']
+    assert git(root, 'rev-parse', 'HEAD') == before
+
+
+def test_cli_paused_delivery_makes_no_evaluation(make_project, engine_for, monkeypatch, capsys):
+    from opc.cli import main
+    root = make_project(tsk=task(acceptance={}, requirements=[]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), stop], [7]))
+    monkeypatch.setattr('opc.cli._engine', lambda *a, **k: e)
+    monkeypatch.setattr('opc.core.promote.promote', lambda *a, **k: pytest.fail('paused delivery'))
+    assert main(['run','-p',str(root),'--task','t-toy','--max-now','0','--deliver']) == 1
+    assert not json.loads(capsys.readouterr().out)['complete']
+
+
+@pytest.mark.parametrize("required", [True, False])
+def test_diagnostic_gate_does_not_mask_hard_requirement(make_project, engine_for, required):
+    from opc.core.promote import promote
+    root = make_project(tsk=task(acceptance={}, requirements=[
+        {'id':'D','text':'diagnostic','gates':['evaluate'],'required':required}]))
+    (root / '.opc/eval/evaluate.py').write_text(EVALUATE + '\nraise SystemExit(1)\n')
+    git(root, 'add', '.opc/eval/evaluate.py'); git(root, 'commit', '-qm', 'failing measurement gate')
+    e = use_sequence(engine_for(root), Sequence([stop]))
+    s = e.run()
+    assert promote(e, source_run=s['run_id'])['complete'] is (not required)

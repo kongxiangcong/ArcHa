@@ -15,3 +15,5 @@ task-brief 技能在用户确认简报后自动调用上述流程并核对产出
 - Open decisions → `.opc/README.md` Open items，未定预算不能用模板默认值冒充授权。
 
 当前引擎不原生支持：没有源码补丁的纯取证、每轮独立研究审核、跨任务依赖调度。任务需要这些时在 Open decisions 写明，不要编造优化分数来套用。
+
+正常 loop 使用 run --deliver，读取 delivery.complete 后交付；失败按已登记 promotion 的 findings 自主修复。默认准备不要求独立 reviewer，合同 preparation_review=true 才审核。终验后不自动 apply；纯验收标准修订使用新 revision 和显式 --source-run/--standards-confirmation。

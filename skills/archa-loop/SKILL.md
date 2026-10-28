@@ -19,9 +19,9 @@ python3 <project>/.opc/archa.py brief-check -p <project> --brief <brief>
 
 ## 准备执行
 
-用户要求启动本技能即授权在已确定的合同范围、预算内准备和运行，无需重复询问是否启动。先核对 `.opc/README.md` 的 Open items、交接记录及实际合同；预算未定或可靠用量记录不可得时停止新增派发；评价器、负控、证据工具或设备能力未知属于范围内准备待办，先用下述 prepare 路径自主建立与验证，不直接转交用户。不得编造指标或扩大范围。
+用户要求启动本技能即授权在已确定的合同范围、预算内准备和运行，无需重复询问是否启动。先核对 `.opc/README.md` 的 Open items、交接记录及实际合同；预算未定或可靠用量记录不可得时停止新增派发；必要评价器接入、关键验证或设备能力未知属于范围内准备待办，先用下述 prepare 路径自主建立与验证，不直接转交用户。不得编造指标或扩大范围。
 
-读取 `status -p <project> --task <task-id>`。已有控制器运行时只跟踪状态，不启动第二个控制器。相同 revision 的 paused/blocked run 在原因解决后可用普通 run 恢复；closed run 默认报告已有结果，不自动用 `--new-run` 重置预算。用户明确要求新一轮且预算已确定时才使用 `--new-run`；合同变更也需要新 run，只有明确从上次冠军继续时才传 `--base <冠军提交>`。
+读取 `status -p <project> --task <task-id>`。已有控制器运行时只跟踪状态，不启动第二个控制器。相同 revision 的 paused/blocked run 在原因解决后可用普通 run 恢复；closed run 默认报告已有结果，不自动用 `--new-run` 重置预算；已登记失败终验的范围内修复使用下文 --repair-promotion，属于同一授权任务。用户明确要求新一轮且预算已确定时才使用 `--new-run`；合同变更也需要新 run，只有明确从上次冠军继续时才传 `--base <冠军提交>`。
 
 首次执行准备时打开 `.opc/project.json` 的 `execution_enabled`，然后按顺序完成：
 
@@ -46,7 +46,7 @@ python3 <project>/.opc/archa.py run -p <project> --task <task-id> --revision <re
 ## 自主准备与冻结
 
 发现准备待办时使用已有 onboard 命令的 `--prepare --task <task-id> --brief <brief> --max-tokens <授权总额> --max-wall-seconds <授权秒数> --prior-wall-seconds <累计主流程及外部嵌套秒数> --prior-tokens <累计主流程及外部嵌套用量>`。总量包含 cached input，不能填猜测的 0；正常 worker 与只读 reviewer 由 ledger 自动记账，不重复计入 prior-tokens。未知用量停止新增派发。准备与正式 run 共用同一授权总额，不能新建 run 重置。
-准备 agent 可在 .opc 内建立评价器、负控、原件采集/保存与监控工具，进行授权的有界设备能力探测；不自动开展正式手机实验。未探测不是外部阻塞，失败须保留命令、权限错误与原始回执。pending 表示 agent 继续准备；ready 只表示必要接入检查完成，正式实验尚未开始；external_blocked 必须给出观测证据、缺失外部条件、责任人与下一步。
+准备 agent 可在 .opc 内完成必要评价器、关键失败路径与原件采集接入，进行授权的有界设备能力探测；不自动开展正式手机实验。未探测不是外部阻塞，失败须保留命令、权限错误与原始回执。pending 表示 agent 继续准备；ready 只表示必要接入检查完成，正式实验尚未开始；external_blocked 必须给出观测证据、缺失外部条件、责任人与下一步。
 准备默认不调用 reviewer；合同 preparation_review=true 时进行针对性独立审核。当前任务及实际共享评价依赖摘要在 ledger 中冻结。提交被审文件，check/preflight 通过且用户允许正式执行才进入 run。“本步只准备”时到此结束，不能自动启动设备实验。产品未实现的功能失败是未完成基线，不能变造评分过门。
 已有正式 run 时不原地改冻结合同/评价器：保留旧 revision/run，准备新 revision 并重新审阅冻结；预算账本沿用。旧部署 runtime/全局技能不会自动更新，先核对入口 --help 是否支持 --prepare，不以仓库源码代替已安装行为。
 
@@ -62,3 +62,10 @@ python3 <project>/.opc/archa.py run -p <project> --task <task-id> --revision <re
 3. 若修复后 selected commit 未变化且 findings 相同，不再次修复或重审；仅具体修复、外部状态变化或用户确认新标准后继续。
 4. 用户 pause/stop、预算耗尽或 accounting_unknown 时立即停止新增派发。用户仅要求准备时不进入本流程。
 5. scope/evaluator 变化需要明确的新 revision；验收含义变更须用户明确确认。所有终验命令默认不传 --apply。
+
+
+## 用户确认标准修订
+
+用户明确给出旧要求与新要求后，保存新 task revision，保留原 revision/run/失败报告。纯验收修订使用 `promote ... --revision <new-revision> --source-run <old-run> --standards-confirmation <confirmation.json>`。确认文件格式和字段见仓库 docs/design/task-delivery/spec.md 的实施说明；不能从 reviewer 建议或用户沉默生成确认。
+
+旧 candidate 与 evaluator 不变时复用仍适用的测量，重新判定；required=false 仅将明确诊断要求及其独占 gates 降为诊断，其他未声明 gates 和必需要求默认仍硬性阻断。目标、执行输入、评价器或预算改变须走新冻结 revision/run，不能经此入口放行。

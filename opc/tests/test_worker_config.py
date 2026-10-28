@@ -118,7 +118,7 @@ def test_reviewer_does_not_inherit_expert(make_project, engine_for, monkeypatch,
         assert role == "reviewer"
         expected = ("review-model", "high") if configured else (None, None)
         assert (self.model, self.reasoning_effort) == expected
-        return SimpleNamespace(ok=True, call_id="fake", cost=Cost(0, 0, None), error=""), '{"verdict":"accept"}'
+        return SimpleNamespace(ok=True, call_id="fake", cost=Cost(0, 0, None), error="", extra={"usage_complete": True}), '{"verdict":"accept"}'
 
     monkeypatch.setattr(CodexWorker, "_run", run)
     commit = engine.ledger.run(engine.run_id)["base_commit"]
