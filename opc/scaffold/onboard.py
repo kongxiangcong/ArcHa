@@ -245,7 +245,7 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
         prompt = ("Remaining shared tokens: %d; wall seconds: %.1f.\n" %
                   (max_tokens-used["tokens"], max_wall_seconds-used["wall_seconds"]) +
                   (HERE / "ONBOARDING.md").read_text(encoding="utf-8") + "\n" +
-                  "PREPARATION: Develop missing evaluators, negative controls, evidence capture, usage monitoring "
+                  "PREPARATION: Complete necessary evaluator integration and focused validation "
                   "and bounded capability probes within the confirmed task. Write only .opc except protected "
                   "runtime/research/workers inputs. Do not change user requirements or execute formal device "
                   "experiments. Unknown capability calls for a bounded probe, not an invented external blocker. "
@@ -296,10 +296,18 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             old = ledger.latest_run(task_id)
             if old is not None and current.revision == old["revision"]:
                 return finish("pending", "existing execution requires a new revision before preparing changed acceptance")
+        from ..core.config import TaskSpec
+        prepared_task = TaskSpec.load(root, task_id)
+        files = preparation_files(root, task_id)
+        if len(files) < 3:
+            return finish("pending", "current task evaluator files are missing", evidence=evidence)
+        if not prepared_task.raw.get("preparation_review", False):
+            return finish("ready", "necessary integration checks recorded; commit prepared files before execution",
+                          files=files, evidence=evidence)
         # Independent read-only inspection; cannot certify its own mutable drafts.
         review = Worker(worker_options(config, "reviewer", {"timeout_s": timeout}))
-        files = preparation_files(root)
-        rc, reply = review._run("reviewer", "Review the prepared evaluator, negative controls and probe receipts. "
+        files = preparation_files(root, task_id)
+        rc, reply = review._run("reviewer", "Review the task-required preparation checks and probe receipts. "
             "Verify against the confirmed brief without executing formal device experiments. "
             "Software checks prove tooling only. Accept only when independent acceptance is preserved. "
             "Return JSON {verdict: accept|reject, reason: text}. Evidence: " + json.dumps(evidence) +
@@ -315,7 +323,7 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             accepted = rc.ok and json.loads(reply).get("verdict") == "accept"
         except ValueError:
             accepted = False
-        if not accepted or files != preparation_files(root):
+        if not accepted or files != preparation_files(root, task_id):
             return finish("pending", "preparation review rejected or reviewed files changed", evidence=evidence)
         try:
             remaining()
@@ -333,9 +341,16 @@ def load_brief_text(root: Path, brief) -> str:
     return body
 
 
-def preparation_files(root: Path) -> dict[str, str]:
+def preparation_files(root: Path, task_id: str | None = None) -> dict[str, str]:
+    from ..core.config import TaskSpec, ComponentConfig
     from ..core.workspace import git
+    if task_id is None:
+        raise OPCError("preparation_files requires an explicit task")
+    task = TaskSpec.load(root, task_id)
+    component = ComponentConfig.load(root, task.component)
+    patterns = component.evaluator_files + [task.path.relative_to(root).as_posix(),
+                ".opc/components/%s.json" % task.component]
     names = str(git("ls-files", "--cached", "--others", "--exclude-standard", "-z", "--",
-                    ".opc/eval", ".opc/components", ".opc/tasks", cwd=root)).split("\0")
+                    *patterns, cwd=root)).split("\0")
     return {rel: hashlib.sha256((root / rel).read_bytes()).hexdigest()
             for rel in sorted(set(names)) if rel and (root / rel).is_file()}

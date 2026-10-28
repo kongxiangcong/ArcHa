@@ -74,3 +74,6 @@ python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --brief <br
 已有正式 run 时不原地改冻结合同/评价器：保留旧 revision/run，准备新 revision 并重新审阅冻结；预算账本沿用。旧部署 runtime/全局技能不会自动更新，先核对入口 --help 是否支持 --prepare，不以仓库源码代替已安装行为。
 
 每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用已有冻结回执。无法取得可靠累计量时停止后续模型派发。
+
+
+准备默认仅执行与本次接入改动对应的必要检查，不固定建设全套负控或通用监控工具。ready 表示必要接入完成，不代表研究结论成立。合同显式设置 `preparation_review: true` 时保留独立准备审核；旧 ready 回执继续有效。冻结仅覆盖当前 task、component 及 evaluator_files（显式共享依赖也在这些 glob 中登记）。

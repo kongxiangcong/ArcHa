@@ -412,7 +412,7 @@ def test_metered_preparation_to_formal_execution(make_project, engine_for, monke
     from opc.adapters.codex import CodexWorker
     from opc.tests.conftest import EVALUATE
     import subprocess, sys
-    root = make_project(tsk=task(acceptance={}, requirements=[]))
+    root = make_project(tsk=task(acceptance={}, requirements=[], preparation_review=True))
     evaluator = root / '.opc/eval/evaluate.py'
     evaluator.unlink()
     git(root, 'add', '-A'); git(root, 'commit', '-qm', 'missing evaluator')

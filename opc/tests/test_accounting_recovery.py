@@ -245,3 +245,27 @@ def test_preparation_retry_preserves_call_logs_and_diagnostics(make_project, mon
     assert onboard(root, 'codex', **kw)['preparation'] == 'pending'
     assert len(logs) == 2 and logs[0] != logs[1]
     assert (logs[0] / 'startup.txt').read_text() == 'startup error 0'
+
+
+def test_default_preparation_has_no_reviewer_and_scoped_files(make_project, monkeypatch):
+    from opc.adapters.worker import WorkerCall
+    from opc.scaffold.onboard import preparation_files
+    root = make_project()
+    calls = []
+    def worker(self, role, prompt, tree, log, sandbox, schema):
+        calls.append(role)
+        log.mkdir(parents=True)
+        (log / 'check.txt').write_text('integration checked')
+        return WorkerCall(role, True, Cost(0, 0, None), extra={'usage_complete': True}), json.dumps(
+            dict(state='ready', evidence=[(log / 'check.txt').relative_to(root).as_posix()]))
+    monkeypatch.setattr('opc.adapters.codex.CodexWorker._run', worker)
+    assert onboard(root, 'codex', task_id='t-toy', max_tokens=100, max_wall_seconds=600,
+                   prior_tokens=0, prior_wall_seconds=0)['ok']
+    assert calls == ['onboard']
+    before = preparation_files(root, 't-toy')
+    other = root / '.opc/tasks/unrelated/revisions/r0001/task.json'
+    other.parent.mkdir(parents=True)
+    other.write_text('{}')
+    assert preparation_files(root, 't-toy') == before
+    (root / '.opc/eval/evaluate.py').write_text('changed shared evaluator')
+    assert preparation_files(root, 't-toy') != before

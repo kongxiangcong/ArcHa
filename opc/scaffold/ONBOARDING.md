@@ -306,3 +306,6 @@ CLI 已启动但没有完整 usage 回执时，仍停止后续派发，并输出
 不会因更新源仓库而自动生效。
 
 Codex 状态目录语义参考：[OpenAI environment variables](https://learn.chatgpt.com/docs/config-file/environment-variables)。
+
+
+准备默认仅执行与本次接入改动对应的必要检查，不固定建设全套负控或通用监控工具。ready 表示必要接入完成，不代表研究结论成立。合同显式设置 `preparation_review: true` 时保留独立准备审核；旧 ready 回执继续有效。冻结仅覆盖当前 task、component 及 evaluator_files（显式共享依赖也在这些 glob 中登记）。
