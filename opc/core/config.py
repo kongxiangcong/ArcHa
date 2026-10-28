@@ -55,7 +55,7 @@ COMPONENT_KEYS = {"component_id", "description", "editable", "frozen", "evaluato
 GATE_KEYS = {"id", "argv", "timeout_s", "metrics", "repeat", "cwd", "env"}
 TASK_KEYS = {"task_id", "revision", "component", "goal", "direction", "requirements",
              "acceptance", "budget", "workers", "base_ref", "preparation_review"}
-REQUIREMENT_KEYS = {"id", "text", "verification", "check", "gates"}
+REQUIREMENT_KEYS = {"id", "text", "verification", "check", "gates", "required"}
 ACCEPTANCE_KEYS = {"objective", "constraints", "target", "repeats", "noise_k", "rule",
                    "rule_params"}
 OBJECTIVE_KEYS = {"metric", "direction", "min_rel_gain"}
@@ -327,6 +327,8 @@ class TaskSpec:
             raise OPCError("preparation_review must be boolean")
         for i, r in enumerate(d.get("requirements") or []):
             _keys(r, REQUIREMENT_KEYS, "%s requirements[%d]" % (where, i))
+            if "required" in r and type(r["required"]) is not bool:
+                raise OPCError("requirement.required must be boolean")
             if "gates" in r and (not isinstance(r["gates"], list) or not r["gates"] or
                                   not all(isinstance(g, str) and g for g in r["gates"])):
                 raise OPCError("requirement.gates must name nonempty gate IDs")

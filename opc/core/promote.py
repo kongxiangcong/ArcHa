@@ -27,15 +27,39 @@ def checked_out_branches(repo: Path) -> set[str]:
 
 
 def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
-            apply_to: str | None = None, source_run: str | None = None) -> dict[str, Any]:
+            apply_to: str | None = None, source_run: str | None = None, standards_confirmation: str | Path | None = None) -> dict[str, Any]:
     run = engine.ledger.run(source_run) if source_run else engine.ledger.latest_run(engine.task.task_id)
     if run is None:
         raise OPCError("task %s has no run" % engine.task.task_id)
     if run["task_id"] != engine.task.task_id or run["revision"] == "preparation":
         raise OPCError("delivery source must be an execution run of this task")
-    if run["task_digest"] != engine.task.digest:
-        raise OPCError("delivery contract differs from frozen run; use its revision")
     engine.run_id = run["run_id"]
+    engine._delivery_accounting = True
+    revised = run["task_digest"] != engine.task.digest
+    confirmation = None
+    if revised:
+        if not source_run or not standards_confirmation:
+            raise OPCError("different acceptance revision requires explicit source run and user standards confirmation")
+        frozen = json.loads((engine.artifact_dir() / "frozen/task.json").read_text(encoding="utf-8"))
+        old_component = json.loads((engine.artifact_dir() / "frozen/component.json").read_text(encoding="utf-8"))
+        def execution_contract(raw):
+            result = {k:v for k,v in raw.items() if k not in ("revision", "requirements", "acceptance")}
+            result["acceptance"] = {k:v for k,v in raw.get("acceptance", {}).items() if k not in ("constraints", "target")}
+            return result
+        if execution_contract(frozen) != execution_contract(engine.task.raw) or old_component != engine.comp.raw:
+            raise OPCError("standards-only reassessment cannot change execution, evaluator, inputs, objective or budget")
+        document = Path(standards_confirmation)
+        if not document.is_absolute():
+            document = engine.root / document
+        confirmation = json.loads(document.read_text(encoding="utf-8"))
+        changes = {k:{"old":frozen.get(k), "new":engine.task.raw.get(k)}
+                   for k in ("requirements", "acceptance") if frozen.get(k) != engine.task.raw.get(k)}
+        if (not changes or confirmation.get("confirmed_by") != "user" or
+            confirmation.get("source_run") != source_run or
+            confirmation.get("from_revision") != run["revision"] or
+            confirmation.get("to_revision") != engine.task.revision or confirmation.get("changes") != changes):
+            raise OPCError("confirmation must explicitly bind user-approved old and new standards to this run/revision")
+        confirmation = dict(confirmation, sha256=hashlib.sha256(document.read_bytes()).hexdigest())
     champs = engine.ledger.champions(engine.run_id)
     selected = engine.selected_commit()
     base = {"commit_sha": run["base_commit"], "metrics": champs[0]["metrics"] if champs else {"values": {}}}
@@ -85,7 +109,10 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
     if confirm_repeats == 0:
         for path in sorted((engine.artifact_dir() / "promotion").glob("*/report.json"), reverse=True):
             previous = json.loads(path.read_text(encoding="utf-8"))
-            if previous.get("evidence_key") == key and previous.get("evaluation"):
+            previous_key = previous.get("evidence_key", {})
+            same_measurement = ({k:v for k,v in previous_key.items() if k != "task"} ==
+                                {k:v for k,v in key.items() if k != "task"})
+            if (previous_key == key or (revised and same_measurement)) and previous.get("evaluation"):
                 evidence = previous["evaluation"]
                 evidence_source = str(path)
                 break
@@ -99,7 +126,11 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
                         "gates": [g.as_dict() for g in ev.gates], "metrics": meas.as_dict() if meas else None}
         finally:
             ws.drop_all()
-    if evidence["failure"] or any(g["status"] != "passed" for g in evidence["gates"]):
+    diagnostic_gates = {g for r in task.requirements if r.get("required") is False for g in r.get("gates", [])}
+    hard_gates = {g for r in task.requirements if r.get("required", True) for g in r.get("gates", [])}
+    diagnostic_gates -= hard_gates
+    failed_hard = [g for g in evidence["gates"] if g["status"] != "passed" and g["gate_id"].split("#")[0] not in diagnostic_gates]
+    if evidence["failure"] not in (None, "broken") or failed_hard or (evidence["failure"] and not evidence["gates"]):
         finding("gates", "block", evidence["reason"] or "not all required gates passed")
     best["metrics"] = evidence["metrics"] or {"values": {}}
     values = best["metrics"]["values"]
@@ -156,6 +187,7 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
             champ_values.get(task.acceptance.target.metric, float("nan"))))
     coverage = []
     for req in task.requirements:
+        severity = "block" if req.get("required", True) else "warn"
         how = req.get("verification", "automated")
         chk = req.get("check")
         if chk:
@@ -163,21 +195,21 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
             why = acceptance.check(c, champ_values, None)
             status = "met" if why is None else "not_met: " + why
             if why is not None:
-                finding("requirements", "block", "%s not met: %s" % (req.get("id"), why))
+                finding("requirements", severity, "%s not met: %s" % (req.get("id"), why))
         elif how == "automated" and req.get("gates"):
             passed = {g["gate_id"].split("#")[0] for g in evidence["gates"] if g["status"] == "passed"}
             missing = set(req["gates"]) - passed
             status = "met_by_gates" if not missing else "unverified gates: " + ", ".join(sorted(missing))
             if missing:
-                finding("requirements", "block", "%s: %s" % (req["id"], status))
+                finding("requirements", severity, "%s: %s" % (req["id"], status))
         elif how == "automated":
             status = "unverified: no metric check or review evidence declared"
-            finding("requirements", "block", "%s has no declared verification coverage" % req.get("id"))
+            finding("requirements", severity, "%s has no declared verification coverage" % req.get("id"))
         else:
             status = "needs_review"
 
         coverage.append({"id": req.get("id"), "text": req.get("text"), "verification": how,
-                         "status": status})
+                         "status": status, "required": req.get("required", True)})
 
     # 6. optional independent reviewer: a fresh read-only model session
     reviewer = None
@@ -204,9 +236,12 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
             if reviewer and reviewer.get("ok") and reviewer.get("verdict") == "accept":
                 row["status"] = "met_by_review"
             else:
-                finding("requirements", "block", "%s needs independent review" % row["id"])
+                finding("requirements", "block" if row["required"] else "warn", "%s needs independent review" % row["id"])
     blocked = any(f["severity"] == "block" for f in findings)
     report = {"promotion_id": pid, "run_id": engine.run_id, "task": task.task_id,
+              "execution_revision": run["revision"], "execution_task_digest": run["task_digest"],
+              "acceptance_revision": task.revision, "acceptance_task_digest": task.digest,
+              "standards_confirmation": confirmation, "reassessed": revised,
               "baseline": base["commit_sha"], "selected_version": selected,
               "champion": champs[-1]["commit_sha"] if champs else None, "files": files,
               "evidence_key": key, "evaluation": evidence, "evidence_source": evidence_source,
@@ -220,6 +255,8 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
 
     write_json(out / "report.json", report)
     if apply_to:
+        if revised:
+            raise OPCError("reassessment does not apply; inspect the new report separately")
         if blocked:
             raise OPCError("promotion blocked: %s" % "; ".join(f["text"] for f in findings
                                                                  if f["severity"] == "block"))

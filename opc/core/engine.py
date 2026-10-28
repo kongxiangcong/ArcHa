@@ -383,8 +383,10 @@ class Engine:
 
     # ----------------------------------------------------------------- budget
     def spent(self) -> dict[str, Any]:
-        t = self.ledger.task_totals(self.task.task_id) if self.preparation or self.ledger.events(self.run_id, "delivery_repair") else self.ledger.totals(self.run_id)
+        t = self.ledger.task_totals(self.task.task_id) if self.preparation or getattr(self, "_delivery_accounting", False) or self.ledger.events(self.run_id, "delivery_repair") else self.ledger.totals(self.run_id)
         attempts = self.ledger.attempts(self.run_id)
+        if self.ledger.events(self.run_id, "delivery_repair"):
+            attempts = [a for r in self.ledger.runs() if r["task_id"] == self.task.task_id for a in self.ledger.attempts(r["run_id"])]
         t["search_attempts"] = sum(1 for a in attempts if a["outcome"] and
                                    Outcome(a["outcome"]).counts_as_search)
         t["attempts"] = len(attempts)

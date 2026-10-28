@@ -61,7 +61,7 @@ def cmd_run(a) -> int:
         if s["state"] == "closed" and e.ledger.control(e.run_id) not in ("pause", "stop") and "by user" not in (s["stop_reason"] or ""):
             from .core.promote import promote
             review = a.review
-            if review is None and any(r.get("verification") == "review" for r in e.task.requirements):
+            if review is None and any(r.get("verification", "automated") != "automated" and r.get("required", True) for r in e.task.requirements):
                 review = e.task.expert.kind if e.task.expert.kind in ("codex", "dsh") else None
             try:
                 s["delivery"] = promote(e, review=review, source_run=s["run_id"])
@@ -127,7 +127,7 @@ def cmd_report(a) -> int:
 
 def cmd_promote(a) -> int:
     from .core.promote import promote
-    rep = promote(_engine(a), confirm_repeats=a.confirm, review=a.review, apply_to=a.apply, source_run=a.source_run)
+    rep = promote(_engine(a), confirm_repeats=a.confirm, review=a.review, apply_to=a.apply, source_run=a.source_run, standards_confirmation=a.standards_confirmation)
     _print({k: v for k, v in rep.items() if k not in ("reviewer",)} |
            {"reviewer": (rep.get("reviewer") or {}).get("verdict")})
     return 0 if rep["promotable"] else 1
@@ -196,6 +196,7 @@ def main(argv=None) -> int:
         p.set_defaults(command=c)
     add("report", cmd_report)
     p = add("promote", cmd_promote)
+    p.add_argument("--standards-confirmation", help="explicit user-approved old/new standards JSON for reassessment")
     p.add_argument("--source-run", help="explicit execution run for delivery")
     p.add_argument("--confirm", type=int, default=0, help="repeat baseline and selected delivery N times for numeric comparison")
     p.add_argument("--review", default=None, choices=[None, "codex", "dsh"])

@@ -522,3 +522,40 @@ def test_delivery_repair_respects_stop(make_project, engine_for):
     e.ledger.set_control(s['run_id'], 'stop')
     with pytest.raises(OPCError, match='pause/stop'):
         e.repair_delivery(Path(report['report_dir']) / 'report.json')
+
+
+def test_confirmed_revision_reuses_measurements_without_rewriting_failure(make_project, engine_for, monkeypatch):
+    from opc.core.promote import promote
+    from opc.core.model import OPCError
+    root = make_project(tsk=task(acceptance={}, requirements=[
+        {'id':'R','text':'loss threshold','check':{'metric':'loss','op':'<=','value':1}}]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), stop], [4]))
+    s = e.run()
+    failed = promote(e, source_run=s['run_id'])
+    old_report = Path(failed['report_dir']) / 'report.json'
+    original = old_report.read_bytes()
+    new = dict(e.task.raw, revision='r0002', requirements=[
+        {'id':'R','text':'diagnostic loss','check':{'metric':'loss','op':'<=','value':1}, 'required':False}])
+    path = root / '.opc/tasks/t-toy/revisions/r0002/task.json'
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(new))
+    from opc.core.engine import Engine
+    revised = Engine(root, 't-toy', 'r0002')
+    with pytest.raises(OPCError, match='confirmation'):
+        promote(revised, source_run=s['run_id'])
+    receipt = root / 'confirmation.json'
+    receipt.write_text(json.dumps(dict(confirmed_by='user', source_run=s['run_id'],
+        from_revision='r0001', to_revision='r0002', changes={
+            'requirements':{'old':e.task.raw['requirements'], 'new':new['requirements']}})))
+    monkeypatch.setattr(revised, 'evaluate_commit', lambda *a, **k: pytest.fail('unnecessary measurement'))
+    passed = promote(revised, source_run=s['run_id'], standards_confirmation=receipt)
+    assert passed['complete'] and passed['reassessed']
+    assert passed['selected_version'] == s['selected_version']
+    assert passed['evidence_source'] == str(old_report)
+    assert passed['requirements'][0]['status'].startswith('not_met')
+    assert old_report.read_bytes() == original
+    assert len([r for r in revised.ledger.runs() if r['revision'] != 'preparation']) == 1
+    new['budget']['max_tokens'] = 999999
+    path.write_text(json.dumps(new))
+    with pytest.raises(OPCError, match='cannot change execution'):
+        promote(Engine(root, 't-toy', 'r0002'), source_run=s['run_id'], standards_confirmation=receipt)
