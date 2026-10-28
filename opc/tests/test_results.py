@@ -235,9 +235,7 @@ def test_malformed_registration_keeps_existing_text(tmp_path):
     assert path.read_bytes() == before
 
 
-def test_results_http_entry_uses_existing_file_list_and_links(make_project):
-    pytest.importorskip('fastapi')
-    from fastapi.testclient import TestClient
+def test_results_http_entry_uses_existing_file_list_and_links(make_project, observer_test_client):
     from opc.observer.api import create_app
     from urllib.parse import quote
     root = make_project(tsk=task(results_path=ENTRY), extra={
@@ -246,7 +244,7 @@ def test_results_http_entry_uses_existing_file_list_and_links(make_project):
     app.state.adapter._discover()
     revision = next(iter(app.state.adapter.revisions))
     base = '/api/observer/v1'
-    with TestClient(app) as client:
+    with observer_test_client(app) as client:
         detail = client.get(base + '/task-revisions/' + quote(revision, safe=''))
         assert detail.status_code == 200
         art = next(a for a in detail.json()['data']['artifacts'] if a['title'] == '任务成果')

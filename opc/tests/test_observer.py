@@ -111,11 +111,9 @@ def project(tmp_path):
 
 
 @pytest.fixture
-def client(project):
-    pytest.importorskip('fastapi')
-    from fastapi.testclient import TestClient
+def client(project, observer_test_client):
     from opc.observer.api import create_app
-    with TestClient(create_app(project)) as client:
+    with observer_test_client(create_app(project)) as client:
         yield client
 
 
@@ -365,9 +363,8 @@ def test_registered_artifact_symlink_replacement_cannot_escape(client,project,tm
     assert 'SECRET_OUTSIDE_BOUNDARY' not in response.text
 
 
-def test_explicit_external_artifact_root_is_readable(project,tmp_path):
+def test_explicit_external_artifact_root_is_readable(project,tmp_path,observer_test_client):
     import shutil
-    from fastapi.testclient import TestClient
     from opc.observer.api import create_app
     external=tmp_path/'external-artifacts'
     old_root=project/'.opc/local/artifacts'
@@ -378,7 +375,7 @@ def test_explicit_external_artifact_root_is_readable(project,tmp_path):
             value=json.loads(body)
             value['log_dir']=value['log_dir'].replace(str(old_root),str(external))
             db.execute('UPDATE events SET body=? WHERE seq=?',(json.dumps(value),seq))
-    with TestClient(create_app(project)) as c:
+    with observer_test_client(create_app(project)) as c:
         old=run(c)
         artifact=next(a for a in old['artifacts'] if 'candidate.patch' in a['label'])
         response=get(c,'/artifacts/'+ident(artifact['id'])+'/content')

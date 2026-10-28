@@ -280,13 +280,17 @@ python -m opc.observer --project /absolute/path/to/project
 后端可选依赖锁定在 `pyproject.toml`，前端与传递依赖锁定在 `web/package-lock.json`。升级 ArcHa 时，在 `opc/observer/adapter.py` 核对变化的路径、账本列、冻结合同和 provider 日志映射；前端只消费 `/api/observer/v1` DTO。实体及接口模型见 `opc/observer/models.py`，服务的 `/openapi.json` 可读取生成的合同。升级后运行以下离线检查，不要求模型密钥：
 
 ```bash
-python -m pip install pytest httpx
-python -m pytest opc/tests/test_observer.py -q
+python -m pip install -e '.[observer]' pytest httpx
+python -m pytest opc/tests/test_observer.py opc/tests/test_results.py -q
 npm --prefix web run typecheck
 npm --prefix web run build
 # 浏览器验收另需 Playwright 与本机 Chromium
 python tools/observer_browser_smoke.py
 ```
+
+框架基础安装的回归只需 `python -m pip install -e . pytest` 后运行 `python -m pytest -q`。
+未安装 FastAPI 或 HTTPX 时只跳过依赖它们的 HTTP 测试，观察器文件适配器测试仍运行。
+CI 在基础安装和安装 observer 测试依赖后分别运行完整回归，并显式检查 HTTP 测试依赖可导入。
 
 实施/验收记录及已知边界见 [观察工作台 tickets](docs/design/observer-workbench/tickets.md)。当前格式的离线夹具验证不代表用户实际部署已验证；未识别来源以 partial/unsupported 和具体诊断降级，不迁移源数据。
 
