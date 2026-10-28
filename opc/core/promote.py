@@ -105,7 +105,7 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
                     % (cur["seq"], cur["metrics"]["degraded_by"]))
 
     # Full delivery evidence belongs to the selected commit, never another champion.
-    key = {"commit": selected, "evaluator": now, "toolchain": engine.toolchain_digest(selected),
+    key = {"delivery_policy": 2, "diagnostic_gates": sorted(engine.diagnostic_gates()), "commit": selected, "evaluator": now, "toolchain": engine.toolchain_digest(selected),
            "task": task.digest, "environment": hashlib.sha256(json.dumps({
                "process": dict(os.environ), "component": engine.comp.env, "gates": [g.env for g in engine.comp.gates]},
                sort_keys=True).encode()).hexdigest()}
@@ -125,15 +125,20 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
         engine.hard_check()
         ws = engine.workspaces("delivery")
         try:
-            ev, meas, tree = engine.evaluate_commit(ws, selected, "", out / "eval", "selected", fresh=True)
+            ev, meas, tree = engine.evaluate_commit(ws, selected, "", out / "eval", "selected", fresh=True, delivery=True)
             engine.ledger.charge(engine.run_id, None, "evaluator", Cost(ev.seconds, 0, 0.0))
             evidence = {"failure": ev.failure.value if ev.failure else None, "reason": ev.reason,
                         "gates": [g.as_dict() for g in ev.gates], "metrics": meas.as_dict() if meas else None}
         finally:
             ws.drop_all()
-    diagnostic_gates = {g for r in task.requirements if r.get("required") is False for g in r.get("gates", [])}
-    hard_gates = {g for r in task.requirements if r.get("required", True) for g in r.get("gates", [])}
-    diagnostic_gates -= hard_gates
+    diagnostic_gates = engine.diagnostic_gates()
+    expected = {g.gate_id if not g.repeat or task.acceptance.repeats <= 1 else
+                "%s#%d" % (g.gate_id, r + 1)
+                for g in engine.comp.gates if g.gate_id not in diagnostic_gates
+                for r in range(task.acceptance.repeats if g.repeat else 1)}
+    passed = {g["gate_id"] for g in evidence["gates"] if g["status"] == "passed"}
+    if expected - passed:
+        finding("gates", "block", "required gates not passed: " + ", ".join(sorted(expected - passed)))
     failed_hard = [g for g in evidence["gates"] if g["status"] != "passed" and g["gate_id"].split("#")[0] not in diagnostic_gates]
     if evidence["failure"] not in (None, "broken") or failed_hard or (evidence["failure"] and not evidence["gates"]):
         finding("gates", "block", evidence["reason"] or "not all required gates passed")

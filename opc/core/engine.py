@@ -166,8 +166,15 @@ class Engine:
             self._workers = (expert, designer)
         return self._workers
 
+    def diagnostic_gates(self) -> frozenset[str]:
+        optional = {g for r in self.task.requirements if r.get("required") is False
+                    for g in r.get("gates", [])}
+        mandatory = {g for r in self.task.requirements if r.get("required", True)
+                     for g in r.get("gates", [])}
+        return frozenset(optional - mandatory)
+
     def evaluate_commit(self, ws: Workspaces, commit: str, patch: str, out: Path,
-                        name: str, *, fresh: bool = False) -> tuple[Evaluation, Measurements | None, Path]:
+                        name: str, *, fresh: bool = False, delivery: bool = False) -> tuple[Evaluation, Measurements | None, Path]:
         """Evaluate `commit` (+ `patch`) in a fresh tree with the frozen gates."""
         tree = ws.checkout(name, commit)
         apply_patch(tree, patch)
@@ -178,10 +185,16 @@ class Engine:
         # contracts and notes do not change what the gates compute
         content = tracked_digest(self.root, tree_id, ["**"], self.comp.scratch + [
             ".opc/tasks/**", ".opc/context/**", ".opc/*.md", ".opc/README.md"])[0]
-        ev = None if fresh else self._cached(content, digest, tool_digest)
+        ev = None if fresh or delivery else self._cached(content, digest, tool_digest)
         if ev is None:
-            ev = dom.evaluate(tree, out, self.task.acceptance.repeats)
-            self._store(content, digest, tool_digest, ev)
+            from ..domains.command import CommandDomain
+            if delivery and isinstance(dom, CommandDomain):
+                ev = dom.evaluate(tree, out, self.task.acceptance.repeats,
+                                  diagnostic_gates=self.diagnostic_gates())
+            else:
+                ev = dom.evaluate(tree, out, self.task.acceptance.repeats)
+            if not delivery:
+                self._store(content, digest, tool_digest, ev)
         meas = None
         if ev.failure is None:
             meas = Measurements(values=ev.values, evaluator_digest=digest,

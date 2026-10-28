@@ -596,3 +596,23 @@ def test_diagnostic_gate_does_not_mask_hard_requirement(make_project, engine_for
     e = use_sequence(engine_for(root), Sequence([stop]))
     s = e.run()
     assert promote(e, source_run=s['run_id'])['complete'] is (not required)
+
+
+@pytest.mark.parametrize('bound', [False, True])
+@pytest.mark.parametrize('hard_exit', [0, 1])
+def test_delivery_checks_hard_gates_after_diagnostic_failure(make_project, engine_for, bound, hard_exit):
+    from opc.core.promote import promote
+    comp = component()
+    comp['gates'].insert(0, {'id': 'diagnostic', 'argv': ['{python}', '-c', 'exit(1)']})
+    comp['gates'].append({'id': 'hard', 'argv': ['{python}', '-c', f'exit({hard_exit})']})
+    requirements = [{'id': 'D', 'text': 'diagnostic', 'gates': ['diagnostic'], 'required': False}]
+    if bound:
+        requirements.append({'id': 'H', 'text': 'hard check', 'gates': ['hard']})
+    root = make_project(comp=comp, tsk=task(acceptance={}, requirements=requirements))
+    e = use_sequence(engine_for(root), Sequence([stop]))
+    s = e.run()
+    report = promote(e, source_run=s['run_id'])
+    assert report['complete'] is (hard_exit == 0)
+    assert {g['gate_id'] for g in report['evaluation']['gates']} == {'diagnostic', 'evaluate', 'hard'}
+    if hard_exit == 0:
+        assert report['selected_metrics']['loss'] == 17
