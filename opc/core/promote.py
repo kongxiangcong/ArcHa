@@ -26,14 +26,50 @@ def checked_out_branches(repo: Path) -> set[str]:
     return {l.split(" ", 1)[1] for l in out.splitlines() if l.startswith("branch ")}
 
 
+def validate_standards_confirmation(engine: Engine, run: dict, confirmation: dict) -> None:
+    """Validate only acceptance changes against the source's immutable contract."""
+    frozen = json.loads((engine.artifact_dir() / "frozen/task.json").read_text(encoding="utf-8"))
+    old_component = json.loads((engine.artifact_dir() / "frozen/component.json").read_text(encoding="utf-8"))
+    def execution_contract(raw):
+        result = {k:v for k,v in raw.items() if k not in ("revision", "requirements", "acceptance")}
+        result["acceptance"] = {k:v for k,v in raw.get("acceptance", {}).items() if k not in ("constraints", "target")}
+        return result
+    if execution_contract(frozen) != execution_contract(engine.task.raw) or old_component != engine.comp.raw:
+        raise OPCError("standards-only reassessment cannot change execution, evaluator, inputs, objective or budget")
+    if not isinstance(confirmation, dict):
+        raise OPCError("standards confirmation must be an object")
+    changes = {k:{"old":frozen.get(k), "new":engine.task.raw.get(k)}
+               for k in ("requirements", "acceptance") if frozen.get(k) != engine.task.raw.get(k)}
+    if (not changes or confirmation.get("confirmed_by") != "user" or
+        confirmation.get("source_run") != run["run_id"] or
+        confirmation.get("from_revision") != run["revision"] or
+        confirmation.get("to_revision") != engine.task.revision or confirmation.get("changes") != changes):
+        raise OPCError("confirmation must explicitly bind user-approved old and new standards to this run/revision")
+
+
 def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
-            apply_to: str | None = None) -> dict[str, Any]:
-    run = engine.ledger.latest_run(engine.task.task_id)
+            apply_to: str | None = None, source_run: str | None = None, standards_confirmation: str | Path | None = None) -> dict[str, Any]:
+    run = engine.ledger.run(source_run) if source_run else engine.ledger.latest_run(engine.task.task_id)
     if run is None:
         raise OPCError("task %s has no run" % engine.task.task_id)
-    if run["task_digest"] != engine.task.digest:
-        raise OPCError("delivery contract differs from frozen run; use its revision")
+    if run["task_id"] != engine.task.task_id or run["revision"] == "preparation":
+        raise OPCError("delivery source must be an execution run of this task")
     engine.run_id = run["run_id"]
+    engine.enable_delivery()
+    revised = run["task_digest"] != engine.task.digest
+    confirmation = None
+    if revised:
+        if not source_run or not standards_confirmation:
+            raise OPCError("different acceptance revision requires explicit source run and user standards confirmation")
+        document = Path(standards_confirmation)
+        if not document.is_absolute():
+            document = engine.root / document
+        try:
+            confirmation = json.loads(document.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise OPCError("cannot read standards confirmation: " + str(exc)) from exc
+        validate_standards_confirmation(engine, run, confirmation)
+        confirmation = dict(confirmation, sha256=hashlib.sha256(document.read_bytes()).hexdigest())
     champs = engine.ledger.champions(engine.run_id)
     selected = engine.selected_commit()
     base = {"commit_sha": run["base_commit"], "metrics": champs[0]["metrics"] if champs else {"values": {}}}
@@ -74,7 +110,7 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
                     % (cur["seq"], cur["metrics"]["degraded_by"]))
 
     # Full delivery evidence belongs to the selected commit, never another champion.
-    key = {"commit": selected, "evaluator": now, "toolchain": engine.toolchain_digest(selected),
+    key = {"delivery_policy": 2, "diagnostic_gates": sorted(engine.diagnostic_gates()), "commit": selected, "evaluator": now, "toolchain": engine.toolchain_digest(selected),
            "task": task.digest, "environment": hashlib.sha256(json.dumps({
                "process": dict(os.environ), "component": engine.comp.env, "gates": [g.env for g in engine.comp.gates]},
                sort_keys=True).encode()).hexdigest()}
@@ -83,20 +119,33 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
     if confirm_repeats == 0:
         for path in sorted((engine.artifact_dir() / "promotion").glob("*/report.json"), reverse=True):
             previous = json.loads(path.read_text(encoding="utf-8"))
-            if previous.get("evidence_key") == key and previous.get("evaluation"):
+            previous_key = previous.get("evidence_key", {})
+            same_measurement = ({k:v for k,v in previous_key.items() if k != "task"} ==
+                                {k:v for k,v in key.items() if k != "task"})
+            if (previous_key == key or (revised and same_measurement)) and previous.get("evaluation"):
                 evidence = previous["evaluation"]
                 evidence_source = str(path)
                 break
     if evidence is None:
+        engine.hard_check()
         ws = engine.workspaces("delivery")
         try:
-            ev, meas, tree = engine.evaluate_commit(ws, selected, "", out / "eval", "selected", fresh=True)
+            ev, meas, tree = engine.evaluate_commit(ws, selected, "", out / "eval", "selected", fresh=True, delivery=True)
             engine.ledger.charge(engine.run_id, None, "evaluator", Cost(ev.seconds, 0, 0.0))
             evidence = {"failure": ev.failure.value if ev.failure else None, "reason": ev.reason,
                         "gates": [g.as_dict() for g in ev.gates], "metrics": meas.as_dict() if meas else None}
         finally:
             ws.drop_all()
-    if evidence["failure"] or any(g["status"] != "passed" for g in evidence["gates"]):
+    diagnostic_gates = engine.diagnostic_gates()
+    expected = {g.gate_id if not g.repeat or task.acceptance.repeats <= 1 else
+                "%s#%d" % (g.gate_id, r + 1)
+                for g in engine.comp.gates if g.gate_id not in diagnostic_gates
+                for r in range(task.acceptance.repeats if g.repeat else 1)}
+    passed = {g["gate_id"] for g in evidence["gates"] if g["status"] == "passed"}
+    if expected - passed:
+        finding("gates", "block", "required gates not passed: " + ", ".join(sorted(expected - passed)))
+    failed_hard = [g for g in evidence["gates"] if g["status"] != "passed" and g["gate_id"].split("#")[0] not in diagnostic_gates]
+    if evidence["failure"] not in (None, "broken") or failed_hard or (evidence["failure"] and not evidence["gates"]):
         finding("gates", "block", evidence["reason"] or "not all required gates passed")
     best["metrics"] = evidence["metrics"] or {"values": {}}
     values = best["metrics"]["values"]
@@ -118,10 +167,13 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
             for label, commit in (("baseline", base["commit_sha"]), ("champion",
                                                                      best["commit_sha"])):
                 for i in range(confirm_repeats):
+                    engine.hard_check()
                     ev, meas, tree = engine.evaluate_commit(ws, commit, "", out / "confirm" /
-                                                            ("%s-%d" % (label, i)), label, fresh=True)
+                                                            ("%s-%d" % (label, i)), label, fresh=True, delivery=True)
                     ws.drop(tree)
-                    if ev.failure is not None:
+                    engine.ledger.charge(engine.run_id, None, "evaluator", Cost(ev.seconds, 0, 0.0))
+                    covered = {g.gate_id for g in ev.gates if g.status.value == "passed"}
+                    if ev.failure is not None or expected - covered or meas is None or m not in meas.values:
                         finding("reproduce", "block", "%s failed on repeat %d: %s"
                                 % (label, i, ev.reason))
                         break
@@ -153,6 +205,7 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
             champ_values.get(task.acceptance.target.metric, float("nan"))))
     coverage = []
     for req in task.requirements:
+        severity = "block" if req.get("required", True) else "warn"
         how = req.get("verification", "automated")
         chk = req.get("check")
         if chk:
@@ -160,25 +213,26 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
             why = acceptance.check(c, champ_values, None)
             status = "met" if why is None else "not_met: " + why
             if why is not None:
-                finding("requirements", "block", "%s not met: %s" % (req.get("id"), why))
+                finding("requirements", severity, "%s not met: %s" % (req.get("id"), why))
         elif how == "automated" and req.get("gates"):
             passed = {g["gate_id"].split("#")[0] for g in evidence["gates"] if g["status"] == "passed"}
             missing = set(req["gates"]) - passed
             status = "met_by_gates" if not missing else "unverified gates: " + ", ".join(sorted(missing))
             if missing:
-                finding("requirements", "block", "%s: %s" % (req["id"], status))
+                finding("requirements", severity, "%s: %s" % (req["id"], status))
         elif how == "automated":
             status = "unverified: no metric check or review evidence declared"
-            finding("requirements", "block", "%s has no declared verification coverage" % req.get("id"))
+            finding("requirements", severity, "%s has no declared verification coverage" % req.get("id"))
         else:
             status = "needs_review"
 
         coverage.append({"id": req.get("id"), "text": req.get("text"), "verification": how,
-                         "status": status})
+                         "status": status, "required": req.get("required", True)})
 
     # 6. optional independent reviewer: a fresh read-only model session
     reviewer = None
     if review:
+        engine.hard_check()
         reviewer = run_reviewer(engine, review, out, patch, base, best, coverage)
         # Fail closed on every path that is not a positive verdict. A reviewer
         # reply carrying no verdict once read as "nothing blocked", which let a
@@ -200,9 +254,12 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
             if reviewer and reviewer.get("ok") and reviewer.get("verdict") == "accept":
                 row["status"] = "met_by_review"
             else:
-                finding("requirements", "block", "%s needs independent review" % row["id"])
+                finding("requirements", "block" if row["required"] else "warn", "%s needs independent review" % row["id"])
     blocked = any(f["severity"] == "block" for f in findings)
     report = {"promotion_id": pid, "run_id": engine.run_id, "task": task.task_id,
+              "execution_revision": run["revision"], "execution_task_digest": run["task_digest"],
+              "acceptance_revision": task.revision, "acceptance_task_digest": task.digest,
+              "standards_confirmation": confirmation, "reassessed": revised,
               "baseline": base["commit_sha"], "selected_version": selected,
               "champion": champs[-1]["commit_sha"] if champs else None, "files": files,
               "evidence_key": key, "evaluation": evidence, "evidence_source": evidence_source,
@@ -216,6 +273,8 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
 
     write_json(out / "report.json", report)
     if apply_to:
+        if revised:
+            raise OPCError("reassessment does not apply; inspect the new report separately")
         if blocked:
             raise OPCError("promotion blocked: %s" % "; ".join(f["text"] for f in findings
                                                                  if f["severity"] == "block"))
@@ -238,6 +297,9 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
     write_json(out / "report.json", report)
     write_text(out / "PROMOTION.md", render(report))
     report["report_dir"] = str(out)
+    engine.ledger.event(engine.run_id, "promotion_report", promotion_id=pid,
+                        report_path=str(out / "report.json"), selected_commit=selected, complete=not blocked,
+                        report_sha256=hashlib.sha256((out / "report.json").read_bytes()).hexdigest())
     return report
 
 
@@ -248,8 +310,7 @@ def _is_ancestor(repo: Path, a: str, b: str) -> bool:
 
 def run_reviewer(engine: Engine, kind: str, out: Path, patch: str, base: dict, best: dict,
                  coverage: list[dict]) -> dict[str, Any]:
-    if engine.preparation:
-        engine.hard_check()
+    engine.hard_check()
     if kind not in ("codex", "dsh"):
         raise OPCError("the reviewer must be codex or dsh")
     # Both workers expose the same private _run(role, prompt, tree, log_dir,
@@ -289,7 +350,7 @@ The working directory is a read-only checkout of the champion."""
         tree = ws.checkout("reviewer", best["commit_sha"])
         from .worker_config import worker_options
         worker = worker_cls(worker_options(engine.worker_config, "reviewer",
-            {"timeout_s": engine.budget_left()["wall_seconds"]} if engine.preparation else {}))
+            {"timeout_s": engine.budget_left()["wall_seconds"]} if engine.preparation or engine.delivery_accounting() else {}))
         call, text = worker._run("reviewer", prompt, tree, out / "reviewer", "read-only", schema)
     finally:
         ws.drop_all()
@@ -297,8 +358,8 @@ The working directory is a read-only checkout of the champion."""
     engine.ledger.event(engine.run_id, "worker_call", None, role="reviewer",
                         call_id=call.call_id, ok=call.ok, tokens=call.cost.tokens,
                         error=call.error[:300])
-    if engine.preparation and not call.extra.get("usage_complete", False):
-        engine.ledger.event(engine.preparation, "accounting_unknown", None, reason="reviewer usage missing")
+    if not call.extra.get("usage_complete", False):
+        engine.ledger.event(engine.preparation or engine.run_id, "accounting_unknown", None, reason="reviewer usage missing")
         call.ok, call.error = False, "reviewer usage missing; no further dispatch"
     if not call.ok:
         return {"ok": False, "error": call.error, "call_id": call.call_id}

@@ -118,7 +118,8 @@ class CommandDomain:
             return GateStatus.INFRA
         return GateStatus.FAILED
 
-    def evaluate(self, tree: Path, out_dir: Path, repeats: int) -> Evaluation:
+    def evaluate(self, tree: Path, out_dir: Path, repeats: int, *,
+                 diagnostic_gates: frozenset[str] = frozenset()) -> Evaluation:
         ev = Evaluation(gates=[], repeats=repeats)
         t_start = time.time()
         samples: dict[str, list[float]] = {}
@@ -158,7 +159,8 @@ class CommandDomain:
                     ev.failure, ev.reason = Outcome.INFRA, "%s: %s" % (gid, detail[-300:])
                     break
                 if status is GateStatus.FAILED:
-                    ev.failure, ev.reason = Outcome.BROKEN, "%s: %s" % (gid, detail[-300:])
+                    if gate.gate_id not in diagnostic_gates:
+                        ev.failure, ev.reason = Outcome.BROKEN, "%s: %s" % (gid, detail[-300:])
                     break
             if ev.failure is not None:
                 break

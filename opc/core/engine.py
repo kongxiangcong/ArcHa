@@ -112,7 +112,7 @@ class Engine:
                         problems.append("prepared acceptance changed since review: " + rel)
         dirty = dirty_paths(self.root)
         from .config import denied
-        frozen_dirty = [p for p in dirty if denied(p, self.evaluator_patterns() + [".opc/**"])
+        frozen_dirty = [p for p in dirty if denied(p, self.evaluator_patterns() + [self.task.path.relative_to(self.root).as_posix(), ".opc/project.json"])
                         and not p.startswith(".opc/local/") and not self.comp.is_scratch(p)]
         if frozen_dirty:
             problems.append("uncommitted evaluator/.opc files (runs use the committed version): "
@@ -166,8 +166,15 @@ class Engine:
             self._workers = (expert, designer)
         return self._workers
 
+    def diagnostic_gates(self) -> frozenset[str]:
+        optional = {g for r in self.task.requirements if r.get("required") is False
+                    for g in r.get("gates", [])}
+        mandatory = {g for r in self.task.requirements if r.get("required", True)
+                     for g in r.get("gates", [])}
+        return frozenset(optional - mandatory)
+
     def evaluate_commit(self, ws: Workspaces, commit: str, patch: str, out: Path,
-                        name: str, *, fresh: bool = False) -> tuple[Evaluation, Measurements | None, Path]:
+                        name: str, *, fresh: bool = False, delivery: bool = False) -> tuple[Evaluation, Measurements | None, Path]:
         """Evaluate `commit` (+ `patch`) in a fresh tree with the frozen gates."""
         tree = ws.checkout(name, commit)
         apply_patch(tree, patch)
@@ -178,10 +185,16 @@ class Engine:
         # contracts and notes do not change what the gates compute
         content = tracked_digest(self.root, tree_id, ["**"], self.comp.scratch + [
             ".opc/tasks/**", ".opc/context/**", ".opc/*.md", ".opc/README.md"])[0]
-        ev = None if fresh else self._cached(content, digest, tool_digest)
+        ev = None if fresh or delivery else self._cached(content, digest, tool_digest)
         if ev is None:
-            ev = dom.evaluate(tree, out, self.task.acceptance.repeats)
-            self._store(content, digest, tool_digest, ev)
+            from ..domains.command import CommandDomain
+            if delivery and isinstance(dom, CommandDomain):
+                ev = dom.evaluate(tree, out, self.task.acceptance.repeats,
+                                  diagnostic_gates=self.diagnostic_gates())
+            else:
+                ev = dom.evaluate(tree, out, self.task.acceptance.repeats)
+            if not delivery:
+                self._store(content, digest, tool_digest, ev)
         meas = None
         if ev.failure is None:
             meas = Measurements(values=ev.values, evaluator_digest=digest,
@@ -283,6 +296,8 @@ class Engine:
                                % (self.task.task_id, last["run_id"], last["revision"],
                                   self.task.revision))
             self.run_id = last["run_id"]
+            if self.delivery_accounting():
+                self.enable_delivery()
             if direction:
                 self.ledger.event(self.run_id, "direction", None, text=direction)
             return self.run_id
@@ -301,6 +316,8 @@ class Engine:
             task_digest=self.task.digest, component=self.comp.component_id, base_commit=base,
             evaluator_digest=rep["evaluator_digest"], toolchain_digest=tool_digest,
             champion_ref=self.ref, direction=direction or self.task.direction)
+        if self.delivery_accounting():
+            self.enable_delivery()
         write_json(self.artifact_dir() / "frozen" / "task.json", self.task.raw)
         write_json(self.artifact_dir() / "frozen" / "component.json", self.comp.raw)
         write_json(self.artifact_dir() / "frozen" / "baseline.json",
@@ -382,9 +399,23 @@ class Engine:
             self.measure_champion(ws, champ[0], None, "re-measured: toolchain changed")
 
     # ----------------------------------------------------------------- budget
+    def enable_delivery(self) -> None:
+        """Request delivery accounting, persisting it as soon as a run is bound."""
+        self._delivery_requested = True
+        if self.run_id and not self.ledger.events(self.run_id, "delivery"):
+            self.ledger.event(self.run_id, "delivery", accounting_scope="task")
+
+    def delivery_accounting(self) -> bool:
+        # Recognize existing repair/report records as well as newly marked runs.
+        return bool(getattr(self, "_delivery_requested", False) or
+                    (self.run_id and any(self.ledger.events(self.run_id, kind)
+                     for kind in ("delivery", "delivery_repair", "promotion_report"))))
+
     def spent(self) -> dict[str, Any]:
-        t = self.ledger.task_totals(self.task.task_id) if self.preparation else self.ledger.totals(self.run_id)
+        t = self.ledger.task_totals(self.task.task_id) if self.preparation or self.delivery_accounting() else self.ledger.totals(self.run_id)
         attempts = self.ledger.attempts(self.run_id)
+        if self.ledger.events(self.run_id, "delivery_repair"):
+            attempts = [a for r in self.ledger.runs() if r["task_id"] == self.task.task_id for a in self.ledger.attempts(r["run_id"])]
         t["search_attempts"] = sum(1 for a in attempts if a["outcome"] and
                                    Outcome(a["outcome"]).counts_as_search)
         t["attempts"] = len(attempts)
@@ -403,13 +434,19 @@ class Engine:
     def admit(self) -> None:
         """Ask before spending. The estimate is the mean decided attempt so far."""
         b, s = self.task.budget, self.spent()
-        if self.preparation:
+        if self.preparation or self.delivery_accounting():
             self.hard_check()
         if s["search_attempts"] >= b.max_attempts:
             raise BudgetExhausted("max_attempts", "%d search attempts used" % s["search_attempts"])
         done = [a for a in self.ledger.attempts(self.run_id) if a["cost"]]
         est_wall = sum(a["cost"]["wall_seconds"] for a in done) / len(done) if done else 0.0
         est_tok = sum(a["cost"]["tokens"] for a in done) / len(done) if done else 0.0
+        if self.delivery_accounting():
+            reserve = self.ledger.db.execute(
+                "SELECT MAX(c.wall_seconds), MAX(c.tokens) FROM charges c JOIN runs r ON c.run_id=r.run_id "
+                "WHERE r.task_id=? AND c.role IN ('evaluator','reviewer')", (self.task.task_id,)).fetchone()
+            est_wall += reserve[0] or 0
+            est_tok += reserve[1] or 0
         if s["wall_seconds"] + est_wall > b.max_wall_seconds:
             raise BudgetExhausted("max_wall_seconds", "spent %.0fs, next ~%.0fs, cap %.0fs"
                                   % (s["wall_seconds"], est_wall, b.max_wall_seconds))
@@ -425,6 +462,13 @@ class Engine:
     def hard_check(self) -> None:
         """Between steps of one attempt: stop as soon as a cap is crossed."""
         b, s = self.task.budget, self.spent()
+        if self.delivery_accounting():
+            if any(self.ledger.unresolved_accounting(r["run_id"]) for r in self.ledger.runs() if r["task_id"] == self.task.task_id):
+                raise OPCError("usage accounting incomplete; no delivery dispatch")
+            if self.ledger.control(self.run_id) in ("pause", "stop"):
+                raise OPCError("user paused/stopped delivery")
+            if b.max_usd is not None and (not s["usd_known"] or s["usd"] >= b.max_usd):
+                raise BudgetExhausted("max_usd", "delivery budget unavailable")
         if self.preparation:
             receipts = self.ledger.events(self.preparation, "preparation")
             if not receipts or receipts[-1]["body"].get("state") != "ready":
@@ -708,13 +752,13 @@ class Engine:
 
         def charge(role: str, cost: Cost, call: WorkerCall | None = None) -> None:
             nonlocal total
-            if call is not None and self.preparation:
+            if call is not None and (self.preparation or self.delivery_accounting()):
                 kind = self.task.expert.kind if role == "expert" else (self.task.designer or self.task.expert).kind
                 if kind in ("codex", "dsh") and not call.extra.get("usage_complete", False):
                     call.ok = False
                     call.error = "usage unavailable; stop dispatch until actual accounting is reconciled"
                     call.extra["infra"] = True
-                    self.ledger.event(self.preparation, "accounting_unknown", None, reason=call.error)
+                    self.ledger.event(self.preparation or self.run_id, "accounting_unknown", None, reason=call.error)
             total = total.add(cost)
             self.ledger.charge(self.run_id, n, role, cost)
             if call is not None:
@@ -872,6 +916,53 @@ class Engine:
                 ws.drop(t)
 
     # -------------------------------------------------------------------- run
+    def repair_delivery(self, report_path: str | Path) -> dict[str, Any]:
+        """Continue a registered failed promotion from its exact selected version."""
+        path = Path(report_path).resolve()
+        report = json.loads(path.read_text(encoding="utf-8"))
+        source = self.ledger.run(report["run_id"])
+        if source["task_id"] != self.task.task_id:
+            raise OPCError("repair requires the same task")
+        registered = [e for e in self.ledger.events(source["run_id"], "promotion_report")
+                      if Path(e["body"]["report_path"]).resolve() == path]
+        if not registered or registered[-1]["body"]["complete"] or report.get("complete"):
+            raise OPCError("repair requires a registered failed promotion")
+        self.run_id = source["run_id"]
+        self.enable_delivery()
+        if source["state"] != "closed" or self.ledger.control(self.run_id) in ("pause", "stop"):
+            raise OPCError("repair cannot override pause/stop or an active run")
+        if registered[-1]["body"].get("report_sha256") != hashlib.sha256(path.read_bytes()).hexdigest():
+            raise OPCError("promotion report changed after registration")
+        if report.get("acceptance_task_digest", source["task_digest"]) != self.task.digest:
+            raise OPCError("repair requires the acceptance contract bound to this report")
+        if source["task_digest"] != self.task.digest:
+            from .promote import validate_standards_confirmation
+            if (not report.get("reassessed") or
+                report.get("acceptance_task_digest") != self.task.digest or
+                report.get("acceptance_revision") != self.task.revision or
+                report.get("execution_task_digest") != source["task_digest"]):
+                raise OPCError("repair requires a confirmed acceptance revision bound to this report")
+            validate_standards_confirmation(self, source, report.get("standards_confirmation"))
+        if report["selected_version"] != self.selected_commit():
+            raise OPCError("repair must start from the selected candidate")
+        if any(f["check"] in ("evaluator", "scope") for f in report["findings"] if f["severity"] == "block"):
+            raise OPCError("repair needs an explicit contract/evaluator revision")
+        if any(f["check"] == "review" and "unavailable" in f["text"] for f in report["findings"]):
+            raise OPCError("retry promotion reviewer only; no candidate development needed")
+        # Every repair uses task-wide accounting, including projects without preparation.
+        used = self.ledger.task_totals(self.task.task_id)
+        if used["wall_seconds"] >= self.task.budget.max_wall_seconds or (
+            self.task.budget.max_tokens is not None and used["tokens"] >= self.task.budget.max_tokens):
+            raise OPCError("task budget exhausted; no repair dispatch")
+        self.hard_check()
+        with self.ledger.writer():
+            new_id = self.open_run(new_run=True, base_ref=report["selected_version"],
+                                   direction="Repair delivery findings: " + json.dumps(report["findings"]))
+            self.ledger.event(new_id, "delivery_repair", source_run=source["run_id"],
+                              source_promotion=report["promotion_id"], selected_commit=report["selected_version"],
+                              execution_revision=source["revision"], acceptance_revision=self.task.revision)
+        return self.run()
+
     def run(self, new_run: bool = False, direction: str | None = None,
             max_attempts_now: int | None = None, base_ref: str | None = None) -> dict[str, Any]:
         with self.ledger.writer():

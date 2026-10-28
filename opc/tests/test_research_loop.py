@@ -1,5 +1,6 @@
 """Offline loop contracts: no model service, onboard run or benchmark."""
 import json
+from pathlib import Path
 
 import pytest
 
@@ -412,7 +413,7 @@ def test_metered_preparation_to_formal_execution(make_project, engine_for, monke
     from opc.adapters.codex import CodexWorker
     from opc.tests.conftest import EVALUATE
     import subprocess, sys
-    root = make_project(tsk=task(acceptance={}, requirements=[]))
+    root = make_project(tsk=task(acceptance={}, requirements=[], preparation_review=True))
     evaluator = root / '.opc/eval/evaluate.py'
     evaluator.unlink()
     git(root, 'add', '-A'); git(root, 'commit', '-qm', 'missing evaluator')
@@ -492,3 +493,223 @@ def test_metered_preparation_to_formal_execution(make_project, engine_for, monke
     evaluator.write_text(EVALUATE)
     git(root,'add','.opc/eval'); git(root,'commit','-qm','changed standard')
     assert not engine_for(root).static_check()['ok']
+
+
+def test_delivery_repair_selected_candidate_preserves_failure(make_project, engine_for):
+    from opc.core.promote import promote
+    root = make_project(tsk=task(acceptance={}, requirements=[
+        {'id': 'R', 'text': 'loss one', 'check': {'metric': 'loss', 'op': '<=', 'value': 1}}]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), stop], [4]))
+    first_run = e.run()
+    failure = promote(e, source_run=first_run['run_id'])
+    assert not failure['complete']
+    original = e.ledger.run(first_run['run_id'])['stop_reason']
+    e = use_sequence(engine_for(root), Sequence([plan(1), stop], [7]))
+    repaired = e.repair_delivery(Path(failure['report_dir']) / 'report.json')
+    assert repaired['baseline'] == first_run['selected_version']
+    assert e.ledger.run(first_run['run_id'])['stop_reason'] == original
+    assert promote(e, source_run=repaired['run_id'])['complete']
+    assert not json.loads((Path(failure['report_dir']) / 'report.json').read_text())['complete']
+
+
+def test_delivery_repair_respects_stop(make_project, engine_for):
+    from opc.core.promote import promote
+    from opc.core.model import OPCError
+    root = make_project(tsk=task(acceptance={}, requirements=[{'id':'R','text':'review','verification':'review'}]))
+    e = use_sequence(engine_for(root), Sequence([stop]))
+    s = e.run()
+    report = promote(e, source_run=s['run_id'])
+    e.ledger.set_control(s['run_id'], 'stop')
+    with pytest.raises(OPCError, match='pause/stop'):
+        e.repair_delivery(Path(report['report_dir']) / 'report.json')
+
+
+def test_confirmed_revision_reuses_measurements_without_rewriting_failure(make_project, engine_for, monkeypatch):
+    from opc.core.promote import promote
+    from opc.core.model import OPCError
+    root = make_project(tsk=task(acceptance={}, requirements=[
+        {'id':'R','text':'loss threshold','check':{'metric':'loss','op':'<=','value':1}}]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), stop], [4]))
+    s = e.run()
+    failed = promote(e, source_run=s['run_id'])
+    old_report = Path(failed['report_dir']) / 'report.json'
+    original = old_report.read_bytes()
+    new = dict(e.task.raw, revision='r0002', requirements=[
+        {'id':'R','text':'diagnostic loss','check':{'metric':'loss','op':'<=','value':1}, 'required':False}])
+    path = root / '.opc/tasks/t-toy/revisions/r0002/task.json'
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(new))
+    from opc.core.engine import Engine
+    revised = Engine(root, 't-toy', 'r0002')
+    with pytest.raises(OPCError, match='confirmation'):
+        promote(revised, source_run=s['run_id'])
+    receipt = root / 'confirmation.json'
+    receipt.write_text(json.dumps(dict(confirmed_by='user', source_run=s['run_id'],
+        from_revision='r0001', to_revision='r0002', changes={
+            'requirements':{'old':e.task.raw['requirements'], 'new':new['requirements']}})))
+    monkeypatch.setattr(revised, 'evaluate_commit', lambda *a, **k: pytest.fail('unnecessary measurement'))
+    passed = promote(revised, source_run=s['run_id'], standards_confirmation=receipt)
+    assert passed['complete'] and passed['reassessed']
+    assert passed['selected_version'] == s['selected_version']
+    assert passed['evidence_source'] == str(old_report)
+    assert passed['requirements'][0]['status'].startswith('not_met')
+    assert old_report.read_bytes() == original
+    assert len([r for r in revised.ledger.runs() if r['revision'] != 'preparation']) == 1
+    new['budget']['max_tokens'] = 999999
+    path.write_text(json.dumps(new))
+    with pytest.raises(OPCError, match='cannot change execution'):
+        promote(Engine(root, 't-toy', 'r0002'), source_run=s['run_id'], standards_confirmation=receipt)
+
+
+def test_cli_delivery_consumes_selected_run_and_never_applies(make_project, engine_for, monkeypatch, capsys):
+    from opc.cli import main
+    root = make_project(tsk=task(acceptance={}, requirements=[]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), stop], [7]))
+    monkeypatch.setattr('opc.cli._engine', lambda *a, **k: e)
+    before = git(root, 'rev-parse', 'HEAD')
+    assert main(['run','-p',str(root),'--task','t-toy','--deliver']) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result['complete']
+    assert result['delivery']['run_id'] == result['run_id']
+    assert result['delivery']['selected_version'] == result['selected_version']
+    assert not result['delivery']['applied']
+    assert git(root, 'rev-parse', 'HEAD') == before
+
+
+def test_cli_paused_delivery_makes_no_evaluation(make_project, engine_for, monkeypatch, capsys):
+    from opc.cli import main
+    root = make_project(tsk=task(acceptance={}, requirements=[]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), stop], [7]))
+    monkeypatch.setattr('opc.cli._engine', lambda *a, **k: e)
+    monkeypatch.setattr('opc.core.promote.promote', lambda *a, **k: pytest.fail('paused delivery'))
+    assert main(['run','-p',str(root),'--task','t-toy','--max-now','0','--deliver']) == 1
+    assert not json.loads(capsys.readouterr().out)['complete']
+
+
+@pytest.mark.parametrize("required", [True, False])
+def test_diagnostic_gate_does_not_mask_hard_requirement(make_project, engine_for, required):
+    from opc.core.promote import promote
+    root = make_project(tsk=task(acceptance={}, requirements=[
+        {'id':'D','text':'diagnostic','gates':['evaluate'],'required':required}]))
+    (root / '.opc/eval/evaluate.py').write_text(EVALUATE + '\nraise SystemExit(1)\n')
+    git(root, 'add', '.opc/eval/evaluate.py'); git(root, 'commit', '-qm', 'failing measurement gate')
+    e = use_sequence(engine_for(root), Sequence([stop]))
+    s = e.run()
+    assert promote(e, source_run=s['run_id'])['complete'] is (not required)
+
+
+@pytest.mark.parametrize('bound', [False, True])
+@pytest.mark.parametrize('hard_exit', [0, 1])
+def test_delivery_checks_hard_gates_after_diagnostic_failure(make_project, engine_for, bound, hard_exit):
+    from opc.core.promote import promote
+    comp = component()
+    comp['gates'].insert(0, {'id': 'diagnostic', 'argv': ['{python}', '-c', 'exit(1)']})
+    comp['gates'].append({'id': 'hard', 'argv': ['{python}', '-c', f'exit({hard_exit})']})
+    requirements = [{'id': 'D', 'text': 'diagnostic', 'gates': ['diagnostic'], 'required': False}]
+    if bound:
+        requirements.append({'id': 'H', 'text': 'hard check', 'gates': ['hard']})
+    root = make_project(comp=comp, tsk=task(acceptance={}, requirements=requirements))
+    e = use_sequence(engine_for(root), Sequence([stop]))
+    s = e.run()
+    report = promote(e, source_run=s['run_id'])
+    assert report['complete'] is (hard_exit == 0)
+    assert {g['gate_id'] for g in report['evaluation']['gates']} == {'diagnostic', 'evaluate', 'hard'}
+    if hard_exit == 0:
+        assert report['selected_metrics']['loss'] == 17
+
+
+def test_confirmed_revision_can_repair_remaining_findings(make_project, engine_for):
+    from opc.core.engine import Engine
+    from opc.core.promote import promote
+    from opc.core.model import OPCError
+    root = make_project(tsk=task(acceptance={}, requirements=[
+        {'id': 'R', 'text': 'loss', 'check': {'metric': 'loss', 'op': '<=', 'value': 1}}]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), stop], [4]))
+    first = e.run()
+    e.ledger.charge(first['run_id'], None, 'expert', Cost(0, 123, 0.0))
+    original = promote(e, source_run=first['run_id'])
+    old_bytes = (Path(original['report_dir']) / 'report.json').read_bytes()
+    new = dict(e.task.raw, revision='r0002', requirements=[
+        {'id': 'R', 'text': 'relaxed loss', 'check': {'metric': 'loss', 'op': '<=', 'value': 2}}])
+    path = root / '.opc/tasks/t-toy/revisions/r0002/task.json'
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(new))
+    git(root, 'add', str(path)); git(root, 'commit', '-qm', 'confirmed standards')
+    receipt = root / 'confirmation.json'
+    receipt.write_text(json.dumps(dict(confirmed_by='user', source_run=first['run_id'],
+        from_revision='r0001', to_revision='r0002', changes={
+            'requirements': {'old': e.task.raw['requirements'], 'new': new['requirements']}})))
+    revised = Engine(root, 't-toy', 'r0002')
+    failed = promote(revised, source_run=first['run_id'], standards_confirmation=receipt)
+    assert not failed['complete']
+    failed_path = Path(failed['report_dir']) / 'report.json'
+    failed_bytes = failed_path.read_bytes()
+    with pytest.raises(OPCError, match='acceptance contract'):
+        e.repair_delivery(failed_path)
+    receipt.unlink()  # registered report preserves the approved standards
+    # A later budget edit cannot reuse this confirmation.
+    altered = dict(new, budget=dict(new['budget'], max_tokens=999999))
+    path.write_text(json.dumps(altered))
+    with pytest.raises(OPCError):
+        Engine(root, 't-toy', 'r0002').repair_delivery(failed_path)
+    path.write_text(json.dumps(new))
+    repair = use_sequence(Engine(root, 't-toy', 'r0002'), Sequence([plan(1), stop], [7]))
+    repaired = repair.repair_delivery(failed_path)
+    assert repaired['baseline'] == first['selected_version']
+    assert repair.ledger.run(repaired['run_id'])['revision'] == 'r0002'
+    assert repaired['spent']['tokens'] == 123
+    assert promote(repair, source_run=repaired['run_id'])['complete']
+    assert failed_path.read_bytes() == failed_bytes
+    assert (Path(original['report_dir']) / 'report.json').read_bytes() == old_bytes
+
+
+@pytest.mark.parametrize('entry', ['hard_check', 'admit', 'run'])
+@pytest.mark.parametrize('marker', ['delivery_repair', 'promotion_report', 'delivery'])
+def test_delivery_accounting_survives_engine_recreation(make_project, engine_for, entry, marker):
+    from opc.core.model import OPCError
+    root = make_project(tsk=task(acceptance={}, requirements=[]))
+    e = engine_for(root)
+    rid = e.open_run()
+    if marker == 'delivery':
+        e.enable_delivery()
+    else:
+        e.ledger.event(rid, marker, source_run='earlier', source_promotion='p')
+    e.ledger.event(rid, 'accounting_unknown', reason='missing worker receipt')
+    fresh = engine_for(root)
+    fresh.open_run()
+    with pytest.raises(OPCError, match='accounting incomplete'):
+        getattr(fresh, entry)()
+
+
+def test_delivery_confirmation_repeats_allow_diagnostic_failure(make_project, engine_for):
+    from opc.core.promote import promote
+    comp = component()
+    comp['gates'].insert(0, {'id': 'diagnostic', 'argv': ['{python}', '-c',
+        'import json; exit(1 if json.load(open("params.json"))["x"] == 7 else 0)']})
+    root = make_project(comp=comp, tsk=task(requirements=[
+        {'id': 'D', 'text': 'diagnostic', 'gates': ['diagnostic'], 'required': False}]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), {'exhausted': True, 'base_attempt': 1}], [7]))
+    s = e.run()
+    report = promote(e, source_run=s['run_id'], confirm_repeats=2)
+    assert report['complete'], report['findings']
+    assert len(report['confirm']['samples']['champion']) == 2
+
+
+@pytest.mark.parametrize('repeats', [1, 2])
+def test_delivery_rejects_incomplete_hard_gate_receipts(make_project, engine_for, monkeypatch, repeats):
+    from opc.core.promote import promote
+    comp = component()
+    comp['gates'][0]['repeat'] = True
+    root = make_project(comp=comp, tsk=task(acceptance={'repeats': repeats}, requirements=[]))
+    e = use_sequence(engine_for(root), Sequence([stop]))
+    s = e.run()
+    dom = e.domain(root)
+    original = dom.evaluate
+    def incomplete(*args, **kwargs):
+        ev = original(*args, **kwargs)
+        ev.gates.pop()  # Adapter claims success with a missing required receipt.
+        return ev
+    monkeypatch.setattr(dom, 'evaluate', incomplete)
+    report = promote(e, source_run=s['run_id'])
+    assert not report['complete']
+    assert any(f['check'] == 'gates' and 'not passed' in f['text'] for f in report['findings'])

@@ -250,7 +250,7 @@ base_attempt 同样用于停止时的交付选版。run 停止不代表完成，
 
 ## 授权范围内的准备
 
-onboard --prepare 在同一预算内开发 .opc 评价器、负控、原件/证据与用量工具，保留有界设备探针回执，再由只读 reviewer 检查，摘要冻结在原 ledger。它永不启动正式实验。pending 由 agent 继续；external_blocked 须有实际失败证据；ready 仍需提交冻结文件和 check/preflight。正式执行继承准备消耗，不重置额度。prior-tokens 是已可靠计量的主流程/外部嵌套累计量（包含 cached input），不含命令已记录的 worker/reviewer；未知即停止新增派发。已运行的合同只能新 revision/run，不原地改变验收。
+onboard --prepare 在同一预算内完成必要的 .opc 评价器接入和与改动相应的关键检查，保留必要有界探针回执；仅合同 preparation_review=true 时独立审核，当前任务相关摘要冻结在原 ledger。它永不启动正式实验。pending 由 agent 继续；external_blocked 须有实际失败证据；ready 仍需提交冻结文件和 check/preflight。正式执行继承准备消耗，不重置额度。prior-tokens 是已可靠计量的主流程/外部嵌套累计量（包含 cached input），不含命令已记录的 worker/reviewer；未知即停止新增派发。已运行的合同只能新 revision/run，不原地改变验收。
 
 每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用已有冻结回执。无法取得可靠累计量时停止后续模型派发。
 
@@ -306,3 +306,6 @@ CLI 已启动但没有完整 usage 回执时，仍停止后续派发，并输出
 不会因更新源仓库而自动生效。
 
 Codex 状态目录语义参考：[OpenAI environment variables](https://learn.chatgpt.com/docs/config-file/environment-variables)。
+
+
+准备默认仅执行与本次接入改动对应的必要检查，不固定建设全套负控或通用监控工具。ready 表示必要接入完成，不代表研究结论成立。合同显式设置 `preparation_review: true` 时保留独立准备审核；旧 ready 回执继续有效。冻结仅覆盖当前 task、component 及 evaluator_files（显式共享依赖也在这些 glob 中登记）。
