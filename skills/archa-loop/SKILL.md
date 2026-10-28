@@ -34,20 +34,31 @@ python3 <project>/.opc/archa.py brief-check -p <project> --brief <brief>
 ## 运行与交付
 
 ```bash
-python3 <project>/.opc/archa.py run -p <project> --task <task-id> --revision <revision>
+python3 <project>/.opc/archa.py run -p <project> --task <task-id> --revision <revision> --deliver
 ```
 
 由引擎完成决策、候选执行、评价、接纳与反馈，沿用合同方向和预算。跟踪进程及 `status`，直到完成、暂停或阻塞；预算耗尽、搜索枯竭和用户暂停都应保留，不自动反复重启。用户要求暂停或停止时调用对应 `pause` / `stop` 命令，等引擎确认状态。
 
-结束后调用 `report -p <project> --task <task-id> --revision <revision>`，报告实际 run/revision、停止原因、目标达成情况、冠军提交与指标、交付物及报告路径、剩余问题。区分“达到目标”和“预算内最好结果”；本技能不自动 promote 到用户分支。
+结束后调用 `report -p <project> --task <task-id> --revision <revision>`，报告实际 run/revision、停止原因、目标达成情况、冠军提交与指标、交付物及报告路径、剩余问题。区分“达到目标”和“预算内最好结果”；终验通过仅交付报告和 selected commit；不自动 apply 到用户分支。
 
 无 objective 时默认从工作版本继续；有 objective 保持冠军默认起点，expert 可用 base_attempt 选择任何已保存候选，也可在停止时选版。run 停止与任务完成分开；promote 对选定版本执行完整验收及合同所需 review，未满足条件不得声明完成。独立 review 回执不需要新 designer 候选。
 
 ## 自主准备与冻结
 
 发现准备待办时使用已有 onboard 命令的 `--prepare --task <task-id> --brief <brief> --max-tokens <授权总额> --max-wall-seconds <授权秒数> --prior-wall-seconds <累计主流程及外部嵌套秒数> --prior-tokens <累计主流程及外部嵌套用量>`。总量包含 cached input，不能填猜测的 0；正常 worker 与只读 reviewer 由 ledger 自动记账，不重复计入 prior-tokens。未知用量停止新增派发。准备与正式 run 共用同一授权总额，不能新建 run 重置。
-准备 agent 可在 .opc 内建立评价器、负控、原件采集/保存与监控工具，进行授权的有界设备能力探测；不自动开展正式手机实验。未探测不是外部阻塞，失败须保留命令、权限错误与原始回执。pending 表示 agent 继续准备；ready 只表示审阅通过，正式实验尚未开始；external_blocked 必须给出观测证据、缺失外部条件、责任人与下一步。
-准备调用后只读 reviewer 核对需求、评价器及负控回执，审阅通过的文件摘要在既有 ledger 中冻结。提交被审文件，check/preflight 通过且用户允许正式执行才进入 run。“本步只准备”时到此结束，不能自动启动设备实验。产品未实现的功能失败是未完成基线，不能变造评分过门。
+准备 agent 可在 .opc 内建立评价器、负控、原件采集/保存与监控工具，进行授权的有界设备能力探测；不自动开展正式手机实验。未探测不是外部阻塞，失败须保留命令、权限错误与原始回执。pending 表示 agent 继续准备；ready 只表示必要接入检查完成，正式实验尚未开始；external_blocked 必须给出观测证据、缺失外部条件、责任人与下一步。
+准备默认不调用 reviewer；合同 preparation_review=true 时进行针对性独立审核。当前任务及实际共享评价依赖摘要在 ledger 中冻结。提交被审文件，check/preflight 通过且用户允许正式执行才进入 run。“本步只准备”时到此结束，不能自动启动设备实验。产品未实现的功能失败是未完成基线，不能变造评分过门。
 已有正式 run 时不原地改冻结合同/评价器：保留旧 revision/run，准备新 revision 并重新审阅冻结；预算账本沿用。旧部署 runtime/全局技能不会自动更新，先核对入口 --help 是否支持 --prepare，不以仓库源码代替已安装行为。
 
 每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用已有冻结回执。无法取得可靠累计量时停止后续模型派发。
+
+
+## 自动终验与修复消费顺序
+
+`run --deliver` 在自然结束后终验明确的 source run。读取返回的 delivery.complete；只有 true 才报告任务完成。未产生终验或 delivery_error 均为未完成。
+
+1. 普通可修复 findings：用 `run ... --repair-promotion <report_dir>/report.json --deliver` 从失败报告的 selected commit 续接，沿用同 task 累计预算，不重启旧 run、不创建新 task。具体 findings 进入新 run direction。
+2. 仅 reviewer 不可用/输出格式错误：用 `promote ... --source-run <run-id> --review <configured-provider>` 重试审核，不调用 designer。沿用 max_consecutive_infra 和总预算；达到限制停止并报告未完成。
+3. 若修复后 selected commit 未变化且 findings 相同，不再次修复或重审；仅具体修复、外部状态变化或用户确认新标准后继续。
+4. 用户 pause/stop、预算耗尽或 accounting_unknown 时立即停止新增派发。用户仅要求准备时不进入本流程。
+5. scope/evaluator 变化需要明确的新 revision；验收含义变更须用户明确确认。所有终验命令默认不传 --apply。

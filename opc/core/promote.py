@@ -27,10 +27,12 @@ def checked_out_branches(repo: Path) -> set[str]:
 
 
 def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
-            apply_to: str | None = None) -> dict[str, Any]:
-    run = engine.ledger.latest_run(engine.task.task_id)
+            apply_to: str | None = None, source_run: str | None = None) -> dict[str, Any]:
+    run = engine.ledger.run(source_run) if source_run else engine.ledger.latest_run(engine.task.task_id)
     if run is None:
         raise OPCError("task %s has no run" % engine.task.task_id)
+    if run["task_id"] != engine.task.task_id or run["revision"] == "preparation":
+        raise OPCError("delivery source must be an execution run of this task")
     if run["task_digest"] != engine.task.digest:
         raise OPCError("delivery contract differs from frozen run; use its revision")
     engine.run_id = run["run_id"]
@@ -88,6 +90,7 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
                 evidence_source = str(path)
                 break
     if evidence is None:
+        engine.hard_check()
         ws = engine.workspaces("delivery")
         try:
             ev, meas, tree = engine.evaluate_commit(ws, selected, "", out / "eval", "selected", fresh=True)
@@ -179,6 +182,7 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
     # 6. optional independent reviewer: a fresh read-only model session
     reviewer = None
     if review:
+        engine.hard_check()
         reviewer = run_reviewer(engine, review, out, patch, base, best, coverage)
         # Fail closed on every path that is not a positive verdict. A reviewer
         # reply carrying no verdict once read as "nothing blocked", which let a
@@ -238,6 +242,8 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
     write_json(out / "report.json", report)
     write_text(out / "PROMOTION.md", render(report))
     report["report_dir"] = str(out)
+    engine.ledger.event(engine.run_id, "promotion_report", promotion_id=pid,
+                        report_path=str(out / "report.json"), selected_commit=selected, complete=not blocked)
     return report
 
 

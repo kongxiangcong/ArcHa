@@ -383,7 +383,7 @@ class Engine:
 
     # ----------------------------------------------------------------- budget
     def spent(self) -> dict[str, Any]:
-        t = self.ledger.task_totals(self.task.task_id) if self.preparation else self.ledger.totals(self.run_id)
+        t = self.ledger.task_totals(self.task.task_id) if self.preparation or self.ledger.events(self.run_id, "delivery_repair") else self.ledger.totals(self.run_id)
         attempts = self.ledger.attempts(self.run_id)
         t["search_attempts"] = sum(1 for a in attempts if a["outcome"] and
                                    Outcome(a["outcome"]).counts_as_search)
@@ -872,6 +872,39 @@ class Engine:
                 ws.drop(t)
 
     # -------------------------------------------------------------------- run
+    def repair_delivery(self, report_path: str | Path) -> dict[str, Any]:
+        """Continue a registered failed promotion from its exact selected version."""
+        path = Path(report_path).resolve()
+        report = json.loads(path.read_text(encoding="utf-8"))
+        source = self.ledger.run(report["run_id"])
+        if source["task_id"] != self.task.task_id or source["task_digest"] != self.task.digest:
+            raise OPCError("repair requires the same task and frozen contract")
+        registered = [e for e in self.ledger.events(source["run_id"], "promotion_report")
+                      if Path(e["body"]["report_path"]).resolve() == path]
+        if not registered or registered[-1]["body"]["complete"] or report.get("complete"):
+            raise OPCError("repair requires a registered failed promotion")
+        self.run_id = source["run_id"]
+        if source["state"] != "closed" or self.ledger.control(self.run_id) in ("pause", "stop"):
+            raise OPCError("repair cannot override pause/stop or an active run")
+        if report["selected_version"] != self.selected_commit():
+            raise OPCError("repair must start from the selected candidate")
+        if any(f["check"] in ("evaluator", "scope") for f in report["findings"] if f["severity"] == "block"):
+            raise OPCError("repair needs an explicit contract/evaluator revision")
+        if any(f["check"] == "review" and "unavailable" in f["text"] for f in report["findings"]):
+            raise OPCError("retry promotion reviewer only; no candidate development needed")
+        # Every repair uses task-wide accounting, including projects without preparation.
+        used = self.ledger.task_totals(self.task.task_id)
+        if used["wall_seconds"] >= self.task.budget.max_wall_seconds or (
+            self.task.budget.max_tokens is not None and used["tokens"] >= self.task.budget.max_tokens):
+            raise OPCError("task budget exhausted; no repair dispatch")
+        self.hard_check()
+        with self.ledger.writer():
+            new_id = self.open_run(new_run=True, base_ref=report["selected_version"],
+                                   direction="Repair delivery findings: " + json.dumps(report["findings"]))
+            self.ledger.event(new_id, "delivery_repair", source_run=source["run_id"],
+                              source_promotion=report["promotion_id"], selected_commit=report["selected_version"])
+        return self.run()
+
     def run(self, new_run: bool = False, direction: str | None = None,
             max_attempts_now: int | None = None, base_ref: str | None = None) -> dict[str, Any]:
         with self.ledger.writer():

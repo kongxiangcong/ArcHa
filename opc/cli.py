@@ -51,10 +51,25 @@ def cmd_preflight(a) -> int:
 
 def cmd_run(a) -> int:
     e = _engine(a, log=lambda s: print("[opc] " + s, flush=True))
-    s = e.run(new_run=a.new_run, direction=a.direction, max_attempts_now=a.max_now,
-              base_ref=a.base)
+    if a.repair_promotion:
+        s = e.repair_delivery(a.repair_promotion)
+    else:
+        s = e.run(new_run=a.new_run, direction=a.direction, max_attempts_now=a.max_now,
+                  base_ref=a.base)
+    if a.deliver:
+        s["complete"] = False
+        if s["state"] == "closed" and e.ledger.control(e.run_id) not in ("pause", "stop") and "by user" not in (s["stop_reason"] or ""):
+            from .core.promote import promote
+            review = a.review
+            if review is None and any(r.get("verification") == "review" for r in e.task.requirements):
+                review = e.task.expert.kind if e.task.expert.kind in ("codex", "dsh") else None
+            try:
+                s["delivery"] = promote(e, review=review, source_run=s["run_id"])
+                s["complete"] = s["delivery"]["complete"]
+            except OPCError as exc:
+                s["delivery_error"] = str(exc)
     _print(s)
-    return 0 if s["state"] in ("closed", "paused") else 2
+    return (0 if s.get("complete") else 1) if a.deliver else (0 if s["state"] in ("closed", "paused") else 2)
 
 
 def cmd_status(a) -> int:
@@ -112,7 +127,7 @@ def cmd_report(a) -> int:
 
 def cmd_promote(a) -> int:
     from .core.promote import promote
-    rep = promote(_engine(a), confirm_repeats=a.confirm, review=a.review, apply_to=a.apply)
+    rep = promote(_engine(a), confirm_repeats=a.confirm, review=a.review, apply_to=a.apply, source_run=a.source_run)
     _print({k: v for k, v in rep.items() if k not in ("reviewer",)} |
            {"reviewer": (rep.get("reviewer") or {}).get("verdict")})
     return 0 if rep["promotable"] else 1
@@ -171,6 +186,9 @@ def main(argv=None) -> int:
     p.add_argument("--direction", default=None)
     p.add_argument("--new-run", action="store_true")
     p.add_argument("--base", default=None, help="start a new run from this ref")
+    p.add_argument("--deliver", action="store_true", help="terminal delivery check; never apply")
+    p.add_argument("--repair-promotion", help="registered failed report to continue from selected candidate")
+    p.add_argument("--review", choices=["codex", "dsh"])
     p.add_argument("--max-now", type=int, default=None, help="attempts in this session")
     add("status", cmd_status, task_required=False)
     for c in ("pause", "stop"):
@@ -178,6 +196,7 @@ def main(argv=None) -> int:
         p.set_defaults(command=c)
     add("report", cmd_report)
     p = add("promote", cmd_promote)
+    p.add_argument("--source-run", help="explicit execution run for delivery")
     p.add_argument("--confirm", type=int, default=0, help="repeat baseline and selected delivery N times for numeric comparison")
     p.add_argument("--review", default=None, choices=[None, "codex", "dsh"])
     p.add_argument("--apply", default=None, metavar="BRANCH")

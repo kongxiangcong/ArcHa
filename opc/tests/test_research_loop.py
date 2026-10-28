@@ -1,5 +1,6 @@
 """Offline loop contracts: no model service, onboard run or benchmark."""
 import json
+from pathlib import Path
 
 import pytest
 
@@ -492,3 +493,32 @@ def test_metered_preparation_to_formal_execution(make_project, engine_for, monke
     evaluator.write_text(EVALUATE)
     git(root,'add','.opc/eval'); git(root,'commit','-qm','changed standard')
     assert not engine_for(root).static_check()['ok']
+
+
+def test_delivery_repair_selected_candidate_preserves_failure(make_project, engine_for):
+    from opc.core.promote import promote
+    root = make_project(tsk=task(acceptance={}, requirements=[
+        {'id': 'R', 'text': 'loss one', 'check': {'metric': 'loss', 'op': '<=', 'value': 1}}]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), stop], [4]))
+    first_run = e.run()
+    failure = promote(e, source_run=first_run['run_id'])
+    assert not failure['complete']
+    original = e.ledger.run(first_run['run_id'])['stop_reason']
+    e = use_sequence(engine_for(root), Sequence([plan(1), stop], [7]))
+    repaired = e.repair_delivery(Path(failure['report_dir']) / 'report.json')
+    assert repaired['baseline'] == first_run['selected_version']
+    assert e.ledger.run(first_run['run_id'])['stop_reason'] == original
+    assert promote(e, source_run=repaired['run_id'])['complete']
+    assert not json.loads((Path(failure['report_dir']) / 'report.json').read_text())['complete']
+
+
+def test_delivery_repair_respects_stop(make_project, engine_for):
+    from opc.core.promote import promote
+    from opc.core.model import OPCError
+    root = make_project(tsk=task(acceptance={}, requirements=[{'id':'R','text':'review','verification':'review'}]))
+    e = use_sequence(engine_for(root), Sequence([stop]))
+    s = e.run()
+    report = promote(e, source_run=s['run_id'])
+    e.ledger.set_control(s['run_id'], 'stop')
+    with pytest.raises(OPCError, match='pause/stop'):
+        e.repair_delivery(Path(report['report_dir']) / 'report.json')
