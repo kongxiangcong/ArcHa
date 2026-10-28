@@ -19,6 +19,12 @@ python3 <project>/.opc/archa.py brief-check -p <project> --brief <brief>
 
 ## 准备执行
 
+若合同有 `results_path`，先执行 `results -p <project> --task <task-id> --revision <revision>` 阅读当前成果、来源与缺项；入口不存在时加 `--initialize` 建最小模板。后续接续沿用同一入口。原生 run 自动登记执行事实；主流程在已有解释步骤更新 README 人工区和所引用 specs：主张、适用条件、证据、未知项、下一步，明确待审核或被替代的结论。保持自动登记区完整。
+
+主会话自行执行批次时，在执行前与执行后调用同一个 `results --batch <稳定批次ID> --experiment-id <稳定问题ID>` 入口，用 `--plan/--evidence/--analysis/--review` 引用原位置，路径相对成果 README。按事实使用 `--status planned|running|completed|failed|aborted|cached`；已有批次 ID 可复用，外部批次没有 run。执行前记录问题、对照、竞争预测与判定方式，结果不同于预期或证据不足均可正常登记。缓存仅表示历史证据。
+
+登记失败后用 `results --sync-run <run-id>` 重建引擎登记，外部批次重发相同登记命令；两者均不重新实验。变更累计结论时保留原件及旧版本，说明变化原因，并使旧审核继续仅覆盖旧对象；引用具体 promotion/report.json，不能把 run 通过当成逐条科学主张已审核。通过现有研究解释流程完成这些更新，无需为了收尾另派模型或 reviewer。
+
 用户要求启动本技能即授权在已确定的合同范围、预算内准备和运行，无需重复询问是否启动。先核对 `.opc/README.md` 的 Open items、交接记录及实际合同；预算未定或可靠用量记录不可得时停止新增派发；必要评价器接入、关键验证或设备能力未知属于范围内准备待办，先用下述 prepare 路径自主建立与验证，不直接转交用户。不得编造指标或扩大范围。
 
 读取 `status -p <project> --task <task-id>`。已有控制器运行时只跟踪状态，不启动第二个控制器。相同 revision 的 paused/blocked run 在原因解决后可用普通 run 恢复；closed run 默认报告已有结果，不自动用 `--new-run` 重置预算；已登记失败终验的范围内修复使用下文 --repair-promotion，属于同一授权任务。用户明确要求新一轮且预算已确定时才使用 `--new-run`；合同变更也需要新 run，只有明确从上次冠军继续时才传 `--base <冠军提交>`。

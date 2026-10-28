@@ -21,6 +21,8 @@ sub-agent 只调查本任务，不改项目实现、地图状态或执行合同�
 
 ## 澄清并展示建议大纲
 
+需要跨 run 接续的研究任务，在简报交付物中指定一个稳定成果 README，优先引用已有 specs、批次和 evidence-index；沿用已有入口。将该路径交给 onboard 写入可选 `results_path`。结论正文及适用条件留在 specs，无 specs 时写在 README。新增验收条件按合同 revision 流程处理；历史批次缺失计划或审核时如实标记，不补造材料。
+
 先读 [简报模板](references/task-brief.md) 和 [ArcHa 消费链](references/archa-workflow.md)。
 
 只对会改变用途、范围或交付物的缺口逐步提问，一次一个关键问题，附建议和理由；用户不清楚时先给例子或继续调查。常规实现选择给出建议，基线、预算、worker、引擎适配等留给 onboard，不把这些细节逐项变成收口障碍。

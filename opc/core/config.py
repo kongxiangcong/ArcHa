@@ -54,7 +54,7 @@ COMPONENT_KEYS = {"component_id", "description", "editable", "frozen", "evaluato
                   "on_skip", "context_files", "focus_areas", "adapter", "deterministic"}
 GATE_KEYS = {"id", "argv", "timeout_s", "metrics", "repeat", "cwd", "env"}
 TASK_KEYS = {"task_id", "revision", "component", "goal", "direction", "requirements",
-             "acceptance", "budget", "workers", "base_ref", "preparation_review"}
+             "acceptance", "budget", "workers", "base_ref", "preparation_review", "results_path"}
 REQUIREMENT_KEYS = {"id", "text", "verification", "check", "gates", "required"}
 ACCEPTANCE_KEYS = {"objective", "constraints", "target", "repeats", "noise_k", "rule",
                    "rule_params"}
@@ -323,6 +323,9 @@ class TaskSpec:
         d = _read(path)
         where = str(path)
         _keys(d, TASK_KEYS, where)
+        if d.get("results_path") is not None:
+            from .results import entry_path
+            entry_path(root, d["results_path"])
         if "preparation_review" in d and type(d["preparation_review"]) is not bool:
             raise OPCError("preparation_review must be boolean")
         for i, r in enumerate(d.get("requirements") or []):

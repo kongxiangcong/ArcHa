@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import stat
@@ -60,6 +61,7 @@ RUNTIME_FILES = (
     "opc/core/platform.py",
     "opc/core/windows.py",
     "opc/core/promote.py",
+    "opc/core/results.py",
     "opc/core/workspace.py",
     "opc/domain.py",
     "opc/domains/__init__.py",
@@ -128,7 +130,54 @@ def verify(runtime: Path) -> dict:
     return manifest
 
 
-def initialize(project: Path, runtime: Path) -> dict:
+def upgrade_runtime(control: Path, runtime: Path) -> str:
+    """Replace a verified pinned runtime under the existing controller lock."""
+    local = control / 'local'
+    backups = local / 'runtime-backups'
+    if redirected(local) or redirected(backups) or redirected(local / 'ledger.lock'):
+        raise ValueError('runtime update paths must not be redirected')
+    local.mkdir(parents=True, exist_ok=True)
+    # The packaged platform helper supplies the same lock on Windows and POSIX.
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, str(runtime))
+    try:
+        from opc.core.platform import lock_writer, unlock_writer
+    finally:
+        sys.path.pop(0)
+        sys.dont_write_bytecode = previous
+    fd = os.open(local / 'ledger.lock', os.O_CREAT | os.O_RDWR, 0o644)
+    locked = False
+    try:
+        try:
+            lock_writer(fd)
+            locked = True
+        except BlockingIOError:
+            raise ValueError('stop the active controller before updating runtime') from None
+        backups.mkdir(parents=True, exist_ok=True)
+        stage = control / ('.runtime-' + uuid.uuid4().hex)
+        backup = backups / ('runtime-' + uuid.uuid4().hex)
+        stage.mkdir()
+        try:
+            staged = stage / 'runtime'
+            shutil.copytree(runtime, staged)
+            verify(staged)
+            (control / 'runtime').rename(backup)
+            try:
+                staged.rename(control / 'runtime')
+            except BaseException:
+                backup.rename(control / 'runtime')
+                raise
+        finally:
+            shutil.rmtree(stage)
+        return str(backup)
+    finally:
+        if locked:
+            unlock_writer(fd)
+        os.close(fd)
+
+
+def initialize(project: Path, runtime: Path, update: bool = False) -> dict:
     project = project.resolve()
     if not project.is_dir():
         raise ValueError("project must be an existing directory")
@@ -154,6 +203,9 @@ def initialize(project: Path, runtime: Path) -> dict:
     launcher = control / "archa.py"
     if redirected(launcher) or (launcher.exists() and launcher.read_text(encoding="utf-8") != LAUNCHER):
         raise ValueError("existing .opc/archa.py conflicts with project-local launcher")
+    backup = None
+    if update and local_runtime.exists() and verify(local_runtime)['snapshot_sha256'] != verify(runtime)['snapshot_sha256']:
+        backup = upgrade_runtime(control, runtime)
     if not existing:
         control.mkdir()
     if not local_runtime.exists():
@@ -177,25 +229,27 @@ def initialize(project: Path, runtime: Path) -> dict:
     return {"project": str(project), "existing_scaffold": config_path.exists(),
             "execution_enabled": config.get("execution_enabled", False),
             "runtime_commit": verify(local_runtime)["source_commit"],
+            "runtime_backup": backup,
             "entrypoint": str(launcher), "next": "discuss research map; no experiments started"}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", type=Path, required=True)
+    parser.add_argument('--update', action='store_true', help='replace verified runtime, retaining a backup; stop controllers first')
     args = parser.parse_args()
     skill = Path(__file__).resolve().parents[1]
     bundle = skill / "assets/runtime"
     try:
         if bundle.is_dir():
-            result = initialize(args.project, bundle)
+            result = initialize(args.project, bundle, update=args.update)
         else:
             source = skill.parent.parent
             if not (source / "opc/cli.py").is_file():
                 raise ValueError("runtime bundle missing; reinstall with tools/install_research_skills.py")
             with tempfile.TemporaryDirectory(prefix="archa-source-") as temp:
                 snapshot(source, Path(temp))
-                result = initialize(args.project, Path(temp))
+                result = initialize(args.project, Path(temp), update=args.update)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (OSError, ValueError) as exc:

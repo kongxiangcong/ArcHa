@@ -93,3 +93,7 @@ Codex/DSH 计划接口使用上述字段；旧 `NO_EXPERIMENT` 仍识别，但�
 acceptance.objective 可省略/null。默认工作版本累积已成功保存的授权修改，不创建数值冠军；有 objective 时保持原排名语义。base_attempt（含停止回复）可选择已有候选或 0 基线。普通步骤默认局部验证，evaluate=true 请求冻结评价；数值任务默认正式评价，evaluate=false 可暂不测量。
 requirements[].gates 可声明已有冻结门对需求的覆盖；check 使用真实指标，review 需要独立审阅。未验证、未满足及有未满足条件的 review 都阻止完整交付。promote 检查 selected_version，run 停止本身不是任务完成。
 默认模型上下文只含必要指标、有界近期实验与证据位置，完整事实留已有 ledger/评价文件。已知无有效执行的请求拒绝会 blocked，不会原样重试。
+
+## 任务成果与实验接续
+
+需要跨 run 累计研究成果时，使用可选 `task.results_path` 和 `opc results`。入口组织现有计划、原件、规格与审核，原生 run 自动登记执行事实；主流程更新累计研究判断。详见[使用说明](../docs/design/task-results/usage.md)和[实施 tickets](../docs/design/task-results/tickets.md)。

@@ -572,6 +572,7 @@ class Engine:
 
     def context(self, n: int, champ: tuple[str, Measurements], focus: str | None,
                 tree: Path) -> dict[str, Any]:
+        self.sync_results()
         attempts = self.attempt_records()
         champions = self.ledger.champions(self.run_id)
         decided = [a for a in attempts if a["outcome"] and a["plan"]]
@@ -610,7 +611,7 @@ class Engine:
             # No gate verdict text, worker errors or raw logs in expert context.
             history.append({
                 "attempt": a["attempt_no"],
-                **{k: plan.get(k) for k in ("title", "hypothesis", "changes", "expected", "falsifier")},
+                **{k: plan.get(k) for k in ("title", "hypothesis", "changes", "expected", "falsifier", "experiment_id")},
                 "plan_params": plan.get("params"), "parent": a["parent"],
                 "candidate": a["candidate"], "outcome": a["outcome"],
                 "execution": bounded_data(a["execution"]),
@@ -644,6 +645,7 @@ class Engine:
                 background[rel] = {"excerpt": path.read_text(encoding="utf-8")[:1500], "source": str(self.root / rel)}
         return {
             "attempt": n, "focus": focus,
+            **({"task_results": self.results_context()} if self.task.raw.get("results_path") else {}),
             "task": {"goal": self.task.goal,
                      "direction": directions[-1] if directions else run["direction"],
                      "requirements": self.task.requirements,
@@ -672,6 +674,24 @@ class Engine:
                              and a["outcome"] != Outcome.INFRA.value],
         }
 
+    def results_context(self) -> dict:
+        from .results import snapshot
+        try:
+            return snapshot(self.root, self.bindings.artifact_root, self.task.raw['results_path'])
+        except (OSError, ValueError, OPCError) as exc:
+            return {'entry': self.task.raw.get('results_path'), 'sources': [], 'issues': [str(exc)]}
+
+    def sync_results(self) -> str | None:
+        from .results import sync_engine
+        try:
+            sync_engine(self)
+        except (OSError, ValueError, OPCError) as exc:
+            self._results_error = str(exc)
+            self.log('results registration pending: ' + str(exc))
+            return str(exc)
+        self._results_error = None
+        return None
+
     def save_conclusions(self, output: dict[str, Any], ctx: dict[str, Any], n: int) -> str | None:
         pending = {a["attempt_no"] for a in self.attempt_records()
                    if a["plan"] and a["outcome"] and a["conclusion"] is None}
@@ -688,6 +708,8 @@ class Engine:
         for row in conclusions:
             self.ledger.event(self.run_id, "conclusion", row["attempt"],
                               text=row["conclusion"], reviewed_by_attempt=n)
+        if conclusions:
+            self.sync_results()
         return None
 
     def save_candidate(self, ws: Workspaces, n: int, parent: str, patch: str, title: str) -> str:
@@ -773,6 +795,7 @@ class Engine:
                                                 "cost": total.as_dict(),
                                                 "champion_before": champ[0]})
             self.log("a%d %-18s %s" % (n, outcome.value, " ".join(reason.split())[:140]))
+            self.sync_results()
             return outcome, None
 
         try:
@@ -819,6 +842,7 @@ class Engine:
                     why = "plan names non-editable paths: %s" % ", ".join(outside)
             write_json(adir / "plan.json", plan)
             self.ledger.update_attempt(self.run_id, n, "planned", plan=plan)
+            self.sync_results()
             if why:
                 return finish(Outcome.WORKER_FAILED, "plan check: " + why)
             self.hard_check()
@@ -1039,6 +1063,9 @@ class Engine:
             if best and acceptance.target_met(self.task.acceptance, best["metrics"]["values"]):
                 business = "target_met"
         return {"run_id": self.run_id, "task": self.task.task_id, "revision": self.task.revision,
+                **({'results_path': self.task.raw['results_path'],
+                    'results_registration_error': getattr(self, '_results_error', None)}
+                   if self.task.raw.get('results_path') else {}),
                 "state": run["state"], "stop_reason": run["stop_reason"], "result": business,
                 "champion_ref": self.ref, "champion": best["commit_sha"] if best else None,
                 "selected_version": self.selected_commit(),
@@ -1053,9 +1080,10 @@ class Engine:
                                         if a["plan"] and a["outcome"] and a["conclusion"] is None],
                 "spent": self.spent(), "budget_left": self.budget_left()}
 
-    def write_views(self) -> None:
+    def write_views(self) -> str | None:
         if not self.run_id:
             return
+        results_error = self.sync_results()
         s = self.summary()
         views = self.artifact_dir() / "views"
         write_json(views / "report.json", {**s, "attempts": self.attempt_records(),
@@ -1086,3 +1114,4 @@ class Engine:
                                (a["attempt_no"], a["conclusion"] or "pending review"))
         write_text(views / "STATE.md", "\n".join(lines) + "\n")
         write_text(views / "LESSONS.md", "\n".join(lessons) + "\n")
+        return results_error

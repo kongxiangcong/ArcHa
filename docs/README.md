@@ -17,6 +17,8 @@
 
 当前改造：[任务完成主线 spec](design/task-completion/spec.md) 与 [实施 tickets](design/task-completion/tickets.md)、[工程验证方案](design/task-completion/validation.md) 与 [开发提示词](design/task-completion/development-prompt.md)（2026-10-27；逐票实施及真实验证状态以 tickets 为准）。
 
+任务成果统一：[实施 tickets 与字段归属](design/task-results/tickets.md)、[使用与升级](design/task-results/usage.md)。支持跨 run 实验关联、当前累计成果消费、审核版本和只读成果入口；验证状态以 tickets 为准。
+
 旧 benchmark 工具及 FP32 包已退役，历史报告在 benchmarks/reports 保留。运行工程、账本、候选、原始 worker 日志留在本地 benchmarks/experiments 或配置的外置 artifact_root；依赖在 benchmarks/cache；临时脚本和测试夹具归 .tmp。根目录的 pip-* 是可再生成的安装临时目录，已清理并忽略。不要将本地依赖、独立 Git 工程或原始会话批量加入主仓库。
 
 新报告注明日期、代码/合同版本、验证范围与证据来源。报告中的旧根目录文件名、绝对路径和当时的未提交状态属于历史事实；目录调整只修正文档链接，不改写历史结果。

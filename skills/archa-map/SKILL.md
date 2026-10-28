@@ -17,6 +17,8 @@ python3 /absolute/path/to/archa-map/scripts/initialize.py --project /absolute/pr
 
 已有 `.opc/research/research-map.md` 时恢复地图、当前焦点、未决问题和任务材料。已有其他位置的研究地图时先引用来源，保留历史路径与证据，不静默迁移冻结材料。
 
+用户要求升级 runtime 时，停止控制器后使用同一脚本的 `--update`；它校验旧快照、复用控制器锁，在 `.opc/local/runtime-backups/` 保留旧 runtime，再替换运行代码。合同、ledger、预算与研究原件保留。默认恢复仍固定旧版本；修改过的 runtime 校验失败时先保留并处理本地差异。
+
 ## 共同形成方向
 
 从“研究得到什么、谁用结论、为何值得做”展开。调查必要源码和原始来源，再解释具体用途、依据与代价；把已读源码、已执行结果和推测分开。先检验一个关键前提，给出可删、推迟或缩小的工作及理由。环境有 winson 时可借用其讨论方式，本技能自身可独立完成讨论。

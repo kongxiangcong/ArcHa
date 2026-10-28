@@ -87,6 +87,10 @@
 
 ## 4. 任务合同 `tasks/<task>/revisions/r0001/task.json`
 
+研究任务需要跨 run 累计成果时，在 task 顶层设置可选 `results_path`，值为项目相对 Markdown 路径（例如 `research/results/task-a/README.md`）。已有成果优先复用原位置；跨 revision 沿用同一稳定入口，目录名不表示合同 revision。旧任务无此字段保持原行为。对已冻结合同启用入口时建新 revision，不回写旧合同或重置预算。通过 `results --initialize` 建最小入口，在人工区域链接现有 specs、批次计划和 evidence-index。没有 specs 时在 README 直接写结论与适用条件。
+
+成果 README 由主流程维护，运行登记自动更新。只将确需 designer 修改的规格路径纳入 editable；不要把整个 research 或 .opc 放开。成果管理不要求数值 objective；实验有效性和推断质量可以作为验收条件，不能要求机制研究必须得到预期数字。
+
 ```json
 {
   "task_id": "t-emu-tune",
