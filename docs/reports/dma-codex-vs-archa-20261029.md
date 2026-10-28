@@ -1,0 +1,51 @@
+# DMA 背压：Codex 直接执行与 ArcHa 执行实测
+
+2026-10-29，本机各执行一次，先直接组、后框架组，串行执行。两份候选均通过同一外置验收；ArcHa 因 token 预算中断，未完成框架正式评价及专家复盘。本记录比较实际发生的运行，不将中断运行等同于完整闭环。
+
+## 结果
+
+| 项目 | Codex 直接执行 | ArcHa + Codex |
+| --- | ---: | ---: |
+| 模型执行墙钟时间 | 112.414 秒 | 119.568 秒 |
+| 输入 tokens（含缓存） | 181,228 | 200,250 |
+| 输出 tokens | 5,149 | 6,131 |
+| 总 tokens（输入 + 输出） | 186,377 | 206,381 |
+| 缓存输入 tokens（已包含于输入） | 163,840 | 153,728 |
+| 非缓存输入 tokens | 17,388 | 46,522 |
+| 外置函数用例 | 82/82 | 82/82 |
+| 外置 CLI 检查 | 有效/非法输入均通过 | 有效/非法输入均通过 |
+| 公开检查 | 4/4 | 4/4（设计者本地及外置复核） |
+| 开发测试 | 8/8 | 13/13 |
+| README 交付 | 有 | 有 |
+| simulate 平均单次耗时的样本中位数 | 42.744 µs | 39.089 µs |
+| 模型调用 | 1 次实现会话 | 专家 1 次 + 设计者 1 次 |
+| 框架结束状态 | 不适用 | budget_exhausted；attempt=abandoned |
+
+本次框架组执行耗时增加 6.36%，总 token 增加 10.73%。缓存比例不同，不能按总 token 比例推断实际账单。CLI 未提供价格，美元/人民币成本未知。交付代码微基准中框架候选的单次运行耗时低约 8.55%，只是这两份候选在小型合成输入上的观测，不能归因于框架或外推硬件吞吐。
+
+ArcHa 专家消耗 53,115 tokens，设计者消耗 153,266 tokens。合同设置 150,000 tokens、900 秒、最多 3 轮；引擎在设计者返回后发现累计 206,381 tokens，保存候选后停止，超过 token 限额 56,381。它没有执行本轮正式 gate，也未进行后续专家复盘。原报告为 `no_valid_candidate`，而保存候选在独立验收中通过；前者不能改写为框架验收成功，后者也不能被前者掩盖。选中候选为 `0dc2e28d25c64d1a010815b1eb05df19bd1c6521`。
+
+## 条件与计量
+
+- 相同起始 `dma_model.py`、TASK.md、公开检查和 example.json；两组使用 Codex CLI 0.165.0、`gpt-6.1-sol`、`medium`，workspace-write、ephemeral。没有向 worker 提供外置参考实现。TASK.md 和 public_checks.py 的最终字节与原件一致。
+- 任务为 `tools/tests/fixtures/dma_backpressure/TASK.md` 的完整 DMA 排程实现，非 observer 演示。完成条件包括 admission/start/end、内存快照、依赖、恢复、输入校验、CLI 和 README。没有数值优化 objective。
+- 直接组一次会话连续实现与验证，进程超时 900 秒，无 CLI 硬 token 限制。框架组使用现有专家/设计者循环、冻结公开 gate、独立 Git 工程。两者提示词按各自运行机制不同。框架预算由本次实验设置，不是用户指定；资源约束不完全一致，因此上述差值不是等预算完整闭环的效率结论。
+- 时间使用 `perf_counter` 包围各执行进程，包含模型、工具与框架运行。框架账本计费墙钟合计为 119.218 秒。框架配置生成、Git 初始化及首次 check/preflight 的自动化区段另测为 0.481 秒；初始 opc init 为工具记录的约 0.036 秒。随后完善专家上下文的准备时间未单独计时，故未声称获得完整接入总耗时。
+- 当前对话中的调查、合同准备、报告整理和外置测量不包含在 worker token 和执行时间内，当前会话没有完整 token 计量接口。两组数据来自 CLI `turn.completed.usage`；缓存输入为输入子集，reasoning_output_tokens 不再重复相加。
+- 最初直接组在受限权限下启动失败：`failed to initialize in-process app-server client: Read-only file system`，未产生模型 usage。随后两组都通过环境授权机制启动成功。该预运行失败未计入表中成功运行耗时。
+- 外置终验使用现有 acceptance.py 的固定种子 1701、4301，共 82 个函数用例（74 有效、8 非法）及 2 个 CLI 检查，候选不修改输入。验收结果没有反馈给模型继续修复。
+- 代码微基准在终验后执行，74 个有效输入 × 100 次 × 7 个样本，取每个样本总时间折算单次耗时的中位数，包含输入校验、调度与输出构造，不含 CLI 启动；原始时间见 JSON。两组按固定顺序测量，非随机交错；无统计显著性结论。
+- 未通过 promote，不修改 ArcHa 源码或用户分支。框架保存的开发测试 pycache 被 editable 通配范围包含在候选中；保留原始事实，未清洗后重新计时。
+
+## 证据与复核
+
+可提交的结构化数据、候选补丁位于 [同名目录](dma-codex-vs-archa-20261029/)：
+
+- [comparison.json](dma-codex-vs-archa-20261029/comparison.json)：token 原始 usage、时间、终验、微基准全部样本。
+- [archa-report.json](dma-codex-vs-archa-20261029/archa-report.json)：框架状态、预算、计划、执行摘要与保存版本。
+- [environment.json](dma-codex-vs-archa-20261029/environment.json)：框架 HEAD、运行环境和任务材料 SHA-256。
+- [direct.patch](dma-codex-vs-archa-20261029/direct.patch)、[archa.patch](dma-codex-vs-archa-20261029/archa.patch)：可审阅的交付代码及测试差异。
+
+完整本地原件保存在 `work/dma-ab-20261029/`（Git 忽略）：CLI JSONL、stderr、实际提示词与请求、合同、SQLite、Git 工程、候选导出、corpus、验收和复测日志、测量脚本。工作目录最初为 `/tmp/dma-ab-20261029/`，原日志中的绝对路径保留。无模型价格数据。原件中的 prepare.py 后又经上下文补全提交，最终合同/上下文以保存的 Git 工程和候选导出为准。
+
+结论限于一次工程试验：直接组完成交付的耗时和总 token 较少；框架组保存了可通过外置验收的候选与审计记录，但在本次预算下未完成自身闭环。若要比较完整闭环效率，需要预先统一更充足的预算并重复实验，本记录不以事后追加预算替换原始结果。

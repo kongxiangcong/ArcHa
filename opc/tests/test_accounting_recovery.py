@@ -84,8 +84,10 @@ def test_reconciliation_validation_and_budget(make_project, monkeypatch):
     monkeypatch.setattr('opc.adapters.codex.CodexWorker._run', lambda *a: pytest.fail('dispatched'))
     assert onboard(root, 'codex', reconcile_usage=receipt, **kw)['preparation'] == 'budget_exhausted'
     assert ledger.totals(rid)['tokens'] == 100
-    with pytest.raises(OPCError, match='do not reset'):
-        onboard(root, 'codex', **{**kw, 'max_tokens': 200})
+    # An explicit new cap updates configuration without resetting consumed usage.
+    onboard(root, 'codex', **{**kw, 'max_tokens': 200})
+    assert ledger.totals(rid)['tokens'] == 100
+    assert [v['body']['tokens'] for v in ledger.events(rid, 'preparation_budget')] == [100, 200]
 
 
 def test_codex_readonly_error_and_spawn_failure(tmp_path):

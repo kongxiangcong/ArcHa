@@ -667,7 +667,9 @@ def test_confirmed_revision_can_repair_remaining_findings(make_project, engine_f
 @pytest.mark.parametrize('marker', ['delivery_repair', 'promotion_report', 'delivery'])
 def test_delivery_accounting_survives_engine_recreation(make_project, engine_for, entry, marker):
     from opc.core.model import OPCError
-    root = make_project(tsk=task(acceptance={}, requirements=[]))
+    spec = task(acceptance={}, requirements=[])
+    spec["budget"]["max_tokens"] = 1000
+    root = make_project(tsk=spec)
     e = engine_for(root)
     rid = e.open_run()
     if marker == 'delivery':

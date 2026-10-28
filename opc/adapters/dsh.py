@@ -177,7 +177,9 @@ class DshWorker:
     def __init__(self, options: dict[str, Any]):
         self.binary = options.get("binary") or os.environ.get("OPC_DSH_BIN", "dsh")
         self.profile = str(options.get("profile") or "headless")
-        self.timeout = float(options.get("timeout_s", 1800))
+        self.timeout = options.get("timeout_s")
+        if self.timeout is not None:
+            self.timeout = float(self.timeout)
         self.extra = list(options.get("extra_args") or [])
         self.selection = {k: options[k] for k in ("provider", "model", "reasoning_effort")
                           if options.get(k) is not None}

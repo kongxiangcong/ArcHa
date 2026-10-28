@@ -1,0 +1,358 @@
+--- a/dma_model.py
++++ b/dma_model.py
+@@ -1,9 +1,10 @@
+-"""Usable serial descriptor executor; queue admission and overlap are not implemented.
++"""Deterministic descriptor executor with DMA backpressure and compute overlap.
+ 
+ Python 3.10+, standard library only. The task is specified in TASK.md.
+ """
+ from __future__ import annotations
+ import argparse
++from collections import deque
+ import json
+ 
+ 
+@@ -49,23 +50,76 @@
+ 
+ 
+ def simulate(case):
+-    """Serial baseline: correct functional execution, no DMA/compute overlap."""
++    """Execute descriptors in issue order, advancing between scheduling events.
++
++    DMA capacity includes both the active transfer and waiting transfers. Each
++    active operation retains its start-time data until its completion commits.
++    """
+     validate(case)
+     memory = list(case["memory"])
+     cfg = case["config"]
++    jobs = case["descriptors"]
+     now, events, checksums = 0, [], {}
+-    for job in case["descriptors"]:
+-        now = max(now, job.get("release", 0))
+-        start = now
++    completed = set()
++    waiting = deque()
++    dma = compute = None
++    next_job = 0
++
++    def start_dma(job, event):
+         n, src = job["nbytes"], job["src"]
+-        if job["kind"] == "dma":
+-            duration = cfg["setup_cycles"] + (n + cfg["bytes_per_cycle"] - 1) // cfg["bytes_per_cycle"]
+-            memory[job["dst"]:job["dst"] + n] = memory[src:src + n]
+-        else:
+-            duration = job["cycles"]
+-            checksums[job["id"]] = sum(memory[src:src + n])
+-        now += duration
+-        events.append({"id": job["id"], "admitted": start, "start": start, "end": now})
++        duration = cfg["setup_cycles"] + (n + cfg["bytes_per_cycle"] - 1) // cfg["bytes_per_cycle"]
++        event.update(start=now, end=now + duration)
++        return job, event, memory[src:src + n]
++
++    while next_job < len(jobs) or dma is not None or compute is not None or waiting:
++        # Commit every completion before any operation can read memory.
++        if dma is not None and dma[1]["end"] == now:
++            job, event, snapshot = dma
++            memory[job["dst"]:job["dst"] + job["nbytes"]] = snapshot
++            completed.add(job["id"])
++            dma = None
++        if compute is not None and compute[1]["end"] == now:
++            job, event, checksum = compute
++            checksums[job["id"]] = checksum
++            completed.add(job["id"])
++            compute = None
++
++        if dma is None and waiting:
++            dma = start_dma(*waiting.popleft())
++
++        # Stop at the first blocked descriptor, even if later work could run.
++        while next_job < len(jobs):
++            job = jobs[next_job]
++            if job.get("release", 0) > now or any(
++                dep not in completed for dep in job.get("depends", [])
++            ):
++                break
++            if job["kind"] == "dma":
++                if len(waiting) + (dma is not None) >= cfg["queue_depth"]:
++                    break
++            elif compute is not None:
++                break
++
++            event = {"id": job["id"], "admitted": now, "start": now, "end": now}
++            events.append(event)
++            next_job += 1
++            if job["kind"] == "dma":
++                if dma is None:
++                    dma = start_dma(job, event)
++                else:
++                    waiting.append((job, event))
++            else:
++                event["end"] = now + job["cycles"]
++                checksum = sum(memory[job["src"]:job["src"] + job["nbytes"]])
++                compute = job, event, checksum
++
++        # Jump to the next possible state change rather than ticking through
++        # idle cycles. Only the head descriptor's release can unblock issue.
++        wakeups = [active[1]["end"] for active in (dma, compute) if active is not None]
++        if next_job < len(jobs) and jobs[next_job].get("release", 0) > now:
++            wakeups.append(jobs[next_job]["release"])
++        if wakeups:
++            now = min(wakeups)
+     return {"events": events, "memory": memory, "checksums": checksums, "total_cycles": now}
+ 
+ 
+--- a/README.md
++++ b/README.md
+@@ -0,0 +1,62 @@
++# DMA descriptor executor
++
++A deterministic Python 3.10+ model of one DMA channel and one compute unit,
++using only the standard library. Run the JSON CLI with:
++
++```sh
++python dma_model.py example.json
++```
++
++Or call `from dma_model import simulate` and pass a dictionary in the format
++specified in `TASK.md`. The function returns `events`, final `memory`, compute
++`checksums`, and `total_cycles`, without changing its input. Each event contains
++exactly `id`, `admitted`, `start`, and `end`, in input order. Invalid input raises
++`ValueError`; the CLI reports invalid input on stderr and exits with status 2.
++A valid CLI invocation prints one JSON object and exits with status 0.
++
++Descriptors issue in order without consuming cycles. A blocked descriptor also
++blocks every later descriptor. Releases and dependencies must be satisfied before
++admission. DMA queue depth counts both the running transfer and accepted waiting
++transfers; capacity is released only at completion. Compute has no waiting queue
++and starts as soon as it is admitted to the idle compute unit.
++
++DMA duration is `setup_cycles + ceil(nbytes / bytes_per_cycle)`. A transfer takes a
++source snapshot when it starts and writes that snapshot at completion, including
++for overlapping source and destination ranges. Compute sums its source at start
++and publishes the sum at completion. At each cycle, all completions commit first,
++then queued DMA starts, then descriptors issue. DMA and compute can overlap.
++The scheduler jumps between events, so a large release time does not require
++iterating through every idle cycle. An empty descriptor list takes zero cycles.
++
++For `example.json`, each DMA lasts three cycles:
++
++| Queue depth | ID | Admitted | Start | End |
++| --- | --- | ---: | ---: | ---: |
++| 1 | a | 0 | 0 | 3 |
++| 1 | b | 3 | 3 | 6 |
++| 1 | c | 3 | 3 | 5 |
++| 2 | a | 0 | 0 | 3 |
++| 2 | b | 0 | 3 | 6 |
++| 2 | c | 0 | 0 | 2 |
++
++Both depths finish at cycle 6 with memory `[1,2,3,4,1,2,3,4,1,2,3,4]`
++and checksum `{"c":10}`. Increasing depth lets compute start earlier even though
++the final completion time is unchanged. If `c` reads address 8 and depends on
++`b`, it runs from cycle 6 to 8 and returns 10. At depth 2, if `c` instead reads
++address 4 for eight cycles without dependencies, its start-time sum is zero.
++
++This model uses abstract integer cycles and byte-indexed memory. It is intended
++for observing queue backpressure and scheduling overlap, not DDR cycle-accurate
++simulation or calibrated chip performance. It models no cache, address mapping,
++DDR rows, or bus protocols. Timestamps are correctness data, not optimization
++scores.
++
++Run the public and development checks:
++
++```sh
++python public_checks.py
++python -m unittest -v test_dma_model.py
++```
++
++Development checks include boundary cases, CLI errors, input isolation, and 400
++fixed-seed schedules compared with a small cycle-by-cycle oracle.
+--- a/test_dma_model.py
++++ b/test_dma_model.py
+@@ -0,0 +1,187 @@
++"""Development checks, including a small cycle-by-cycle scheduling oracle."""
++import copy
++import json
++from pathlib import Path
++import random
++import subprocess
++import sys
++import tempfile
++import unittest
++
++from dma_model import simulate
++
++
++def make_case(jobs=(), depth=2, memory=None, bandwidth=1, setup=0):
++    return {"config": {"queue_depth": depth, "bytes_per_cycle": bandwidth,
++                       "setup_cycles": setup},
++            "memory": [7, 2, 0, 0] if memory is None else memory,
++            "descriptors": list(jobs)}
++
++
++def dma(ident, src=0, dst=2, nbytes=1, **extra):
++    return dict(id=ident, kind="dma", src=src, dst=dst, nbytes=nbytes, **extra)
++
++
++def compute(ident, src=0, nbytes=1, cycles=1, **extra):
++    return dict(id=ident, kind="compute", src=src, nbytes=nbytes,
++                cycles=cycles, **extra)
++
++
++def tick_reference(case):
++    """Deliberately tick every cycle; used only on small generated inputs."""
++    memory = case["memory"][:]
++    cfg = case["config"]
++    jobs = case["descriptors"]
++    records, completed, sums = [], set(), {}
++    pending, active = [], {}
++    index = time = 0
++
++    def start(job, record):
++        kind = job["kind"]
++        payload = memory[job["src"]:job["src"] + job["nbytes"]]
++        duration = (cfg["setup_cycles"] +
++                    (job["nbytes"] + cfg["bytes_per_cycle"] - 1) // cfg["bytes_per_cycle"]
++                    if kind == "dma" else job["cycles"])
++        record.update(start=time, end=time + duration)
++        active[kind] = (job, record, payload)
++
++    while index < len(jobs) or pending or active:
++        for kind in list(active):
++            job, record, payload = active[kind]
++            if record["end"] == time:
++                if kind == "dma":
++                    memory[job["dst"]:job["dst"] + job["nbytes"]] = payload
++                else:
++                    sums[job["id"]] = sum(payload)
++                completed.add(job["id"])
++                del active[kind]
++        if pending and "dma" not in active:
++            start(*pending.pop(0))
++        while index < len(jobs):
++            job = jobs[index]
++            kind = job["kind"]
++            if job.get("release", 0) > time or not set(job.get("depends", [])) <= completed:
++                break
++            if (kind == "compute" and kind in active or
++                    kind == "dma" and len(pending) + (kind in active) >= cfg["queue_depth"]):
++                break
++            record = dict(id=job["id"], admitted=time)
++            records.append(record)
++            index += 1
++            if kind == "dma" and kind in active:
++                pending.append((job, record))
++            else:
++                start(job, record)
++        if index < len(jobs) or pending or active:
++            time += 1
++    return dict(events=records, memory=memory, checksums=sums, total_cycles=time)
++
++
++class DevelopmentChecks(unittest.TestCase):
++    def test_empty_and_independent_calls(self):
++        self.assertEqual(simulate(make_case(memory=[])),
++                         dict(events=[], memory=[], checksums={}, total_cycles=0))
++        case = make_case([dma("a"), compute("b", src=2, cycles=8)])
++        original = copy.deepcopy(case)
++        first = simulate(case)
++        self.assertEqual(first["checksums"], {"b": 0})
++        self.assertEqual(case, original)
++        first["memory"][0] = 99
++        self.assertEqual(simulate(case)["memory"][0], 7)
++
++    def test_queued_source_snapshot_and_overlapping_copy(self):
++        result = simulate(make_case([dma("a", dst=1, nbytes=2),
++                                     dma("b", src=1, dst=0, nbytes=2)]))
++        self.assertEqual(result["memory"], [7, 2, 2, 0])
++        self.assertEqual(result["events"][1],
++                         dict(id="b", admitted=0, start=2, end=4))
++
++    def test_same_cycle_completion_before_reads(self):
++        jobs = [dma("a"), compute("b"),
++                compute("c", src=2, depends=["a", "b"]),
++                dma("d", src=2, dst=3)]
++        result = simulate(make_case(jobs))
++        self.assertEqual(result["checksums"], {"b": 7, "c": 7})
++        self.assertEqual([event["start"] for event in result["events"]], [0, 0, 1, 1])
++        self.assertEqual(result["memory"], [7, 2, 7, 7])
++
++    def test_compute_and_release_head_blocking(self):
++        jobs = [compute("a", cycles=4), compute("b", release=2), dma("c")]
++        result = simulate(make_case(jobs))
++        self.assertEqual([event["admitted"] for event in result["events"]], [0, 4, 4])
++        result = simulate(make_case([dma("a", release=10**15), compute("b")]))
++        self.assertEqual(result["total_cycles"], 10**15 + 1)
++        self.assertEqual(result["events"][1]["start"], 10**15)
++
++    def test_integer_ceiling_and_minimum_duration(self):
++        for bandwidth, setup, expected in [(2, 1, 3), (100, 0, 1)]:
++            result = simulate(make_case([dma("a", src=0, dst=1, nbytes=3)],
++                                        bandwidth=bandwidth, setup=setup))
++            self.assertEqual(result["total_cycles"], expected)
++
++    def test_seeded_schedules_against_tick_reference(self):
++        rng = random.Random(84621)
++        for trial in range(400):
++            jobs = []
++            for i in range(rng.randrange(18)):
++                n = rng.randint(1, 8)
++                job = dict(id=str(i), kind=rng.choice(["dma", "compute"]),
++                           src=rng.randrange(17 - n), nbytes=n,
++                           release=rng.randrange(15),
++                           depends=[str(j) for j in range(i) if rng.random() < .12])
++                if job["kind"] == "dma":
++                    job["dst"] = rng.randrange(17 - n)
++                else:
++                    job["cycles"] = rng.randint(1, 8)
++                jobs.append(job)
++            case = make_case(jobs, depth=rng.randint(1, 5),
++                             memory=[rng.randrange(256) for _ in range(16)],
++                             bandwidth=rng.randint(1, 6), setup=rng.randrange(4))
++            with self.subTest(trial=trial):
++                self.assertEqual(simulate(case), tick_reference(case))
++
++    def test_invalid_inputs(self):
++        invalid = [None, [], {}, make_case(memory=[True]), make_case(memory=[256]),
++                   make_case(memory=[-1]), make_case([None])]
++        for field, values in {"queue_depth": [0, True, 1.0],
++                              "bytes_per_cycle": [0, False],
++                              "setup_cycles": [-1, True]}.items():
++            for value in values:
++                case = make_case()
++                case["config"][field] = value
++                invalid.append(case)
++        for update in [dict(id=""), dict(kind="other"), dict(src=-1),
++                       dict(dst=4), dict(nbytes=0), dict(nbytes=True),
++                       dict(release=-1), dict(release=False), dict(depends="a"),
++                       dict(depends=["a"]), dict(depends=[[]])]:
++            job = dma("a")
++            job.update(update)
++            invalid.append(make_case([job]))
++        invalid.extend([make_case([dma("a"), dma("a")]),
++                        make_case([compute("a", cycles=True)]),
++                        make_case([compute("a", cycles=0)])])
++        for case in invalid:
++            with self.subTest(case=case), self.assertRaises(ValueError):
++                simulate(case)
++
++    def test_cli(self):
++        script = str(Path(__file__).with_name("dma_model.py"))
++        with tempfile.TemporaryDirectory() as directory:
++            path = Path(directory) / "input.json"
++            for content, status in [(json.dumps(make_case([dma("a")])), 0),
++                                    ('{"bad": 1}', 2), ('{bad json', 2)]:
++                path.write_text(content, encoding="utf-8")
++                result = subprocess.run([sys.executable, script, str(path)],
++                                        capture_output=True, text=True)
++                self.assertEqual(result.returncode, status, result.stderr)
++                if status == 0:
++                    self.assertEqual(json.loads(result.stdout), simulate(json.loads(content)))
++                else:
++                    self.assertEqual(result.stdout, "")
++            result = subprocess.run([sys.executable, script, str(path) + ".missing"],
++                                    capture_output=True, text=True)
++            self.assertEqual(result.returncode, 2)
++
++
++if __name__ == "__main__":
++    unittest.main()

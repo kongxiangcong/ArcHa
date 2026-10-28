@@ -29,7 +29,7 @@ from ..domain import DomainAdapter, Evaluation, bounded_data, experimental_data,
 from . import accept as acceptance
 from .config import Bindings, ComponentConfig, ProjectConfig, TaskSpec, WorkerSpec
 from .ledger import Ledger
-from .worker_config import load_worker_config, worker_options
+from .worker_config import load_worker_config, worker_options, load_budget_config
 from .model import (BudgetExhausted, Cost, GateResult, Measurements, OPCError, Outcome, Verdict,
                     write_json, write_text)
 from .workspace import (Workspaces, apply_patch, cas_update_ref, commit_tree, dirty_paths, git,
@@ -60,8 +60,14 @@ class Engine:
         if self.preparation:
             limits = self.ledger.events(self.preparation, "preparation_budget")
             if limits:
-                self.task.budget.max_tokens = min(self.task.budget.max_tokens or limits[0]["body"]["tokens"], limits[0]["body"]["tokens"])
-                self.task.budget.max_wall_seconds = min(self.task.budget.max_wall_seconds, limits[0]["body"]["wall_seconds"])
+                local_limits = load_budget_config(self.root)
+                for field, key in (("max_tokens", "tokens"), ("max_wall_seconds", "wall_seconds")):
+                    if field in local_limits:
+                        continue
+                    prior = limits[-1]["body"].get(key)
+                    current = getattr(self.task.budget, field)
+                    if prior is not None:
+                        setattr(self.task.budget, field, min(current, prior) if current is not None else prior)
         self.log = log
         self.run_id: str | None = None
         self._domain: DomainAdapter | None = None
@@ -101,7 +107,7 @@ class Engine:
         if self.preparation:
             events = self.ledger.events(self.preparation, "preparation")
             receipt = events[-1]["body"] if events else {}
-            if self.ledger.unresolved_accounting(self.preparation):
+            if self.accounting_required() and self.ledger.unresolved_accounting(self.preparation):
                 problems.append("preparation accounting incomplete; no new dispatch")
             if receipt.get("state") != "ready":
                 problems.append("preparation not ready: " + receipt.get("reason", "unmetered draft"))
@@ -421,10 +427,14 @@ class Engine:
         t["attempts"] = len(attempts)
         return t
 
+    def accounting_required(self) -> bool:
+        return self.task.budget.max_tokens is not None or self.task.budget.max_usd is not None
+
     def budget_left(self) -> dict[str, Any]:
         b, s = self.task.budget, self.spent()
         left = {"attempts": b.max_attempts - s["search_attempts"],
-                "wall_seconds": round(b.max_wall_seconds - s["wall_seconds"], 1)}
+                "wall_seconds": (round(b.max_wall_seconds - s["wall_seconds"], 1)
+                                 if b.max_wall_seconds is not None else None)}
         if b.max_tokens is not None:
             left["tokens"] = b.max_tokens - s["tokens"]
         if b.max_usd is not None:
@@ -447,7 +457,7 @@ class Engine:
                 "WHERE r.task_id=? AND c.role IN ('evaluator','reviewer')", (self.task.task_id,)).fetchone()
             est_wall += reserve[0] or 0
             est_tok += reserve[1] or 0
-        if s["wall_seconds"] + est_wall > b.max_wall_seconds:
+        if b.max_wall_seconds is not None and s["wall_seconds"] + est_wall > b.max_wall_seconds:
             raise BudgetExhausted("max_wall_seconds", "spent %.0fs, next ~%.0fs, cap %.0fs"
                                   % (s["wall_seconds"], est_wall, b.max_wall_seconds))
         if b.max_tokens is not None and s["tokens"] + est_tok > b.max_tokens:
@@ -463,7 +473,7 @@ class Engine:
         """Between steps of one attempt: stop as soon as a cap is crossed."""
         b, s = self.task.budget, self.spent()
         if self.delivery_accounting():
-            if any(self.ledger.unresolved_accounting(r["run_id"]) for r in self.ledger.runs() if r["task_id"] == self.task.task_id):
+            if self.accounting_required() and any(self.ledger.unresolved_accounting(r["run_id"]) for r in self.ledger.runs() if r["task_id"] == self.task.task_id):
                 raise OPCError("usage accounting incomplete; no delivery dispatch")
             if self.ledger.control(self.run_id) in ("pause", "stop"):
                 raise OPCError("user paused/stopped delivery")
@@ -473,9 +483,9 @@ class Engine:
             receipts = self.ledger.events(self.preparation, "preparation")
             if not receipts or receipts[-1]["body"].get("state") != "ready":
                 raise OPCError("preparation is not ready; no formal dispatch")
-        if self.preparation and self.ledger.unresolved_accounting(self.preparation):
+        if self.preparation and self.accounting_required() and self.ledger.unresolved_accounting(self.preparation):
             raise OPCError("usage accounting incomplete; no new dispatch")
-        if s["wall_seconds"] >= b.max_wall_seconds:
+        if b.max_wall_seconds is not None and s["wall_seconds"] >= b.max_wall_seconds:
             raise BudgetExhausted("max_wall_seconds", "crossed mid-attempt")
         if b.max_tokens is not None and s["tokens"] >= b.max_tokens:
             raise BudgetExhausted("max_tokens", "crossed mid-attempt")
@@ -777,10 +787,11 @@ class Engine:
             if call is not None and (self.preparation or self.delivery_accounting()):
                 kind = self.task.expert.kind if role == "expert" else (self.task.designer or self.task.expert).kind
                 if kind in ("codex", "dsh") and not call.extra.get("usage_complete", False):
-                    call.ok = False
-                    call.error = "usage unavailable; stop dispatch until actual accounting is reconciled"
-                    call.extra["infra"] = True
-                    self.ledger.event(self.preparation or self.run_id, "accounting_unknown", None, reason=call.error)
+                    self.ledger.event(self.preparation or self.run_id, "accounting_unknown", None, reason="usage unavailable")
+                    if self.accounting_required():
+                        call.ok = False
+                        call.error = "usage unavailable; stop dispatch until actual accounting is reconciled"
+                        call.extra["infra"] = True
             total = total.add(cost)
             self.ledger.charge(self.run_id, n, role, cost)
             if call is not None:
@@ -975,7 +986,7 @@ class Engine:
             raise OPCError("retry promotion reviewer only; no candidate development needed")
         # Every repair uses task-wide accounting, including projects without preparation.
         used = self.ledger.task_totals(self.task.task_id)
-        if used["wall_seconds"] >= self.task.budget.max_wall_seconds or (
+        if (self.task.budget.max_wall_seconds is not None and used["wall_seconds"] >= self.task.budget.max_wall_seconds) or (
             self.task.budget.max_tokens is not None and used["tokens"] >= self.task.budget.max_tokens):
             raise OPCError("task budget exhausted; no repair dispatch")
         self.hard_check()

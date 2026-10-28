@@ -287,7 +287,7 @@ class WorkerSpec:
 @dataclass
 class Budget:
     max_attempts: int
-    max_wall_seconds: float
+    max_wall_seconds: float | None
     max_tokens: int | None
     max_usd: float | None
     max_stagnation: int
@@ -382,13 +382,16 @@ class TaskSpec:
         b = _need(d, "budget", where, dict)
         bw = where + " budget"
         _keys(b, BUDGET_KEYS, bw)
+        from .worker_config import load_budget_config, validate_limits
+        local_limits = load_budget_config(root)
+        caps = validate_limits({k: b.get(k) for k in ("max_tokens", "max_wall_seconds")} | local_limits)
         budget = Budget(max_attempts=int(_need(b, "max_attempts", bw, int)),
-                        max_wall_seconds=float(_need(b, "max_wall_seconds", bw, (int, float))),
-                        max_tokens=b.get("max_tokens"), max_usd=b.get("max_usd"),
+                        max_wall_seconds=caps.get("max_wall_seconds"),
+                        max_tokens=caps.get("max_tokens"), max_usd=b.get("max_usd"),
                         max_stagnation=int(b.get("max_stagnation", 8)),
                         max_consecutive_infra=int(b.get("max_consecutive_infra", 3)))
-        if budget.max_attempts < 1 or budget.max_wall_seconds <= 0:
-            raise OPCError("%s: max_attempts and max_wall_seconds must be positive" % bw)
+        if budget.max_attempts < 1:
+            raise OPCError("%s: max_attempts must be positive" % bw)
 
         w = _need(d, "workers", where, dict)
 
@@ -403,16 +406,12 @@ class TaskSpec:
 
         expert = worker(_need(w, "expert", where + " workers", dict), "expert")
         designer = worker(w.get("designer"), "designer")
-        # A model worker needs a designer to implement its plan, and a token cap:
-        # both codex and dsh report tokens but no price, and an unpriced model call
-        # is not free.
+        # Model workers need a designer; resource caps are optional user settings.
         model_kinds = ("codex", "dsh")
         if expert.kind in model_kinds and designer is None:
             raise OPCError("%s: a %s expert needs a designer worker" % (where, expert.kind))
-        if any(k in model_kinds for k in
-               (expert.kind, designer.kind if designer else "")) and budget.max_tokens is None:
-            raise OPCError("%s: codex/dsh workers need max_tokens; they report tokens but no "
-                           "price, and an unpriced model call is not free" % bw)
+        if local_limits:
+            d = {**d, "budget": {**b, **caps}}
         digest = hashlib.sha256(canonical_json(d).encode()).hexdigest()
         return cls(task_id=task_id, revision=revision, component=_id(_need(d, "component", where,
                                                                          str), where),

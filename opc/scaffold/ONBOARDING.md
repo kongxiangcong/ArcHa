@@ -115,11 +115,11 @@
     "repeats": 1,
     "noise_k": 2.0
   },
-  "budget": {"max_attempts": 30, "max_wall_seconds": 14400, "max_tokens": 3000000,
+  "budget": {"max_attempts": 30, "max_wall_seconds": null, "max_tokens": null,
              "max_stagnation": 8, "max_consecutive_infra": 3},
   "workers": {
-    "expert": {"kind": "codex", "timeout_s": 900},
-    "designer": {"kind": "codex", "timeout_s": 1800}
+    "expert": {"kind": "codex", "timeout_s": null},
+    "designer": {"kind": "codex", "timeout_s": null}
   },
   "base_ref": "HEAD"
 }
@@ -130,9 +130,9 @@
 - 数字有噪声时设 `repeats>1`：收益必须超过 `noise_k × 重复测量的极差`。
 - 自定义规则：`"rule": ".opc/eval/accept.py:accept"`（函数 `accept(old, new, **rule_params) -> (bool, str)`，必须在 `evaluator_files` 里）。
 - worker 三选一：
-  - `codex`：专家只读提出实验，设计者在隔离工作区改代码；必须设 `max_tokens`。
+  - `codex`：专家只读提出实验，设计者在隔离工作区改代码；token/时间上限默认不设置。
   - `dsh`：同一套角色分工，底层换成 DeepSeek Harness 的 headless 一次性运行
-    （`dsh --profile headless --json`）；同样必须设 `max_tokens`。可选字段
+    （`dsh --profile headless --json`）；同样token/时间上限默认不设置。可选字段
     `binary`（默认 `dsh`，或环境变量 `OPC_DSH_BIN`）、`profile`（默认 `headless`）、
     `dsh_home`（默认为环境变量 `OPC_DSH_HOME`）、`extra_args`、`env`、`timeout_s`。
     三点差异：headless 没有 `--output-schema`，计划 JSON 由适配器从回复里解析，
@@ -146,10 +146,11 @@
 ### 独立的 worker 环境配置
 
 `opc init --apply` 自动生成 `.opc/local/workers.json`，该目录已由 `.opc/.gitignore`
-排除。四个角色分别配置模型和推理强度，不需要修改任务合同：
+排除。模型与 token/时间上限统一在此配置；只在用户明确指定相应上限时修改 budget，默认 null 为无上限：
 
 ```json
 {
+  "budget": {"max_tokens": null, "max_wall_seconds": null},
   "expert": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
   "designer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
   "reviewer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
@@ -159,7 +160,7 @@
 
 以上是新项目生成的 Codex 默认配置；已有本机配置不会被自动覆盖。
 模型需当前账号和后端支持；推理强度也是后端和模型决定的，ArcHa 不把它固定成某个枚举。
-将字段设为 `null` 表示继承；也可以省略字段或角色。
+角色字段的 null 表示继承；budget 的 null 表示无上限。budget 只支持 max_tokens（正整数/null）、max_wall_seconds（正有限数/null），允许单独设置。优先级为本地 budget 显式字段（包括 null）覆盖旧合同同名字段；二者都缺失时无上限。旧合同显式限制保留。有效 budget 纳入任务摘要，正式运行后的修改需要新 run；不重置累计用量。默认模型调用 timeout_s=null；评价器 gate 的工具超时仍独立保留。
 文件缺失时保持兼容，JSON 格式、角色或字段拼写错误会报错，不会静默忽略。
 旧项目可从 ArcHa 源码的 `opc/scaffold/workers.json` 复制到项目的 `.opc/local/workers.json`。
 只有 runtime 的项目也可先创建该文件，再执行 onboard；初始化会保留已有配置。
@@ -254,9 +255,9 @@ base_attempt 同样用于停止时的交付选版。run 停止不代表完成，
 
 ## 授权范围内的准备
 
-onboard --prepare 在同一预算内完成必要的 .opc 评价器接入和与改动相应的关键检查，保留必要有界探针回执；仅合同 preparation_review=true 时独立审核，当前任务相关摘要冻结在原 ledger。它永不启动正式实验。pending 由 agent 继续；external_blocked 须有实际失败证据；ready 仍需提交冻结文件和 check/preflight。正式执行继承准备消耗，不重置额度。prior-tokens 是已可靠计量的主流程/外部嵌套累计量（包含 cached input），不含命令已记录的 worker/reviewer；未知即停止新增派发。已运行的合同只能新 revision/run，不原地改变验收。
+onboard --prepare 在同一预算内完成必要的 .opc 评价器接入和与改动相应的关键检查，保留必要有界探针回执；仅合同 preparation_review=true 时独立审核，当前任务相关摘要冻结在原 ledger。它永不启动正式实验。pending 由 agent 继续；external_blocked 须有实际失败证据；ready 仍需提交冻结文件和 check/preflight。正式执行继承准备消耗，不重置额度。prior-tokens 是已可靠计量的主流程/外部嵌套累计量（包含 cached input），不含命令已记录的 worker/reviewer；无上限时未知用量记录为 unknown 并继续，显式 token 限额下未知用量才停止新增派发。已运行的合同只能新 revision/run，不原地改变验收。
 
-每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用已有冻结回执。无法取得可靠累计量时停止后续模型派发。
+每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用已有冻结回执。无 token/时间上限时可省略累计主流程用量并保留 unknown；相应显式上限才要求可靠累计量。
 
 ### 8.1 Codex 状态目录只读与用量对账恢复
 
@@ -269,7 +270,7 @@ CLI 继承 `CODEX_HOME`（默认 `~/.codex`）；外层沙箱将该目录设为�
 该目录必须在外层环境可写；不要仅创建空目录而遗漏所需配置。
 
 启动失败不会自动证明模型用量为零。仅操作系统未能创建子进程的情况可确定没有模型派发；
-CLI 已启动但没有完整 usage 回执时，仍停止后续派发，并输出原始 `worker_error`。
+CLI 已启动但没有完整 usage 回执时保留 unknown 与原始 worker_error；只有显式 token 上限才因缺少 token 计量停止后续派发。
 每次准备使用独立的 `.opc/local/onboard/<call-directory>/`，保留对账所需的旧日志。
 
 若已有 `accounting_unknown`，沿用原 task、预算和最新累计 host usage 调用 onboard，
@@ -293,7 +294,7 @@ CLI 已启动但没有完整 usage 回执时，仍停止后续派发，并输出
 `additional_*` 是扣除已入账部分后需要**补记的差额**，包括遗漏的嵌套调用；不是调用总量，
 也不能重复包含 `--prior-tokens` / `--prior-wall-seconds` 中的 host 用量。
 零差额必须有证据说明原账目已完整。旧事件缺少 call_id 时，需要人工通过旧日志建立对应关系；
-无法确定实际用量时继续保持阻断，不能用估算填零。
+无法确定实际用量时保留 unknown，显式 token 上限下继续保持阻断，不能用估算填零。
 
 在原 onboard 命令上增加 `--reconcile-usage .opc/local/reconciliation.json`。
 该命令只对账，不派发 worker：它验证事件归属、非负有限用量和项目内证据文件，
@@ -313,3 +314,5 @@ Codex 状态目录语义参考：[OpenAI environment variables](https://learn.ch
 
 
 准备默认仅执行与本次接入改动对应的必要检查，不固定建设全套负控或通用监控工具。ready 表示必要接入完成，不代表研究结论成立。合同显式设置 `preparation_review: true` 时保留独立准备审核；旧 ready 回执继续有效。冻结仅覆盖当前 task、component 及 evaluator_files（显式共享依赖也在这些 glob 中登记）。
+
+默认按用户任务与证据自主形成简报及合同，不为大纲确认、缺省预算或缺省计量停下来提问。仅用户明确上限时修改本地 budget；onboard 的 --max-tokens / --max-wall-seconds 是显式上限入口并写回该文件，未传时读取现有配置。未知主流程用量记录为 host_usage_unknown，不假报已完整计量。

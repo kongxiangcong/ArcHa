@@ -1,12 +1,12 @@
 # task-brief 模板（仅第二阶段）
 
-先按本模板组织对话中的建议大纲；用户确认整体大纲后，再将下面正文写入目标项目选定方向的 `task-brief.md`。确认前的大纲与修改意见保存在 `discussion.md`。保留六个二级英文标题和带前缀的字段行（`Map:`、`Status:`、`Goal:`、`Done when:`、`Direction:`、`- D1:`、`- R1:`、`Objective:` 等），字段值和其余正文可用中文自由书写；Map 是相对目标项目根目录的真实文件路径，不带 Markdown 链接或行号。
+依据用户任务与调查结果直接生成简报，合理假设记录在 discussion.md，无需等待额外大纲确认。保留六个二级英文标题和带前缀的字段行（`Map:`、`Status:`、`Goal:`、`Done when:`、`Direction:`、`- D1:`、`- R1:`、`Objective:` 等），字段值和其余正文可用中文自由书写；Map 是相对目标项目根目录的真实文件路径，不带 Markdown 链接或行号。
 
 “做什么”要明确，“怎么做”留白：目标、完成状态、交付物和验收条件必须写出来，可以是当前证据下的暂定版本，随后续证据调整；基线 ref、可改/冻结路径、预算、worker、自主权边界和引擎适配属于 onboard 起草合同的工作，已知的约束写进 Open decisions 供起草参考。
 
 字段与合同的对应：`Goal` → `task.goal`，`Direction` → `task.direction`，`R*` → `task.requirements[]`，`Objective` → `acceptance.objective`。任务没有自然数值目标时写 `Objective: none: <原因>`，映射为 acceptance.objective=null，使用 requirements 与 gates 验收，不编造分数。无地图时将 Map 行替换为 Task: <真实任务文件的项目相对路径>。
 
-新简报在大纲确认后以 `ready-for-onboard` 生成，仅表示可以据此起草合同；`draft` 保留给已有简报重新讨论的状态，不用于提前创建未确认的简报。把 TODO 替换为实际内容或“未知 + 原因”。`brief-check` 只看结构和字段是否存在，不判断内容是否合理。
+新简报按任务与证据以 `ready-for-onboard` 生成，仅表示可以据此起草合同；`draft` 保留给已有简报重新讨论的状态，用于待修订的简报。把 TODO 替换为实际内容或“未知 + 原因”。`brief-check` 只看结构和字段是否存在，不判断内容是否合理。
 
 ---
 
@@ -16,7 +16,7 @@
 Map: .opc/research/research-map.md
 Status: ready-for-onboard
 
-TODO：地图中对应的方向 ID/名称、依赖；用户确认整体大纲的会话日期或文档依据。
+TODO：地图中对应的方向 ID/名称、依赖；用户任务来源、会话日期或文档依据及所采用的假设。
 
 ## Question and use
 
@@ -45,4 +45,4 @@ Adjust if: TODO 什么发现会缩小、扩大或取消目标
 
 ## Open decisions
 
-TODO：大纲中已说明并随大纲确认留给 onboard 起草时确定的事项（如预算、基线、评价器是否需要新建）；已知的引擎能力缺口。确实没有时写“无”及依据。
+TODO：留给 onboard 确定的事项（如基线、评价器是否需要新建）；token/时间默认无上限，仅记录用户明确限制；已知的引擎能力缺口。确实没有时写“无”及依据。

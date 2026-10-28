@@ -370,7 +370,8 @@ The working directory is a read-only checkout of the champion."""
                         error=call.error[:300])
     if not call.extra.get("usage_complete", False):
         engine.ledger.event(engine.preparation or engine.run_id, "accounting_unknown", None, reason="reviewer usage missing")
-        call.ok, call.error = False, "reviewer usage missing; no further dispatch"
+        if engine.accounting_required():
+            call.ok, call.error = False, "reviewer usage missing; no further dispatch"
     if not call.ok:
         return {"ok": False, "error": call.error, "call_id": call.call_id}
     try:

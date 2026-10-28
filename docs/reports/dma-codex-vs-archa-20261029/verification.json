@@ -1,0 +1,44 @@
+{
+  "direct": [
+    {
+      "argv": [
+        "python3",
+        "public_checks.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        ".",
+        "-v"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "archa": [
+    {
+      "argv": [
+        "python3",
+        "public_checks.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "dev_tests",
+        "-v"
+      ],
+      "exit_code": 0
+    }
+  ]
+}

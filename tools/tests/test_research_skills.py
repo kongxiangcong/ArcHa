@@ -227,16 +227,19 @@ assert (root / '.opc/local/onboard/task-brief.md').read_text() == brief.read_tex
     initialize.verify(project / ".opc/runtime")
 
 
-def test_deployed_cli_refuses_unmetered_preparation(tmp_path, runtime):
+def test_deployed_cli_records_unknown_usage_without_limits(tmp_path, runtime):
     project = tmp_path / 'metered-project'
     project.mkdir()
     initialize.initialize(project, runtime)
     cli = project / '.opc/archa.py'
     help_result = subprocess.run([sys.executable, str(cli), 'onboard', '--help'], capture_output=True, text=True)
     assert help_result.returncode == 0 and '--prior-wall-seconds' in help_result.stdout
-    result = subprocess.run([sys.executable, str(cli), 'onboard', '-p', str(project)], capture_output=True, text=True)
-    assert result.returncode != 0 and 'accounting_unknown' in result.stdout
-    assert not (project / '.opc/project.json').exists()  # no drafting/model dispatch
+    subprocess.run(['git', 'init', str(project)], check=True, capture_output=True)
+    result = subprocess.run([sys.executable, str(cli), 'onboard', '-p', str(project), '--record-usage'], capture_output=True, text=True)
+    assert result.returncode == 1 and json.loads(result.stdout)['preparation'] == 'pending'
+    config = json.loads((project / '.opc/local/workers.json').read_text())
+    assert config['budget'] == {'max_tokens': None, 'max_wall_seconds': None}
+    assert (project / '.opc/project.json').exists()  # initialized without budget confirmation or model dispatch
 
 
 def test_explicit_runtime_upgrade_keeps_budget_contract_and_backup(tmp_path, runtime):
