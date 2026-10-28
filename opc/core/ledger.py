@@ -160,6 +160,66 @@ class Ledger:
         return [{"seq": r["seq"], "at": r["at"], "kind": r["kind"], "attempt": r["attempt_no"],
                  "body": json.loads(r["body"])} for r in rows]
 
+    def unresolved_accounting(self, run_id: str) -> list[dict[str, Any]]:
+        resolved = {e["body"]["event_seq"] for e in self.events(run_id, "accounting_reconciled")}
+        return [e for e in self.events(run_id, "accounting_unknown") if e["seq"] not in resolved]
+
+    def reconcile_accounting(self, run_id: str, entries: list[dict[str, Any]], root: Path) -> None:
+        """Apply evidence-backed missing charges atomically; preserve original events.
+
+        Caller holds writer(). Amounts are *additional* usage, excluding receipts
+        already charged and host usage. Replaying the identical entry is a no-op.
+        """
+        import hashlib
+        import math
+        if self._lock_fd is None:
+            raise OPCError("accounting reconciliation requires the project writer lock")
+        if self.run(run_id)["revision"] != "preparation":
+            raise OPCError("accounting reconciliation requires a preparation run")
+        unknown = {e["seq"] for e in self.events(run_id, "accounting_unknown")}
+        resolved = {e["body"]["event_seq"]: e["body"]
+                    for e in self.events(run_id, "accounting_reconciled")}
+        if not isinstance(entries, list) or not entries:
+            raise OPCError("reconciliation requires nonempty entries")
+        pending, seen = [], set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise OPCError("reconciliation entry must be an object")
+            seq = entry.get("event_seq")
+            tokens, wall = entry.get("additional_tokens"), entry.get("additional_wall_seconds")
+            if type(seq) is not int or seq not in unknown or seq in seen:
+                raise OPCError("reconciliation event_seq must name a unique unknown event in this preparation")
+            seen.add(seq)
+            if (type(tokens) is not int or tokens < 0 or type(wall) not in (int, float)
+                    or not math.isfinite(wall) or wall < 0):
+                raise OPCError("reconciliation usage must be finite and nonnegative; tokens must be an integer")
+            if not isinstance(entry.get("reason"), str) or not entry["reason"].strip():
+                raise OPCError("reconciliation requires an accounting explanation")
+            rel = entry.get("evidence")
+            if not isinstance(rel, str) or not rel:
+                raise OPCError("reconciliation requires an evidence file")
+            evidence = (root / rel).resolve()
+            if not evidence.is_relative_to(root.resolve()) or not evidence.is_file():
+                raise OPCError("reconciliation evidence must be a readable project file")
+            try:
+                evidence_sha256 = hashlib.sha256(evidence.read_bytes()).hexdigest()
+            except OSError as exc:
+                raise OPCError("cannot read reconciliation evidence: " + str(exc)) from exc
+            body = dict(event_seq=seq, additional_tokens=tokens, additional_wall_seconds=wall,
+                        reason=entry["reason"], evidence=evidence.relative_to(root.resolve()).as_posix(),
+                        evidence_sha256=evidence_sha256)
+            if seq in resolved:
+                if body != resolved[seq]:
+                    raise OPCError("accounting event already reconciled with a different receipt")
+                continue
+            pending.append(body)
+        with self.tx() as db:
+            for body in pending:
+                db.execute("INSERT INTO charges (run_id, role, wall_seconds, tokens, usd, usd_known, at) "
+                           "VALUES (?,?,?,?,NULL,0,?)", (run_id, "accounting reconciliation",
+                           body["additional_wall_seconds"], body["additional_tokens"], now()))
+                self._event(db, run_id, "accounting_reconciled", None, body)
+
     # ---------------------------------------------------------------- attempts
     def next_attempt_no(self, run_id: str) -> int:
         row = self.db.execute("SELECT MAX(attempt_no) FROM attempts WHERE run_id=?",

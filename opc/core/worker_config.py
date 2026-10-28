@@ -9,7 +9,7 @@ from .model import OPCError
 
 ROLES = ("expert", "designer", "reviewer", "onboard")
 CONFIG_PATH = ".opc/local/workers.json"
-FIELDS = {"model", "reasoning_effort", "provider"}
+FIELDS = {"model", "reasoning_effort", "provider", "codex_home"}
 
 
 def load_worker_config(root: Path) -> dict[str, dict[str, str]]:

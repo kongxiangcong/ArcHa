@@ -128,7 +128,7 @@ def cmd_brief_check(a) -> int:
 def cmd_onboard(a) -> int:
     from .scaffold.onboard import onboard
     report = onboard(Path(a.project), a.agent, brief=a.brief, prepare=a.prepare, task_id=a.task,
-                     max_tokens=a.max_tokens, max_wall_seconds=a.max_wall_seconds, prior_tokens=a.prior_tokens, prior_wall_seconds=a.prior_wall_seconds, record_usage_only=a.record_usage)
+                     max_tokens=a.max_tokens, max_wall_seconds=a.max_wall_seconds, prior_tokens=a.prior_tokens, prior_wall_seconds=a.prior_wall_seconds, record_usage_only=a.record_usage, reconcile_usage=a.reconcile_usage)
     _print(report)
     return 0 if report["ok"] else 1
 
@@ -156,6 +156,7 @@ def main(argv=None) -> int:
     p.add_argument("--agent", default="codex", choices=["codex", "dsh"])
     p.add_argument("--brief", help="project-relative task-brief.md from discussion")
     p.add_argument("--prepare", action="store_true", default=True, help="complete scoped preparation and read-only review; never start formal experiments")
+    p.add_argument("--reconcile-usage", help="evidence-backed JSON missing-usage receipt; record only, no worker dispatch")
     p.add_argument("--record-usage", action="store_true", help="update cumulative host usage without dispatching workers")
     p.add_argument("--task", default="t-main")
     p.add_argument("--max-tokens", type=int)

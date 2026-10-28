@@ -101,7 +101,7 @@ class Engine:
         if self.preparation:
             events = self.ledger.events(self.preparation, "preparation")
             receipt = events[-1]["body"] if events else {}
-            if self.ledger.events(self.preparation, "accounting_unknown"):
+            if self.ledger.unresolved_accounting(self.preparation):
                 problems.append("preparation accounting incomplete; no new dispatch")
             if receipt.get("state") != "ready":
                 problems.append("preparation not ready: " + receipt.get("reason", "unmetered draft"))
@@ -429,7 +429,7 @@ class Engine:
             receipts = self.ledger.events(self.preparation, "preparation")
             if not receipts or receipts[-1]["body"].get("state") != "ready":
                 raise OPCError("preparation is not ready; no formal dispatch")
-        if self.preparation and self.ledger.events(self.preparation, "accounting_unknown"):
+        if self.preparation and self.ledger.unresolved_accounting(self.preparation):
             raise OPCError("usage accounting incomplete; no new dispatch")
         if s["wall_seconds"] >= b.max_wall_seconds:
             raise BudgetExhausted("max_wall_seconds", "crossed mid-attempt")

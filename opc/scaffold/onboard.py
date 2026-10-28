@@ -124,7 +124,8 @@ def _draft(project_root: Path, agent: str, brief: str | Path | None = None) -> d
 
 def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             prepare: bool = True, task_id: str = "t-main", max_tokens: int | None = None,
-            max_wall_seconds: float | None = None, prior_tokens: int | None = None, prior_wall_seconds: float | None = None, record_usage_only: bool = False) -> dict[str, Any]:
+            max_wall_seconds: float | None = None, prior_tokens: int | None = None, prior_wall_seconds: float | None = None, record_usage_only: bool = False,
+            reconcile_usage: str | Path | None = None) -> dict[str, Any]:
     """Develop readiness within scope; never dispatch a formal experiment here.
 
     prior_tokens is cumulative host/nested usage outside the worker receipts,
@@ -186,9 +187,19 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             raise OPCError("cumulative host usage cannot decrease")
         ledger.charge(rid, None, "host", Cost(prior_wall_seconds - previous_wall, prior_tokens - previous, None))
         ledger.event(rid, "host_usage", None, tokens=prior_tokens, wall_seconds=prior_wall_seconds)
-        unknown = ledger.events(rid, "accounting_unknown")
+        had_unknown = bool(ledger.unresolved_accounting(rid))
+        if reconcile_usage is not None:
+            try:
+                document = json.loads((root / reconcile_usage).read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise OPCError("cannot read reconciliation receipt: " + str(exc)) from exc
+            if not isinstance(document, dict):
+                raise OPCError("reconciliation receipt must be an object with entries")
+            ledger.reconcile_accounting(rid, document.get("entries"), root)
+        unknown = ledger.unresolved_accounting(rid)
         if unknown:
-            return finish("accounting_unknown", "unaccounted prior call; reconcile its actual usage before dispatch")
+            return finish("accounting_unknown", "unaccounted prior call; use --reconcile-usage with actual usage evidence",
+                          unresolved_accounting=unknown)
         def remaining():
             used = ledger.task_totals(task_id)
             if used["tokens"] >= max_tokens or used["wall_seconds"] >= max_wall_seconds:
@@ -198,11 +209,15 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             remaining()
         except OPCError as exc:
             return finish("budget_exhausted", str(exc))
-        if record_usage_only:
+        if record_usage_only or reconcile_usage is not None:
             previous_receipts = ledger.events(rid, "preparation")
             previous_receipt = previous_receipts[-1]["body"] if previous_receipts else {}
             state = previous_receipt.get("state", "pending")
-            return finish(state, "usage updated; " + previous_receipt.get("reason", "preparation remains"),
+            reason = "usage updated; " + previous_receipt.get("reason", "preparation remains")
+            if state == "accounting_unknown" or had_unknown:
+                state = "pending"
+                reason = "accounting reconciled; rerun preparation and independent review"
+            return finish(state, reason,
                           files=previous_receipt.get("files", {}), evidence=previous_receipt.get("evidence", []))
         # Reuse the existing onboard worker and its scope checks; it develops .opc
         # tooling, not product code or formal device experiments.
@@ -224,7 +239,8 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                 path = root / ".opc/tasks" / run["task_id"] / "revisions" / run["revision"] / "task.json"
                 if path.is_file():
                     frozen_tasks[path] = path.read_bytes()
-        log = root / ".opc/local/onboard"
+        import uuid
+        log = root / ".opc/local/onboard" / uuid.uuid4().hex
         used = ledger.task_totals(task_id)
         prompt = ("Remaining shared tokens: %d; wall seconds: %.1f.\n" %
                   (max_tokens-used["tokens"], max_wall_seconds-used["wall_seconds"]) +
@@ -243,8 +259,10 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
         ledger.charge(rid, None, "onboard", call.cost)
         ledger.charge(rid, None, "preparation overhead", Cost(max(0, time.monotonic()-started-call.cost.wall_seconds), 0, 0))
         if not call.extra.get("usage_complete", False):
-            ledger.event(rid, "accounting_unknown", None, reason="worker usage missing/incomplete")
-            return finish("accounting_unknown", "worker usage unavailable; no further dispatch")
+            ledger.event(rid, "accounting_unknown", None, reason="worker usage missing/incomplete",
+                         call_id=call.call_id, log_dir=str(log), charged=call.cost.as_dict(), error=call.error)
+            return finish("accounting_unknown", "worker usage unavailable; no further dispatch",
+                          worker_error=call.error, unresolved_accounting=ledger.unresolved_accounting(rid))
         after = _snapshot(root)
         outside = [p for p in set(before)|set(after) if before.get(p)!=after.get(p) and not p.startswith(".opc/")]
         if (outside or protected != _inputs_snapshot(root) or any(
@@ -289,8 +307,10 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             root, log / "reviewer", "read-only", None)
         ledger.charge(rid, None, "reviewer", rc.cost)
         if not rc.extra.get("usage_complete", False):
-            ledger.event(rid, "accounting_unknown", None, reason="review usage missing")
-            return finish("accounting_unknown", "review usage unavailable")
+            ledger.event(rid, "accounting_unknown", None, reason="review usage missing",
+                         call_id=rc.call_id, log_dir=str(log / "reviewer"), charged=rc.cost.as_dict(), error=rc.error)
+            return finish("accounting_unknown", "review usage unavailable",
+                          worker_error=rc.error, unresolved_accounting=ledger.unresolved_accounting(rid))
         try:
             accepted = rc.ok and json.loads(reply).get("verdict") == "accept"
         except ValueError:

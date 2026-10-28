@@ -253,3 +253,56 @@ base_attempt 同样用于停止时的交付选版。run 停止不代表完成，
 onboard --prepare 在同一预算内开发 .opc 评价器、负控、原件/证据与用量工具，保留有界设备探针回执，再由只读 reviewer 检查，摘要冻结在原 ledger。它永不启动正式实验。pending 由 agent 继续；external_blocked 须有实际失败证据；ready 仍需提交冻结文件和 check/preflight。正式执行继承准备消耗，不重置额度。prior-tokens 是已可靠计量的主流程/外部嵌套累计量（包含 cached input），不含命令已记录的 worker/reviewer；未知即停止新增派发。已运行的合同只能新 revision/run，不原地改变验收。
 
 每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用已有冻结回执。无法取得可靠累计量时停止后续模型派发。
+
+### 8.1 Codex 状态目录只读与用量对账恢复
+
+Codex CLI 的状态目录与 `-s workspace-write` 的项目写权限是两层约束。
+CLI 继承 `CODEX_HOME`（默认 `~/.codex`）；外层沙箱将该目录设为只读时，
+内层 sandbox 参数不能授予写权限。ArcHa 不自动提权，也不复制认证文件或替换用户配置。
+可在已授权可写的环境运行，或把 `OPC_CODEX_HOME` 指向**已配置好认证、模型和指令的现有绝对路径**。
+也可以在 `.opc/local/workers.json` 的 `onboard`、`reviewer` 等角色中设置 `codex_home`；
+优先级为角色配置、`OPC_CODEX_HOME`、继承的 `CODEX_HOME`。准备与审阅两个角色都应配置。
+该目录必须在外层环境可写；不要仅创建空目录而遗漏所需配置。
+
+启动失败不会自动证明模型用量为零。仅操作系统未能创建子进程的情况可确定没有模型派发；
+CLI 已启动但没有完整 usage 回执时，仍停止后续派发，并输出原始 `worker_error`。
+每次准备使用独立的 `.opc/local/onboard/<call-directory>/`，保留对账所需的旧日志。
+
+若已有 `accounting_unknown`，沿用原 task、预算和最新累计 host usage 调用 onboard，
+返回的 `unresolved_accounting` 列出待对账事件的 `seq`。账本历史事件不得删除。
+核实实际调用记录后，在项目内保存证据与 JSON 对账文件，例如：
+
+```json
+{
+  "entries": [
+    {
+      "event_seq": 42,
+      "additional_tokens": 120,
+      "additional_wall_seconds": 0,
+      "evidence": ".opc/local/usage-evidence.json",
+      "reason": "actual total 200 tokens minus 80 already charged; elapsed time already charged"
+    }
+  ]
+}
+```
+
+`additional_*` 是扣除已入账部分后需要**补记的差额**，包括遗漏的嵌套调用；不是调用总量，
+也不能重复包含 `--prior-tokens` / `--prior-wall-seconds` 中的 host 用量。
+零差额必须有证据说明原账目已完整。旧事件缺少 call_id 时，需要人工通过旧日志建立对应关系；
+无法确定实际用量时继续保持阻断，不能用估算填零。
+
+在原 onboard 命令上增加 `--reconcile-usage .opc/local/reconciliation.json`。
+该命令只对账，不派发 worker：它验证事件归属、非负有限用量和项目内证据文件，
+原子追加补记费用与带证据 SHA-256 的 `accounting_reconciled` 事件。
+相同回执重复提交不重复扣账，冲突回执被拒绝；没有对账的其他事件继续阻断。
+证据内容的真实性与差额计算由提交者负责，文件存在与哈希校验不等于自动认证用量。
+
+全部对账后状态转为 `pending`（尚未 ready 时 CLI 返回非零），预算耗尽则仍为 `budget_exhausted`。
+随后移除 `--reconcile-usage` 再执行原 onboard 命令，重新完成准备与独立审阅。
+对账不会重置预算，不会授权正式实验，也不会自动恢复历史 ready 回执。即使最后一条准备回执仍是旧 ready，只要本次解除过未对账事件，也必须退回 pending，重新准备和独立审阅。
+`--record-usage` 仍仅更新 host 累计用量，不能代替某次调用的对账。
+
+本修复随 ArcHa 源码发布；项目内已有 `.opc/runtime/` 快照需要通过正常运行时代码更新流程同步，
+不会因更新源仓库而自动生效。
+
+Codex 状态目录语义参考：[OpenAI environment variables](https://learn.chatgpt.com/docs/config-file/environment-variables)。

@@ -73,6 +73,7 @@ class CodexWorker:
         if options.get("provider"):
             raise OPCError("codex uses its CLI provider configuration; provider is only for dsh")
         self.profile = options.get("profile")
+        self.codex_home = options.get("codex_home") or os.environ.get("OPC_CODEX_HOME")
         self.timeout = float(options.get("timeout_s", 1800))
         self.extra = list(options.get("extra_args") or [])
         self.binary = options.get("binary") or os.environ.get("OPC_CODEX_BIN")
@@ -83,8 +84,15 @@ class CodexWorker:
 
     def _run(self, role: str, prompt: str, tree: Path, log_dir: Path, sandbox: str,
              schema: dict | None) -> tuple[WorkerCall, str]:
+        env = os.environ.copy()
+        if self.codex_home:
+            home = Path(self.codex_home).expanduser()
+            if not home.is_absolute() or not home.is_dir():
+                raise OPCError("codex_home must name an existing absolute directory with Codex configuration/auth")
+            env["CODEX_HOME"] = str(home)
         log_dir.mkdir(parents=True, exist_ok=True)
         last = log_dir / ("%s-last.txt" % role)
+        last.unlink(missing_ok=True)
         argv = [*command_prefix(self.binary), "exec", "--json", "--skip-git-repo-check", "-s", sandbox,
                 "-C", str(tree), "-o", str(last)]
         if schema is not None:
@@ -112,16 +120,17 @@ class CodexWorker:
         if self.model:
             argv[-1:-1] = ["-m", self.model]
         write_text(log_dir / ("%s-prompt.md" % role), prompt)
-        write_json(log_dir / ("%s-request.json" % role), {"argv": argv, "cwd": str(tree)})
+        write_json(log_dir / ("%s-request.json" % role), {"argv": argv, "cwd": str(tree),
+                   "codex_home": env.get("CODEX_HOME", str(Path.home() / ".codex"))})
         t0 = time.time()
         with open(log_dir / ("%s-events.jsonl" % role), "wb") as out, \
                 open(log_dir / ("%s-stderr.txt" % role), "wb") as err:
             try:
-                p = Process(argv, cwd=str(tree), stdin=subprocess.PIPE, stdout=out, stderr=err)
+                p = Process(argv, cwd=str(tree), env=env, stdin=subprocess.PIPE, stdout=out, stderr=err)
             except OSError as exc:
                 return WorkerCall(role, False, Cost(time.time() - t0, 0, None),
                                   error="codex could not start: %s" % exc,
-                                  extra={"infra": True}), ""
+                                  extra={"infra": True, "usage_complete": True, "not_started": True}), ""
             with p:
                 try:
                     p.communicate(prompt.encode(), timeout=self.timeout)
@@ -143,6 +152,11 @@ class CodexWorker:
                   "codex exited %s" % p.returncode
             infra = not info["thread_id"] or any(m.lower() in msg.lower() for m in INFRA_MARKERS)
             msg = msg[-2000:]
+            if "read-only file system" in msg.lower() or "readonly filesystem" in msg.lower():
+                msg += ("; Codex state directory may be read-only in the outer sandbox. "
+                        "Configure OPC_CODEX_HOME or workers.json codex_home to an existing writable "
+                        "Codex home with the intended config/auth, or relaunch in an authorized writable "
+                        "environment. Inner -s workspace-write cannot grant outer filesystem access.")
             call.error = msg
             call.extra["infra"] = infra or request_rejected(msg, info["executed"])
         else:
