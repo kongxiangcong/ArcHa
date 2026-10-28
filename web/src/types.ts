@@ -1,6 +1,10 @@
 export interface Ref {
   id: string;
   label: string;
+  kind?: string;
+  revision?: string;
+  recorded_state?: string | null;
+  stop_reason?: string | null;
 }
 export interface Issue {
   code: string;
@@ -85,6 +89,9 @@ export interface Task extends Ref {
   meta: Meta;
 }
 export interface Revision extends Ref {
+  research_task_id?: string | null;
+  ownership_state?: string;
+  brief_bindings?: { path: string; sha256: string | null }[];
   execution_task_id: string;
   revision: string;
   task_digest: string | null;

@@ -132,6 +132,9 @@ class Brief(Entity):
 
 
 class TaskRevision(Entity):
+    research_task_id: str | None = None
+    ownership_state: str = 'unresolved'
+    brief_bindings: list[dict[str, Any]] = Field(default_factory=list)
     execution_task_id: str
     revision: str
     task_digest: str | None = None

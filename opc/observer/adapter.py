@@ -255,7 +255,12 @@ class ObserverAdapter:
         task_files = sorted(research.glob('*/task.md')) if research.exists() else []
         brief_files = sorted(research.glob('*/task-brief.md')) if research.exists() else []
         for path in task_files:
-            if not self._allowed(path) or any(t.get('_path') == path.resolve() for t in self.tasks.values()):
+            if not self._allowed(path) or any(
+                t.get('_path') == path.resolve() or
+                (t.get('map_artifact_id') and t['_path'].name in {'task.md', 'task-brief.md'}
+                 and t['_path'].parent == path.resolve().parent)
+                for t in self.tasks.values()
+            ):
                 continue
             text = self._read(path, default='')
             title = next((s.lstrip('# ').strip() for s in text.splitlines() if s.startswith('# ')), path.parent.name)
@@ -350,34 +355,99 @@ class ObserverAdapter:
         return obj
 
     def _link_revisions(self):
-        decisions = self._read(self.root / '.opc/context/DECISIONS.md', default='')
-        # Conservative explicit convention: no title, timestamp or substring guesses.
+        decisions_path = self.root / '.opc/context/DECISIONS.md'
+        decisions = self._read(decisions_path, default='')
         bindings = []
+
+        def identity(value):
+            value = value.strip().strip('`').replace('\\', '/')
+            match = re.fullmatch(r'(?:.*?/)?\.opc/tasks/([^/]+)/revisions/([^/]+)/task\.json', value)
+            if match:
+                return match.groups()
+            parts = value.split('/')
+            if len(parts) in (2, 3) and all(parts):
+                return tuple(parts[-2:])
+            return None
+
+        block = {}
+
+        def flush():
+            if 'brief' in block:
+                identities = {identity(block[k]) for k in ('task', 'contract') if k in block}
+                identities.discard(None)
+                conflict = len(identities) > 1 or any(identity(block[k]) is None for k in ('task', 'contract') if k in block)
+                for task_id, rev in identities:
+                    bindings.append(dict(task=task_id, revision=rev, brief=block['brief'],
+                                         sha256=block.get('sha256'), conflict=conflict))
+            block.clear()
+
+        keys = {'brief': 'brief', 'brief sha-256': 'sha256', 'task': 'task', 'contract': 'contract'}
         for line in decisions.splitlines():
             fields = dict(re.findall(r'(?:^|\s)(task|revision|brief|sha256)=([^\s]+)', line))
-            if {'task', 'revision', 'brief', 'sha256'} <= fields.keys():
-                bindings.append(fields)
+            if {'task', 'revision', 'brief'} <= fields.keys():
+                flush()
+                bindings.append(dict(fields, sha256=fields.get('sha256'), conflict=False))
+                continue
+            match = re.fullmatch(r'\s*[-*]\s+(?:\*\*)?(Brief SHA-256|Brief|Task|Contract)(?:\*\*)?:\s*(.+?)\s*', line, re.I)
+            if not match:
+                flush()
+                continue
+            key = keys[match[1].lower()]
+            if key in block:
+                flush()
+            block[key] = match[2].strip().strip('`')
+        flush()
         for task in self.tasks.values():
             task['revision_refs'] = []
         for revision in self.revisions.values():
             explicit = [b for b in bindings if b['task'] == revision['execution_task_id'] and b['revision'] == revision['revision']]
-            unique = {(b['brief'], b['sha256']) for b in explicit}
+            uses_decisions = bool(explicit)
+            source = mapping(revision['_raw'].get('_source'))
+            if isinstance(source.get('brief'), str):
+                explicit.append(dict(brief=source['brief'], sha256=source.get('sha256'), conflict=False))
+            # Preserve recorded facts, normalizing paths only for comparisons.
+            facts = {(b['brief'], b.get('sha256')) for b in explicit}
+            revision['brief_bindings'] = [dict(path=path, sha256=sha) for path, sha in sorted(facts, key=lambda x: (x[0], x[1] or ''))]
+            unique = {(self._path(path), sha) for path, sha in facts}
+            if uses_decisions:
+                art = self._register(decisions_path, phase='onboard')
+                source_ref = self._source(art)
+                if source_ref not in revision['meta']['source_refs']:
+                    revision['meta']['source_refs'].append(source_ref)
+            owners = set()
+            unresolved_owner = False
+            for path, _ in unique:
+                candidates = [t for t in self.tasks.values() if t['_path'] == path or
+                              (path.name in {'task.md', 'task-brief.md'} and t['_path'].parent == path.parent)]
+                owners.update(t['id'] for t in candidates)
+                unresolved_owner |= not candidates
+            conflict = any(b.get('conflict') for b in explicit)
+            revision['research_task_id'] = None
+            revision['ownership_state'] = 'ambiguous' if conflict or len(owners) > 1 else 'unresolved'
+            if len(owners) == 1 and not conflict and not unresolved_owner:
+                owner = next(iter(owners))
+                revision['research_task_id'] = owner
+                revision['ownership_state'] = 'verified'
+                self.tasks[owner]['revision_refs'].append(ref(revision, revision['execution_task_id'] + ' / ' + revision['revision']))
             revision['brief_id'] = None
-            if len(unique) > 1:
+            paths = {path for path, _ in unique}
+            hashes = {sha for _, sha in unique if sha}
+            if conflict or len(paths) > 1 or len(hashes) > 1:
                 revision['link_state'] = 'ambiguous'
-            elif len(unique) == 1:
-                path, expected = next(iter(unique))
-                brief = next((b for b in self.briefs.values() if b['path'] == path), None)
+            elif unique:
+                path = next(iter(paths))
+                brief = next((b for b in self.briefs.values() if self._path(b['path']) == path), None)
                 if not brief:
                     revision['link_state'] = 'unresolved'
-                elif brief['sha256'] != expected:
+                elif brief['link_state'] != 'verified':
+                    revision['link_state'] = 'ambiguous'
+                elif not hashes:
+                    revision['link_state'] = 'unverified'
+                elif brief['sha256'] != next(iter(hashes)):
                     revision['link_state'] = 'digest_mismatch'
                 else:
                     revision['link_state'] = 'verified'
                     revision['brief_id'] = brief['id']
-                    task = self.tasks.get(brief['source_task_id'])
-                    if task is not None:
-                        task['revision_refs'].append(ref(revision, revision['execution_task_id'] + ' / ' + revision['revision']))
             else:
                 revision['link_state'] = 'unresolved'
             revision['meta']['issues'] = [i for i in revision['meta']['issues'] if not i['code'].startswith('brief_')]
@@ -403,7 +473,9 @@ class ObserverAdapter:
 
     def _run_ref(self, row):
         return dict(id=self._id('run', row['run_id']), label=row['run_id'], source_run_id=row['run_id'],
-                    execution_task_id=row.get('task_id'), revision=row.get('revision'))
+                    execution_task_id=row.get('task_id'), revision=row.get('revision'),
+                    kind='preparation' if row.get('revision') == 'preparation' else 'execution',
+                    recorded_state=row.get('state'), stop_reason=row.get('stop_reason'))
 
     def research_task(self, ident):
         with self.lock:

@@ -530,16 +530,15 @@ export default function App() {
   const o = overview.value?.data;
   const tasks = o?.tasks ?? [];
   const taskId = query.get("task") ?? tasks[0]?.id ?? "";
+  const historyScope = taskId === "history";
   const task = useResource<TaskDetail>(
-    taskId ? `/research-tasks/${enc(taskId)}` : null,
+    taskId && !historyScope ? `/research-tasks/${enc(taskId)}` : null,
     30000,
     refresh,
   );
   const t = task.value?.data;
   const revId =
-    query.get("revision") === "all"
-      ? ""
-      : (query.get("revision") ?? t?.revisions[0]?.id ?? "");
+    query.get("revision") === "all" ? "" : (query.get("revision") ?? "");
   const revision = useResource<RevisionDetail>(
     revId ? `/task-revisions/${enc(revId)}` : null,
     30000,
@@ -547,8 +546,12 @@ export default function App() {
   );
   const rd = revision.value?.data;
   const rev = rd?.revision;
-  const runs = revId ? (rd?.runs ?? []) : (t?.runs ?? []);
-  const runId = query.get("run") ?? runs[0]?.id ?? "";
+  const runs = revId
+    ? (rd?.runs ?? [])
+    : historyScope
+      ? (o?.unlinked_runs ?? [])
+      : (t?.runs ?? []);
+  const runId = query.get("run") ?? "";
   const run = useResource<Run>(
     runId ? `/runs/${enc(runId)}` : null,
     2000,
@@ -579,12 +582,9 @@ export default function App() {
   const callId = query.get("call") ?? "";
   useEffect(() => {
     const defaults: Record<string, string> = {};
-    if (t && !query.has("revision") && !query.has("run") && revId)
-      defaults.revision = revId;
-    if (r && !query.has("run")) defaults.run = r.id;
     if (at && !query.has("attempt")) defaults.attempt = String(at.attempt_no);
     if (Object.keys(defaults).length) change(defaults, true);
-  }, [t, r, at, revId, query, change]);
+  }, [at, query, change]);
   const onArtifact = useCallback(
     (id: string) => change({ artifact: id, call: null }),
     [change],
@@ -655,9 +655,13 @@ export default function App() {
               <option value="">选择任务</option>
               {tasks.map((x) => (
                 <option value={x.id} key={x.id}>
-                  {x.title}
+                  {x.research_task_id ?? "直接任务"} · {x.title} ·{" "}
+                  {x.briefs.length || x.revision_refs.length
+                    ? "已有材料"
+                    : "待开始"}
                 </option>
               ))}
+              <option value="history">未关联记录 / 准备历史</option>
             </select>
           </label>
           <label>
@@ -675,19 +679,36 @@ export default function App() {
                 })
               }
             >
-              <option value="all">全部运行 / 无合同</option>
-              {(t?.revisions ?? []).map((x) => (
-                <option value={x.id} key={x.id}>
-                  {x.execution_task_id} · {x.revision}
-                </option>
-              ))}
-              {o?.unlinked_revisions
-                .filter((x) => !t?.revisions.some((y) => y.id === x.id))
-                .map((x) => (
-                  <option value={x.id} key={x.id}>
-                    未关联 · {x.label}
+              <option value="all">
+                {historyScope ? "历史概览 / 无合同" : "任务概览 / 无合同"}
+              </option>
+              {!historyScope && (
+                <optgroup label="归属合同历史">
+                  {(t?.revisions ?? []).map((x) => (
+                    <option value={x.id} key={x.id}>
+                      {x.execution_task_id} · {x.revision}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {historyScope && (
+                <optgroup label="未关联合同历史">
+                  {(o?.unlinked_revisions ?? []).map((x) => (
+                    <option value={x.id} key={x.id}>
+                      {x.label}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {revId &&
+                !(historyScope ? o?.unlinked_revisions : t?.revisions)?.some(
+                  (x) => x.id === revId,
+                ) && (
+                  <option value={revId}>
+                    显式链接（当前任务范围之外） ·{" "}
+                    {rev ? `${rev.execution_task_id} / ${rev.revision}` : revId}
                   </option>
-                ))}
+                )}
             </select>
           </label>
           <label>
@@ -705,19 +726,20 @@ export default function App() {
               }
             >
               <option value="">未选择运行</option>
-              {[
-                ...new Map(
-                  [
-                    ...runs,
-                    ...(r ? [{ id: r.id, label: r.source_run_id }] : []),
-                    ...(o?.unlinked_runs ?? []),
-                  ].map((x) => [x.id, x]),
-                ).values(),
-              ].map((x) => (
+              {runs.map((x) => (
                 <option value={x.id} key={x.id}>
-                  {x.label}
+                  {x.kind === "preparation" || x.revision === "preparation"
+                    ? "准备历史"
+                    : "运行历史"}{" "}
+                  · {x.label}
+                  {x.recorded_state === "closed" ? " · 已关闭" : ""}
                 </option>
               ))}
+              {runId && !runs.some((x) => x.id === runId) && (
+                <option value={runId}>
+                  显式链接 · {r?.source_run_id ?? runId}
+                </option>
+              )}
             </select>
           </label>
           <button
@@ -746,7 +768,16 @@ export default function App() {
                     t?.task.research_task_id ??
                     "研究任务"}
                 </p>
-                <h1>{t?.task.title ?? rev?.goal ?? "项目观察"}</h1>
+                <h1>
+                  {historyScope
+                    ? "未关联记录 / 准备历史"
+                    : (t?.task.title ?? rev?.goal ?? "项目观察")}
+                </h1>
+                <p className="notice">
+                  {historyScope
+                    ? "全项目未关联记录与准备历史；选择历史记录不代表当前正在执行。"
+                    : "研究规划与已有材料；选择历史记录不代表当前正在执行。"}
+                </p>
                 <p className="goal">
                   {(r ? actualRev?.goal : rev?.goal) ??
                     (!r ? t?.briefs[0]?.goal : null) ??
@@ -761,6 +792,13 @@ export default function App() {
                 <span>最后源记录 {time(snap?.source_observed_at)}</span>
               </div>
             </section>
+            {r && (
+              <p className="notice">
+                所选记录：{r.kind === "preparation" ? "准备历史" : "运行历史"} ·
+                执行状态：{label(r.execution.value)} · 结束原因：
+                {r.stop_reason ?? "未记录"}
+              </p>
+            )}
             <div className="states">
               <StateView title="准备" state={r?.preparation} />
               <StateView title="执行" state={r?.execution} />
@@ -865,7 +903,10 @@ export default function App() {
                               >
                                 {x.title}
                                 <small>
-                                  {label(x.link_state)} ·{" "}
+                                  {x.briefs.length || x.revision_refs.length
+                                    ? "已有材料"
+                                    : "待开始"}{" "}
+                                  · 归属合同 {x.revision_refs.length} ·{" "}
                                   {x.depends_on.length
                                     ? "依赖 " +
                                       x.depends_on
@@ -920,8 +961,18 @@ export default function App() {
                       {rev && (
                         <>
                           <p>
-                            合同版本：<code>{rev.revision}</code>{" "}
-                            <Badge value={rev.link_state} />
+                            合同版本：<code>{rev.revision}</code> 归属{" "}
+                            <Badge
+                              value={rev.ownership_state ?? "unresolved"}
+                            />{" "}
+                            简报校验 <Badge value={rev.link_state} />
+                            {(rev.brief_bindings ?? []).map((b, i) => (
+                              <span key={i}>
+                                <br />
+                                简报：<code>{b.path}</code> · SHA-256：
+                                <code>{b.sha256 ?? "未记录"}</code>
+                              </span>
+                            ))}
                           </p>
                           <Sources meta={rev.meta} onArtifact={onArtifact} />
                         </>

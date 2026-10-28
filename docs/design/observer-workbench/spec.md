@@ -186,7 +186,17 @@ assistant-ui 已核查发布版本为 `0.15.31`，对应提交 `d8124e7b427021d9
 
 ### 4.3 历史关联与已知缺口
 
-关系状态统一为 `verified | unresolved | ambiguous | digest_mismatch`。`verified` 只表示来源关系明确且摘要一致，不表示研究内容正确或验收通过。
+任务发现将同一地图任务目录中的 `task.md` 和 `task-brief.md` 视为同一任务的材料入口，地图任务 ID 继续由地图路径与研究编号生成。地图明确列出的不同研究编号保留各自身份；无地图直接任务与 brief-only 入口继续可访问。
+
+合同到研究任务的归属与简报正文校验分别呈现：
+
+- `research_task_id` 是观察器研究任务实体 ID；`ownership_state` 为 `verified | unresolved | ambiguous`。明确绑定的简报路径唯一指向研究任务时，该任务保留合同和对应 run，即使正文缺失或 SHA 不符。
+- `brief_bindings` 保留明确记录的路径和 SHA；未记录 SHA 时为 null，不从当前正文补造。比较前规范化路径、去重记录；DECISIONS 参与关联时登记来源引用。
+- `link_state` 为 `verified | unresolved | unverified | ambiguous | digest_mismatch`，仅描述简报内容关系。缺正文为 unresolved，缺 SHA 为 unverified，多路径、多摘要、身份冲突或简报来源歧义为 ambiguous，摘要不同为 digest_mismatch。只有来源唯一且摘要匹配才设置 `brief_id`；不表示内容正确或验收通过。
+
+兼容合同 `_source.brief` / `_source.sha256`，以及 DECISIONS 单行 `task=... revision=... brief=... sha256=...`（SHA 可缺）。另兼容有边界的 Markdown 列表 `Brief`、`Brief SHA-256`、`Task`、`Contract`：身份可为 `component/task/revision`、`task/revision` 或 `.opc/tasks/<task>/revisions/<revision>/task.json`。空行、正文、标题或重复键结束当前记录，不跨记录拼接；Task 与 Contract 身份冲突时保留歧义。推荐新记录使用含 SHA 的单行格式。
+
+前端默认任务概览、未选择运行。普通研究任务仅列归属合同历史及对应运行；全项目未关联合同和准备 run 在独立的“未关联记录 / 准备历史”入口（`task=history`），它是浏览作用域，不创建研究任务。显式范围外 URL 保持可访问并标明显式链接。准备记录标为“准备历史”，账本 `state=closed` 标为“已关闭”，同时显示原始结束原因。任务“待开始 / 已有材料”和归属合同数量不使用来源校验状态推断研究进度。
 
 查看历史 run 的顺序：读取该 run 的冻结上下文；缺失时仅回退到它明确指定的 revision 并核对 digest；仍无法核对则标为缺失/冲突。当前 brief 内容的 SHA 与历史关联不一致时，不能用当前正文冒充旧正文。当前仓库 HEAD 也不能冒充历史运行的 runtime 版本。
 
@@ -274,7 +284,7 @@ interface UsageView {
 | Project | `project_key, display_name, source_project_id?, source_format?, source_runtime_version?, adapter_id, adapter_version, source_mode` | project_key 由配置根命名空间稳定生成；source_mode 为 live/snapshot/demo |
 | ResearchTask | `title, research_task_id?, map_artifact_id?, task_artifact_id?, depends_on[], raw_preparation_status?, briefs[], revision_refs[], link_state` | 地图路径+稳定任务 ID；直接任务可由源任务文件或执行 task 定位，不能伪造地图 ID |
 | Brief | `path, sha256?, source_kind, source_task_id?, body_artifact_id?, goal?, done_when?, scope?, deliverables[], requirements[], objective?, link_state` | 明确路径+内容摘要；同路径新内容作为另一内容版本 |
-| TaskRevision | `execution_task_id, revision, task_digest?, goal?, requirements[], objective?, budget?, brief_id?, link_state, contract_artifact_id?` | project_key + 执行 task ID + revision + 已知 digest |
+| TaskRevision | `execution_task_id, revision, task_digest?, goal?, requirements[], objective?, budget?, research_task_id?, ownership_state, brief_bindings[], brief_id?, link_state, contract_artifact_id?` | project_key + 执行 task ID + revision + 已知 digest |
 | Run | `source_run_id, kind, task_revision_id?, execution_task_id?, preparation, execution, acceptance, stop_reason?, phase, last_activity_at?, versions, requirements[], metrics[], usage, attempts[], calls[], artifacts[], report_refs[]` | project_key + run_id；kind 为 preparation/execution；attempts/calls/artifacts 在本层是摘要引用 |
 | Attempt | `run_id, attempt_no, phase, execution_state, outcome?, intent?, rationale?, execution_summary?, experiment_summary?, conclusion?, gaps?, next_step?, parent_commit?, candidate_commit?, calls[], artifacts[], usage?` | run_id + attempt_no；文字项为 TextFact 或 null |
 | Call | `run_id?, attempt_id?, phase, role, provider?, provider_call_id?, parent_call_id?, state, started_at?, ended_at?, last_activity_at?, transcript_availability, artifacts[], usage?` | 当前 worker_call 事件身份或明确日志身份；role 是开放字符串，新增角色不要求前端升级 |

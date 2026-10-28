@@ -232,6 +232,7 @@ def test_calls_are_independent_and_unknown_events_preserved(client):
 
 
 def test_no_source_business_writes_or_execution_entrypoints(client,project,monkeypatch):
+    bind_brief(project)
     import subprocess
     def forbidden(*args,**kwargs):
         pytest.fail('Observer attempted process execution')
@@ -477,6 +478,10 @@ def test_explicit_brief_digest_binding_and_changed_content(client,project):
     assert changed['brief_id'] is None
     assert old_brief_id != changed['brief_id']
     assert changed['goal']=='修复满载拒绝'
+    assert changed['ownership_state']=='verified'
+    assert changed['research_task_id']==revision['research_task_id']
+    owner=get(client,'/research-tasks/'+ident(changed['research_task_id']))['data']
+    assert any(r['id']==changed['id'] for r in owner['revisions'])
 
 
 def test_multiple_explicit_brief_relations_remain_ambiguous(client,project):
@@ -730,3 +735,167 @@ def test_markdown_evidence_navigation_does_not_register_protected_config(client,
     metadata=get(client,'/artifacts/'+ident(artifact['id']))['data']
     assert '../../frozen/component.json' not in metadata['link_targets']
     assert metadata['link_targets']['candidate.patch']['kind']=='artifact'
+
+
+@pytest.mark.parametrize('entry', ['task.md', 'task-brief.md'])
+def test_map_task_and_brief_are_one_stable_task(project, entry):
+    from opc.observer.adapter import ObserverAdapter
+    map_path = project / '.opc/research/research-map.md'
+    before = ObserverAdapter(project).overview()['data']
+    task_id = next(t['id'] for t in before['tasks'] if t['research_task_id'] == 'R01')
+    map_path.write_text(map_path.read_text().replace('tasks/r01/task.md', 'tasks/r01/' + entry))
+    adapter = ObserverAdapter(project)
+    after = adapter.overview()['data']
+    assert len(after['tasks']) == len(before['tasks']) == 3
+    assert next(t['id'] for t in after['tasks'] if t['research_task_id'] == 'R01') == task_id
+    assert next(iter(adapter.briefs.values()))['link_state'] == 'verified'
+
+
+def historical_binding(project, form, revision='r0001', path='.opc/research/tasks/r01/task-brief.md'):
+    sha = hashlib.sha256((project / path).read_bytes()).hexdigest()
+    contract_path = project / f'.opc/tasks/dma/revisions/{revision}/task.json'
+    if form == 'source':
+        raw = json.loads(contract_path.read_text())
+        raw['_source'] = dict(brief=path, sha256=sha)
+        put(contract_path, raw)
+    else:
+        target = project / '.opc/context/DECISIONS.md'
+        target.parent.mkdir(exist_ok=True)
+        if form == 'single':
+            text = f'task=dma revision={revision} brief={path} sha256={sha}\n'
+        else:
+            identity = f'dma/dma/{revision}' if form == 'task' else f'.opc/tasks/dma/revisions/{revision}/task.json'
+            text = f'- Brief: `{path}`\n- Brief SHA-256: `{sha}`\n- {form.title()}: `{identity}`\n\n'
+        with target.open('a') as stream:
+            stream.write(text)
+
+
+@pytest.mark.parametrize('form', ['source', 'task', 'contract', 'single'])
+def test_revision_ownership_survives_historical_brief_change(project, form):
+    from opc.observer.adapter import ObserverAdapter
+    for rev in ('r0001', 'r0002'):
+        historical_binding(project, form, rev)
+    brief = project / '.opc/research/tasks/r01/task-brief.md'
+    brief.write_text(brief.read_text() + '\n更新后的目标。\n')
+    adapter = ObserverAdapter(project)
+    task = next(t for t in adapter.overview()['data']['tasks'] if t['research_task_id'] == 'R01')
+    detail = adapter.research_task(task['id'])['data']
+    assert len(detail['revisions']) == 2
+    assert {r['label'] for r in detail['runs']} == {'old-run', 'new-run'}
+    for revision in detail['revisions']:
+        assert revision['research_task_id'] == task['id']
+        assert revision['ownership_state'] == 'verified'
+        assert revision['link_state'] == 'digest_mismatch'
+        assert revision['brief_id'] is None
+        assert revision['brief_bindings'][0]['sha256']
+    if form != 'source':
+        for revision in detail['revisions']:
+            assert sum(s['display_path'] == '.opc/context/DECISIONS.md' for s in revision['meta']['source_refs']) == 1
+
+
+def test_missing_historical_brief_still_has_explicit_owner(project):
+    from opc.observer.adapter import ObserverAdapter
+    historical_binding(project, 'source')
+    (project / '.opc/research/tasks/r01/task-brief.md').unlink()
+    revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
+    assert revision['ownership_state'] == 'verified'
+    assert revision['link_state'] == 'unresolved'
+    assert revision['brief_id'] is None
+
+
+def test_conflicting_contract_source_and_handoff_do_not_choose_owner(project):
+    from opc.observer.adapter import ObserverAdapter
+    historical_binding(project, 'source')
+    other = project / '.opc/research/tasks/r02/task-brief.md'
+    other.write_text((project / '.opc/research/tasks/r01/task-brief.md').read_text())
+    historical_binding(project, 'single', path='.opc/research/tasks/r02/task-brief.md')
+    revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
+    assert revision['ownership_state'] == 'ambiguous'
+    assert revision['research_task_id'] is None
+    assert revision['link_state'] == 'ambiguous'
+
+
+def test_brief_only_and_direct_task_remain_accessible(project):
+    from opc.observer.adapter import ObserverAdapter
+    path = project / '.opc/research/tasks/only/task-brief.md'
+    path.parent.mkdir()
+    path.write_text('Goal: 只有简报\n')
+    adapter = ObserverAdapter(project)
+    tasks = adapter.overview()['data']['tasks']
+    assert len(tasks) == 4
+    assert any(t['title'] == 'direct' for t in tasks)
+    only = next(t for t in tasks if t['title'] == '只有简报')
+    assert len(adapter.research_task(only['id'])['data']['briefs']) == 1
+
+
+def test_same_owner_conflicting_historical_hashes_keep_content_ambiguous(project):
+    from opc.observer.adapter import ObserverAdapter
+    historical_binding(project, 'source')
+    historical_binding(project, 'single')
+    decisions = project / '.opc/context/DECISIONS.md'
+    decisions.write_text(decisions.read_text().split('sha256=')[0] + 'sha256=' + '0' * 64 + '\n')
+    revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
+    assert revision['ownership_state'] == 'verified'
+    assert revision['link_state'] == 'ambiguous'
+    assert len(revision['brief_bindings']) == 2
+
+
+@pytest.mark.parametrize('boundary', ['', '正文', '# 下一条'])
+def test_multiline_boundaries_and_conflicting_identities(project, boundary):
+    from opc.observer.adapter import ObserverAdapter
+    target = project / '.opc/context/DECISIONS.md'
+    target.parent.mkdir(exist_ok=True)
+    brief = '.opc/research/tasks/r01/task-brief.md'
+    target.write_text(f'- Brief: {brief}\n{boundary}\n- Task: dma/r0001\n')
+    revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
+    assert revision['ownership_state'] == 'unresolved'
+    target.write_text(f'- Brief: {brief}\n- Task: dma/r0001\n- Contract: dma/r0002\n')
+    adapter = ObserverAdapter(project)
+    assert all(r['ownership_state'] == 'ambiguous' for r in adapter.revisions.values())
+    target.write_text(f'- Brief: {brief}\n- Task: dma/r0001\n')
+    revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
+    assert revision['ownership_state'] == 'verified'
+    assert revision['link_state'] == 'unverified'
+    assert revision['brief_bindings'] == [dict(path=brief, sha256=None)]
+    target.write_text(f'task=dma revision=r0001 brief={brief}\n')
+    revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
+    assert revision['ownership_state'] == 'verified'
+    assert revision['link_state'] == 'unverified'
+    # Duplicate keys end a record; they must not overwrite earlier identities.
+    target.write_text(f'- Brief: {brief}\n- Task: dma/r0001\n- Task: dma/r0002\n')
+    revisions = {r['revision']: r for r in ObserverAdapter(project).revisions.values()}
+    assert revisions['r0001']['ownership_state'] == 'verified'
+    assert revisions['r0002']['ownership_state'] == 'unresolved'
+
+
+def test_two_map_identities_in_one_directory_remain_ambiguous(project):
+    from opc.observer.adapter import ObserverAdapter
+    path = project / '.opc/research/research-map.md'
+    path.write_text(path.read_text() + '- [ ] R03 | [第二身份](tasks/r01/task-brief.md) | status=todo | depends=none\n')
+    historical_binding(project, 'single')
+    adapter = ObserverAdapter(project)
+    assert len(adapter.tasks) == 4
+    revision = next(r for r in adapter.revisions.values() if r['revision'] == 'r0001')
+    assert revision['ownership_state'] == 'ambiguous'
+
+
+def test_no_map_keeps_direct_task_and_brief_entry(project):
+    from opc.observer.adapter import ObserverAdapter
+    (project / '.opc/research/research-map.md').unlink()
+    historical_binding(project, 'source')
+    adapter = ObserverAdapter(project)
+    assert len(adapter.tasks) == 3
+    owner = next(r for r in adapter.revisions.values() if r['revision'] == 'r0001')['research_task_id']
+    assert len(adapter.research_task(owner)['data']['briefs']) == 1
+
+
+def test_digest_match_does_not_hide_ambiguous_brief_source(project):
+    from opc.observer.adapter import ObserverAdapter
+    # The brief explicitly names a different task while residing beside R01.
+    brief = project / '.opc/research/tasks/r01/task-brief.md'
+    brief.write_text(brief.read_text().replace('Map: .opc/research/research-map.md', 'Task: .opc/research/tasks/r02/task.md'))
+    historical_binding(project, 'source')
+    revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
+    assert revision['ownership_state'] == 'verified'
+    assert revision['link_state'] == 'ambiguous'
+    assert revision['brief_id'] is None

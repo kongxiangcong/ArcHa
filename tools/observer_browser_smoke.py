@@ -24,6 +24,7 @@ from opc.observer.demo import create_demo
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--out',type=Path,default=Path('work/observer-browser'))
+    parser.add_argument('--chromium',type=Path,help='Chromium executable; defaults to Playwright managed browser')
     args=parser.parse_args();args.out.mkdir(parents=True,exist_ok=True)
     checks=[]
     def passed(name):
@@ -31,6 +32,11 @@ def main():
         print('PASS',name,flush=True)
     with tempfile.TemporaryDirectory(prefix='observer-browser-') as temp:
         root=create_demo(Path(temp)); dbpath=root/'.opc/local/ledger.sqlite3'
+        orphan=root/'.opc/tasks/unlinked/revisions/r0001/task.json'
+        orphan.parent.mkdir(parents=True)
+        orphan.write_text(json.dumps(dict(task_id='unlinked',revision='r0001',goal='未关联合同')))
+        with sqlite3.connect(dbpath) as db:
+            db.execute("UPDATE runs SET state='closed',stop_reason='user_withdrawn',closed_at=? WHERE run_id='prepare-dma'",('2026-10-28T00:00:00Z',))
         # Source-owned Markdown includes hostile active content and one explicitly linked evidence file.
         evidence=root/'.opc/research/tasks/r01-dma/evidence/boundary.md'
         evidence.parent.mkdir(parents=True,exist_ok=True)
@@ -38,6 +44,7 @@ def main():
         large=root/'.opc/local/artifacts/dma-demo/dma-backpressure/run-dma-r1/attempts/a000001/large.txt'
         large.write_text('头部\n'+'分页验证\n'*30000+'尾部',encoding='utf-8')
         map_path=root/'.opc/research/research-map.md'
+        map_path.write_text(map_path.read_text().replace('tasks/r01-dma/task.md','tasks/r01-dma/task-brief.md'))
         with map_path.open('a',encoding='utf-8') as stream:
             stream.write('\n[分页产物](../local/artifacts/dma-demo/dma-backpressure/run-dma-r1/attempts/a000001/large.txt)\n[证据边界](tasks/r01-dma/evidence/boundary.md)\n\n<script>window.__observerPwned=true</script>\n\n![远程图片](https://invalid.example/image.png)\n\n[恶意链接](javascript:alert(1))\n')
         before={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file()}
@@ -51,7 +58,7 @@ def main():
             time.sleep(.05)
         try:
             with sync_playwright() as p:
-                browser=p.chromium.launch(executable_path='/usr/bin/chromium',headless=True,args=['--no-sandbox'])
+                browser=p.chromium.launch(executable_path=str(args.chromium) if args.chromium else None,headless=True,args=['--no-sandbox'])
                 context=browser.new_context(viewport={'width':1440,'height':900},locale='zh-CN',timezone_id='Asia/Shanghai',reduced_motion='reduce')
                 errors=[];requests=[];external=[]
                 page=context.new_page();page.on('pageerror',lambda e:errors.append(str(e)))
@@ -59,13 +66,43 @@ def main():
                 context.route('**/*',lambda route:route.continue_() if route.request.url.startswith(f'http://127.0.0.1:{port}') else (external.append(route.request.url),route.abort())[1])
                 page.goto(f'http://127.0.0.1:{port}')
                 expect(page.locator('.heading h1')).to_have_text('DMA 背压行为')
-                expect(page.locator('.read-time')).to_contain_text('run-dma-r1')
-                page.wait_for_function("() => new URLSearchParams(location.search).has('run') && new URLSearchParams(location.search).has('attempt')")
+                expect(page.get_by_label('选择运行',exact=True)).to_have_value('')
+                expect(page.get_by_label('选择合同版本',exact=True)).to_have_value('all')
+                expect(page.get_by_label('选择任务',exact=True).locator('option')).to_have_count(4)
+                expect(page.get_by_label('选择合同版本',exact=True).locator('option')).to_have_count(3)
+                expect(page.get_by_label('选择运行',exact=True).locator('option')).to_have_count(3)
+                expect(page.get_by_label('选择任务',exact=True)).to_contain_text('待开始')
+                task_options=page.get_by_label('选择任务',exact=True).locator('option').evaluate_all('(xs) => xs.map(x => ({value:x.value,text:x.textContent}))')
+                first_task=next(x['value'] for x in task_options if 'DMA 背压行为' in x['text'])
+                todo_task=next(x['value'] for x in task_options if '调度边界' in x['text'])
+                page.get_by_label('选择任务',exact=True).select_option(todo_task)
+                expect(page.get_by_label('选择合同版本',exact=True).locator('option')).to_have_count(1)
+                expect(page.get_by_label('选择运行',exact=True).locator('option')).to_have_count(1)
+                page.get_by_label('选择任务',exact=True).select_option('history')
+                expect(page.locator('.heading h1')).to_have_text('未关联记录 / 准备历史')
+                expect(page.get_by_label('选择合同版本',exact=True)).to_contain_text('unlinked / r0001')
+                expect(page.get_by_label('选择运行',exact=True)).to_contain_text('准备历史 · prepare-dma · 已关闭')
+                prep=page.get_by_label('选择运行',exact=True).locator('option').evaluate_all('(xs) => xs.find(x=>x.textContent.includes("prepare-dma")).value')
+                page.get_by_label('选择运行',exact=True).select_option(prep)
+                expect(page.locator('.notice').filter(has_text='所选记录：')).to_contain_text('user_withdrawn')
+                page.get_by_label('选择任务',exact=True).select_option(first_task)
+                expect(page.get_by_label('选择运行',exact=True)).to_contain_text('run-dma-r1')
+                run_one=page.get_by_label('选择运行',exact=True).locator('option').evaluate_all('(xs) => xs.find(x=>x.textContent.includes("run-dma-r1")).value')
+                page.get_by_label('选择运行',exact=True).select_option(run_one)
+                page.wait_for_function("() => new URLSearchParams(location.search).has('attempt')")
+                rev_one=page.get_by_label('选择合同版本',exact=True).locator('option').evaluate_all('(xs) => xs.find(x=>x.textContent.includes("r0001")).value')
+                page.get_by_label('选择合同版本',exact=True).select_option(rev_one)
+                expect(page.get_by_label('选择运行',exact=True).locator('option')).to_have_count(2)
+                expect(page.get_by_label('选择运行',exact=True)).not_to_contain_text('run-dma-r2')
+                page.get_by_label('选择合同版本',exact=True).select_option('all')
+                expect(page.get_by_label('选择运行',exact=True).locator('option')).to_have_count(3)
+                page.get_by_label('选择运行',exact=True).select_option(run_one)
+                passed('default overview + stable tasks + scoped histories + withdrawn preparation')
                 assert not page.locator('textarea').count()
                 assert not page.get_by_role('button',name='停止',exact=True).count()
                 expect(page.locator('.mode')).to_contain_text('演示数据')
                 expect(page.locator('.usage').first).to_contain_text('USD 未知')
-                passed('task-map + honest states + persistent default selection')
+                passed('task-map + honest states + explicit run selection')
                 page.locator('.map-body').get_by_role('button',name='证据边界',exact=True).click()
                 expect(page.locator('.inspector h2')).to_have_text('boundary.md')
                 expect(page.locator('.inspector .source-content')).to_contain_text('这是一份来源证据')
@@ -89,6 +126,7 @@ def main():
                 expect(page.locator('.heading h1')).to_have_text('调度边界')
                 page.locator('.task-list button').first.click()
                 expect(page.locator('.heading h1')).to_have_text('DMA 背压行为')
+                page.get_by_label('选择运行',exact=True).select_option(run_one)
                 page.get_by_role('button',name='4 迭代执行').click()
                 expect(page.locator('.rounds button')).to_have_count(2)
                 expect(page.locator('.facts')).to_contain_text('容量检查已实现')
@@ -135,6 +173,12 @@ def main():
                 expect(page.get_by_label('选择运行',exact=True)).to_have_value(qs['run'])
                 expect(page.locator('.facts')).to_contain_text('容量检查已实现')
                 passed('historical run goal remains frozen when selected revision differs')
+                page.goto(f'http://127.0.0.1:{port}/?task={todo_task}&revision={r2}&run={qs["run"]}&phase=loop&attempt=1')
+                expect(page.get_by_label('选择合同版本',exact=True)).to_contain_text('显式链接（当前任务范围之外）')
+                expect(page.get_by_label('选择运行',exact=True)).to_contain_text('显式链接')
+                expect(page.locator('.goal')).to_have_text('修复 DMA 满载拒绝与释放恢复')
+                page.goto(f'http://127.0.0.1:{port}/?task={qs["task"]}&revision={r2}&run={qs["run"]}&phase=loop&attempt=1')
+                expect(page.locator('.facts')).to_contain_text('容量检查已实现')
                 page.locator('.rounds button').nth(1).click()
                 # No forced jump while a writer updates an older attempt's conclusion.
                 with sqlite3.connect(dbpath) as db:
@@ -174,6 +218,7 @@ def main():
                 assert not errors,errors
                 assert not external,external
                 assert all(method=='GET' for method,_ in requests),requests
+                assert not any('/research-tasks/history' in url for _,url in requests)
                 passed('no JS errors, external requests, write requests or tool executions from browsing')
                 browser_version=browser.version;browser.close()
             # Only the explicit writer above may have changed source data.
