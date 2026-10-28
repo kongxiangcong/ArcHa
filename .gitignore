@@ -11,3 +11,10 @@ __pycache__/
 /.codex/
 /pip-*/
 /.pytest_tmp*/
+
+# Observer frontend / local validation
+web/node_modules/
+opc/observer/static/
+work/
+build/
+dist/

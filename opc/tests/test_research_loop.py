@@ -429,7 +429,7 @@ def test_metered_preparation_to_formal_execution(make_project, engine_for, monke
                 assert probe.returncode != 0
                 (log / 'probe.txt').write_text(probe.stderr)
                 response = {'state':'external_blocked', 'reason':'observed device read permission denied; owner must grant access',
-                            'evidence':['.opc/local/onboard/probe.txt']}
+                            'evidence':[(log / 'probe.txt').relative_to(root).as_posix()]}
             else:
                 # Fake worker executes real positive and negative controls of the new evaluator.
                 code = EVALUATE+'\nraise SystemExit(0 if x == 7 else 1)\n'
@@ -441,13 +441,13 @@ def test_metered_preparation_to_formal_execution(make_project, engine_for, monke
                     outcomes.append(subprocess.run([sys.executable,str(evaluator),'--out',str(scratch/'out')], cwd=scratch).returncode)
                 assert outcomes == [0,1]
                 (log / 'controls.json').write_text(json.dumps(outcomes))
-                response={'state':'ready','reason':'tooling controls verified','evidence':['.opc/local/onboard/controls.json']}
+                response={'state':'ready','reason':'tooling controls verified','evidence':[(log / 'controls.json').relative_to(root).as_posix()]}
         else:
             assert sandbox == 'read-only'
-            assert json.loads((root/'.opc/local/onboard/controls.json').read_text()) == [0,1]
+            assert json.loads((log.parent / 'controls.json').read_text()) == [0,1]
             response={'verdict':'accept', 'reason':'controls reject incorrect product, no device experiment'}
         return WorkerCall(role,True,Cost(1,80 if role=='onboard' else 20,None),
-                          extra={'usage_complete':case!='unknown'}),json.dumps(response)
+                          extra={'usage_complete':case!='unknown' or len(calls)>1}),json.dumps(response)
     monkeypatch.setattr(CodexWorker,'_run',run)
     kw=dict(prepare=True,task_id='t-toy',max_tokens=90 if case=='budget' else 1000,
             max_wall_seconds=600,prior_tokens=10,prior_wall_seconds=0)
@@ -458,6 +458,26 @@ def test_metered_preparation_to_formal_execution(make_project, engine_for, monke
         if case=='budget':
             assert evaluator.exists()
             assert not onboard(root,'codex',**kw)['ok'] and calls==['onboard']
+        if case == 'unknown':
+            from opc.core.ledger import Ledger
+            ledger = Ledger(root / '.opc/local/ledger.sqlite3')
+            rid = ledger.runs()[-1]['run_id']
+            seq = ledger.unresolved_accounting(rid)[0]['seq']
+            evidence = root / '.opc/local/usage-evidence.json'
+            evidence.write_text('{"actual_tokens": 80, "already_charged": 80}')
+            receipt = root / '.opc/local/reconciliation.json'
+            receipt.write_text(json.dumps({'entries': [{'event_seq': seq,
+                'additional_tokens': 0, 'additional_wall_seconds': 0,
+                'evidence': evidence.relative_to(root).as_posix(),
+                'reason': 'receipt confirms the existing charge is complete'}]}))
+            assert onboard(root, 'codex', reconcile_usage=receipt, **kw)['preparation'] == 'pending'
+            assert calls == ['onboard']
+            assert onboard(root, 'codex', **kw)['ok']
+            git(root,'add','.opc/eval'); git(root,'commit','-qm','recovered preparation')
+            e = engine_for(root)
+            assert e.static_check()['ok']
+            e.hard_check()
+            assert ledger.task_totals('t-toy')['tokens'] == 190
         return
     assert r['ok'] and calls==['onboard','reviewer']
     kw['prior_tokens'] = 12

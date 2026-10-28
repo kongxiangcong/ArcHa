@@ -1,0 +1,32 @@
+{
+  "name": "archa-observer",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build && node scripts/write-notices.mjs",
+    "test:browser": "python ../tools/observer_browser_smoke.py",
+    "format": "prettier --write src scripts vite.config.ts"
+  },
+  "dependencies": {
+    "@assistant-ui/react": "0.15.31",
+    "@dagrejs/dagre": "1.1.8",
+    "@tanstack/react-table": "8.21.3",
+    "@xyflow/react": "12.10.1",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1"
+  },
+  "devDependencies": {
+    "@types/dagre": "0.7.53",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "@vitejs/plugin-react": "5.0.4",
+    "prettier": "3.6.2",
+    "typescript": "5.9.3",
+    "vite": "7.1.12"
+  }
+}
