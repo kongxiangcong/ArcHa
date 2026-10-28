@@ -659,3 +659,21 @@ def test_confirmed_revision_can_repair_remaining_findings(make_project, engine_f
     assert promote(repair, source_run=repaired['run_id'])['complete']
     assert failed_path.read_bytes() == failed_bytes
     assert (Path(original['report_dir']) / 'report.json').read_bytes() == old_bytes
+
+
+@pytest.mark.parametrize('entry', ['hard_check', 'admit', 'run'])
+@pytest.mark.parametrize('marker', ['delivery_repair', 'promotion_report', 'delivery'])
+def test_delivery_accounting_survives_engine_recreation(make_project, engine_for, entry, marker):
+    from opc.core.model import OPCError
+    root = make_project(tsk=task(acceptance={}, requirements=[]))
+    e = engine_for(root)
+    rid = e.open_run()
+    if marker == 'delivery':
+        e.enable_delivery()
+    else:
+        e.ledger.event(rid, marker, source_run='earlier', source_promotion='p')
+    e.ledger.event(rid, 'accounting_unknown', reason='missing worker receipt')
+    fresh = engine_for(root)
+    fresh.open_run()
+    with pytest.raises(OPCError, match='accounting incomplete'):
+        getattr(fresh, entry)()

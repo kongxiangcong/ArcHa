@@ -296,6 +296,8 @@ class Engine:
                                % (self.task.task_id, last["run_id"], last["revision"],
                                   self.task.revision))
             self.run_id = last["run_id"]
+            if self.delivery_accounting():
+                self.enable_delivery()
             if direction:
                 self.ledger.event(self.run_id, "direction", None, text=direction)
             return self.run_id
@@ -314,6 +316,8 @@ class Engine:
             task_digest=self.task.digest, component=self.comp.component_id, base_commit=base,
             evaluator_digest=rep["evaluator_digest"], toolchain_digest=tool_digest,
             champion_ref=self.ref, direction=direction or self.task.direction)
+        if self.delivery_accounting():
+            self.enable_delivery()
         write_json(self.artifact_dir() / "frozen" / "task.json", self.task.raw)
         write_json(self.artifact_dir() / "frozen" / "component.json", self.comp.raw)
         write_json(self.artifact_dir() / "frozen" / "baseline.json",
@@ -395,8 +399,20 @@ class Engine:
             self.measure_champion(ws, champ[0], None, "re-measured: toolchain changed")
 
     # ----------------------------------------------------------------- budget
+    def enable_delivery(self) -> None:
+        """Request delivery accounting, persisting it as soon as a run is bound."""
+        self._delivery_requested = True
+        if self.run_id and not self.ledger.events(self.run_id, "delivery"):
+            self.ledger.event(self.run_id, "delivery", accounting_scope="task")
+
+    def delivery_accounting(self) -> bool:
+        # Recognize existing repair/report records as well as newly marked runs.
+        return bool(getattr(self, "_delivery_requested", False) or
+                    (self.run_id and any(self.ledger.events(self.run_id, kind)
+                     for kind in ("delivery", "delivery_repair", "promotion_report"))))
+
     def spent(self) -> dict[str, Any]:
-        t = self.ledger.task_totals(self.task.task_id) if self.preparation or getattr(self, "_delivery_accounting", False) or self.ledger.events(self.run_id, "delivery_repair") else self.ledger.totals(self.run_id)
+        t = self.ledger.task_totals(self.task.task_id) if self.preparation or self.delivery_accounting() else self.ledger.totals(self.run_id)
         attempts = self.ledger.attempts(self.run_id)
         if self.ledger.events(self.run_id, "delivery_repair"):
             attempts = [a for r in self.ledger.runs() if r["task_id"] == self.task.task_id for a in self.ledger.attempts(r["run_id"])]
@@ -418,14 +434,14 @@ class Engine:
     def admit(self) -> None:
         """Ask before spending. The estimate is the mean decided attempt so far."""
         b, s = self.task.budget, self.spent()
-        if self.preparation or getattr(self, "_delivery_accounting", False):
+        if self.preparation or self.delivery_accounting():
             self.hard_check()
         if s["search_attempts"] >= b.max_attempts:
             raise BudgetExhausted("max_attempts", "%d search attempts used" % s["search_attempts"])
         done = [a for a in self.ledger.attempts(self.run_id) if a["cost"]]
         est_wall = sum(a["cost"]["wall_seconds"] for a in done) / len(done) if done else 0.0
         est_tok = sum(a["cost"]["tokens"] for a in done) / len(done) if done else 0.0
-        if getattr(self, "_reserve_delivery", False):
+        if self.delivery_accounting():
             reserve = self.ledger.db.execute(
                 "SELECT MAX(c.wall_seconds), MAX(c.tokens) FROM charges c JOIN runs r ON c.run_id=r.run_id "
                 "WHERE r.task_id=? AND c.role IN ('evaluator','reviewer')", (self.task.task_id,)).fetchone()
@@ -446,7 +462,7 @@ class Engine:
     def hard_check(self) -> None:
         """Between steps of one attempt: stop as soon as a cap is crossed."""
         b, s = self.task.budget, self.spent()
-        if getattr(self, "_delivery_accounting", False):
+        if self.delivery_accounting():
             if any(self.ledger.unresolved_accounting(r["run_id"]) for r in self.ledger.runs() if r["task_id"] == self.task.task_id):
                 raise OPCError("usage accounting incomplete; no delivery dispatch")
             if self.ledger.control(self.run_id) in ("pause", "stop"):
@@ -736,7 +752,7 @@ class Engine:
 
         def charge(role: str, cost: Cost, call: WorkerCall | None = None) -> None:
             nonlocal total
-            if call is not None and (self.preparation or getattr(self, "_delivery_accounting", False)):
+            if call is not None and (self.preparation or self.delivery_accounting()):
                 kind = self.task.expert.kind if role == "expert" else (self.task.designer or self.task.expert).kind
                 if kind in ("codex", "dsh") and not call.extra.get("usage_complete", False):
                     call.ok = False
@@ -912,7 +928,7 @@ class Engine:
         if not registered or registered[-1]["body"]["complete"] or report.get("complete"):
             raise OPCError("repair requires a registered failed promotion")
         self.run_id = source["run_id"]
-        self._delivery_accounting = True
+        self.enable_delivery()
         if source["state"] != "closed" or self.ledger.control(self.run_id) in ("pause", "stop"):
             raise OPCError("repair cannot override pause/stop or an active run")
         if registered[-1]["body"].get("report_sha256") != hashlib.sha256(path.read_bytes()).hexdigest():

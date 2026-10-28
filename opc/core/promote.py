@@ -55,7 +55,7 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
     if run["task_id"] != engine.task.task_id or run["revision"] == "preparation":
         raise OPCError("delivery source must be an execution run of this task")
     engine.run_id = run["run_id"]
-    engine._delivery_accounting = True
+    engine.enable_delivery()
     revised = run["task_digest"] != engine.task.digest
     confirmation = None
     if revised:
@@ -349,7 +349,7 @@ The working directory is a read-only checkout of the champion."""
         tree = ws.checkout("reviewer", best["commit_sha"])
         from .worker_config import worker_options
         worker = worker_cls(worker_options(engine.worker_config, "reviewer",
-            {"timeout_s": engine.budget_left()["wall_seconds"]} if engine.preparation or getattr(engine, "_delivery_accounting", False) else {}))
+            {"timeout_s": engine.budget_left()["wall_seconds"]} if engine.preparation or engine.delivery_accounting() else {}))
         call, text = worker._run("reviewer", prompt, tree, out / "reviewer", "read-only", schema)
     finally:
         ws.drop_all()
