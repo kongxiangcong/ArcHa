@@ -933,6 +933,8 @@ class Engine:
             raise OPCError("repair cannot override pause/stop or an active run")
         if registered[-1]["body"].get("report_sha256") != hashlib.sha256(path.read_bytes()).hexdigest():
             raise OPCError("promotion report changed after registration")
+        if report.get("acceptance_task_digest", source["task_digest"]) != self.task.digest:
+            raise OPCError("repair requires the acceptance contract bound to this report")
         if source["task_digest"] != self.task.digest:
             from .promote import validate_standards_confirmation
             if (not report.get("reassessed") or

@@ -322,3 +322,14 @@ loop 的多轮修复决策保留在源码技能中；run --deliver 是一次执�
 测量复用仅接受现有键能证明一致的内容；不能确认时调用现有评价入口，不建立通用的逐 gate 增量缓存。执行 gate 使用既有超时；终验前检查剩余预算、reviewer 使用剩余时间，不能预先保证外部工具单次调用的实际成本。run --deliver 的执行调度根据已记录 evaluator/reviewer 成本留余量，无历史成本时不伪造预算估计。预算不足则返回未完成终验。
 
 没有真实模型/研究实验验证；没有改动 PIM、全局技能、外部 runtime，没有自动 apply 或合并。旧无 --deliver 的 run 命令和旧合同默认硬性门语义保持可用。源码技能与 runtime 的外部部署由用户另行决定。
+
+### 2026-10-28：PR #8 评审修复
+
+- 终验的 command 评价器允许诊断性候选失败后继续执行后续检查，保留通过 gate 的有效测量。promote 检查全部默认硬性 gate（包括重复次数）的通过回执；缺失、跳过、失败均不能完成验收。基础设施故障仍阻断。`--confirm` 重复测量使用相同规则。普通执行评价保留旧失败即停语义；自定义 adapter 缺少必要回执时终验保守阻断。
+- 终验证据键增加策略版本与诊断 gate 集合，防止放宽标准后复用旧策略提前终止的不完整证据。纯阈值修订仍可复用一致测量。
+- 新 revision 重审失败后，可直接执行 `python -m opc run -p PROJECT --task TASK --revision NEW_REVISION --repair-promotion REASSESSED_REPORT_JSON --deliver`。复用已登记且哈希一致的报告内确认记录，重新校验冻结执行合同、验收摘要与标准变化；不能借此改变预算或退回其他验收合同。新 run 以 selected 为基线，记录执行/验收 revision，旧报告不变，预算沿用任务累计。
+- 交付模式写入现有 ledger 事件；恢复同时识别历史 delivery_repair / promotion_report。准入、硬预算检查、未知用量记录和 reviewer 超时统一读取该身份，不依赖原进程临时属性。未进入交付的旧运行维持原有路径。
+
+验证补充：三个原始问题先复现失败，再完成修复；新增覆盖诊断后硬 gate 的通过/失败与显式/默认绑定、硬 gate 回执及重复覆盖缺失、确认标准后修复与旧报告不可变/预算不可变、跨 Engine 的三个恢复入口与三种账本身份、终验重复测量。所有验证使用临时 Git 项目与 scripted workers，本轮未运行真实模型或研究实验。
+
+最终全仓验证：316 passed、5 skipped、12 subtests passed（27.91 秒）；2 条既有依赖弃用警告。`git diff --check` 通过。

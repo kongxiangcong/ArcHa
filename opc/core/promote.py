@@ -169,10 +169,11 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
                 for i in range(confirm_repeats):
                     engine.hard_check()
                     ev, meas, tree = engine.evaluate_commit(ws, commit, "", out / "confirm" /
-                                                            ("%s-%d" % (label, i)), label, fresh=True)
+                                                            ("%s-%d" % (label, i)), label, fresh=True, delivery=True)
                     ws.drop(tree)
                     engine.ledger.charge(engine.run_id, None, "evaluator", Cost(ev.seconds, 0, 0.0))
-                    if ev.failure is not None:
+                    covered = {g.gate_id for g in ev.gates if g.status.value == "passed"}
+                    if ev.failure is not None or expected - covered or meas is None or m not in meas.values:
                         finding("reproduce", "block", "%s failed on repeat %d: %s"
                                 % (label, i, ev.reason))
                         break

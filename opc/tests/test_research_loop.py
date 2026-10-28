@@ -644,6 +644,8 @@ def test_confirmed_revision_can_repair_remaining_findings(make_project, engine_f
     assert not failed['complete']
     failed_path = Path(failed['report_dir']) / 'report.json'
     failed_bytes = failed_path.read_bytes()
+    with pytest.raises(OPCError, match='acceptance contract'):
+        e.repair_delivery(failed_path)
     receipt.unlink()  # registered report preserves the approved standards
     # A later budget edit cannot reuse this confirmation.
     altered = dict(new, budget=dict(new['budget'], max_tokens=999999))
@@ -677,3 +679,37 @@ def test_delivery_accounting_survives_engine_recreation(make_project, engine_for
     fresh.open_run()
     with pytest.raises(OPCError, match='accounting incomplete'):
         getattr(fresh, entry)()
+
+
+def test_delivery_confirmation_repeats_allow_diagnostic_failure(make_project, engine_for):
+    from opc.core.promote import promote
+    comp = component()
+    comp['gates'].insert(0, {'id': 'diagnostic', 'argv': ['{python}', '-c',
+        'import json; exit(1 if json.load(open("params.json"))["x"] == 7 else 0)']})
+    root = make_project(comp=comp, tsk=task(requirements=[
+        {'id': 'D', 'text': 'diagnostic', 'gates': ['diagnostic'], 'required': False}]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), {'exhausted': True, 'base_attempt': 1}], [7]))
+    s = e.run()
+    report = promote(e, source_run=s['run_id'], confirm_repeats=2)
+    assert report['complete'], report['findings']
+    assert len(report['confirm']['samples']['champion']) == 2
+
+
+@pytest.mark.parametrize('repeats', [1, 2])
+def test_delivery_rejects_incomplete_hard_gate_receipts(make_project, engine_for, monkeypatch, repeats):
+    from opc.core.promote import promote
+    comp = component()
+    comp['gates'][0]['repeat'] = True
+    root = make_project(comp=comp, tsk=task(acceptance={'repeats': repeats}, requirements=[]))
+    e = use_sequence(engine_for(root), Sequence([stop]))
+    s = e.run()
+    dom = e.domain(root)
+    original = dom.evaluate
+    def incomplete(*args, **kwargs):
+        ev = original(*args, **kwargs)
+        ev.gates.pop()  # Adapter claims success with a missing required receipt.
+        return ev
+    monkeypatch.setattr(dom, 'evaluate', incomplete)
+    report = promote(e, source_run=s['run_id'])
+    assert not report['complete']
+    assert any(f['check'] == 'gates' and 'not passed' in f['text'] for f in report['findings'])
