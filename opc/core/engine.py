@@ -905,8 +905,8 @@ class Engine:
         path = Path(report_path).resolve()
         report = json.loads(path.read_text(encoding="utf-8"))
         source = self.ledger.run(report["run_id"])
-        if source["task_id"] != self.task.task_id or source["task_digest"] != self.task.digest:
-            raise OPCError("repair requires the same task and frozen contract")
+        if source["task_id"] != self.task.task_id:
+            raise OPCError("repair requires the same task")
         registered = [e for e in self.ledger.events(source["run_id"], "promotion_report")
                       if Path(e["body"]["report_path"]).resolve() == path]
         if not registered or registered[-1]["body"]["complete"] or report.get("complete"):
@@ -917,6 +917,14 @@ class Engine:
             raise OPCError("repair cannot override pause/stop or an active run")
         if registered[-1]["body"].get("report_sha256") != hashlib.sha256(path.read_bytes()).hexdigest():
             raise OPCError("promotion report changed after registration")
+        if source["task_digest"] != self.task.digest:
+            from .promote import validate_standards_confirmation
+            if (not report.get("reassessed") or
+                report.get("acceptance_task_digest") != self.task.digest or
+                report.get("acceptance_revision") != self.task.revision or
+                report.get("execution_task_digest") != source["task_digest"]):
+                raise OPCError("repair requires a confirmed acceptance revision bound to this report")
+            validate_standards_confirmation(self, source, report.get("standards_confirmation"))
         if report["selected_version"] != self.selected_commit():
             raise OPCError("repair must start from the selected candidate")
         if any(f["check"] in ("evaluator", "scope") for f in report["findings"] if f["severity"] == "block"):
@@ -933,7 +941,8 @@ class Engine:
             new_id = self.open_run(new_run=True, base_ref=report["selected_version"],
                                    direction="Repair delivery findings: " + json.dumps(report["findings"]))
             self.ledger.event(new_id, "delivery_repair", source_run=source["run_id"],
-                              source_promotion=report["promotion_id"], selected_commit=report["selected_version"])
+                              source_promotion=report["promotion_id"], selected_commit=report["selected_version"],
+                              execution_revision=source["revision"], acceptance_revision=self.task.revision)
         return self.run()
 
     def run(self, new_run: bool = False, direction: str | None = None,

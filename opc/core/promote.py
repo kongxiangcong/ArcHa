@@ -26,6 +26,27 @@ def checked_out_branches(repo: Path) -> set[str]:
     return {l.split(" ", 1)[1] for l in out.splitlines() if l.startswith("branch ")}
 
 
+def validate_standards_confirmation(engine: Engine, run: dict, confirmation: dict) -> None:
+    """Validate only acceptance changes against the source's immutable contract."""
+    frozen = json.loads((engine.artifact_dir() / "frozen/task.json").read_text(encoding="utf-8"))
+    old_component = json.loads((engine.artifact_dir() / "frozen/component.json").read_text(encoding="utf-8"))
+    def execution_contract(raw):
+        result = {k:v for k,v in raw.items() if k not in ("revision", "requirements", "acceptance")}
+        result["acceptance"] = {k:v for k,v in raw.get("acceptance", {}).items() if k not in ("constraints", "target")}
+        return result
+    if execution_contract(frozen) != execution_contract(engine.task.raw) or old_component != engine.comp.raw:
+        raise OPCError("standards-only reassessment cannot change execution, evaluator, inputs, objective or budget")
+    if not isinstance(confirmation, dict):
+        raise OPCError("standards confirmation must be an object")
+    changes = {k:{"old":frozen.get(k), "new":engine.task.raw.get(k)}
+               for k in ("requirements", "acceptance") if frozen.get(k) != engine.task.raw.get(k)}
+    if (not changes or confirmation.get("confirmed_by") != "user" or
+        confirmation.get("source_run") != run["run_id"] or
+        confirmation.get("from_revision") != run["revision"] or
+        confirmation.get("to_revision") != engine.task.revision or confirmation.get("changes") != changes):
+        raise OPCError("confirmation must explicitly bind user-approved old and new standards to this run/revision")
+
+
 def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
             apply_to: str | None = None, source_run: str | None = None, standards_confirmation: str | Path | None = None) -> dict[str, Any]:
     run = engine.ledger.run(source_run) if source_run else engine.ledger.latest_run(engine.task.task_id)
@@ -40,14 +61,6 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
     if revised:
         if not source_run or not standards_confirmation:
             raise OPCError("different acceptance revision requires explicit source run and user standards confirmation")
-        frozen = json.loads((engine.artifact_dir() / "frozen/task.json").read_text(encoding="utf-8"))
-        old_component = json.loads((engine.artifact_dir() / "frozen/component.json").read_text(encoding="utf-8"))
-        def execution_contract(raw):
-            result = {k:v for k,v in raw.items() if k not in ("revision", "requirements", "acceptance")}
-            result["acceptance"] = {k:v for k,v in raw.get("acceptance", {}).items() if k not in ("constraints", "target")}
-            return result
-        if execution_contract(frozen) != execution_contract(engine.task.raw) or old_component != engine.comp.raw:
-            raise OPCError("standards-only reassessment cannot change execution, evaluator, inputs, objective or budget")
         document = Path(standards_confirmation)
         if not document.is_absolute():
             document = engine.root / document
@@ -55,15 +68,7 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
             confirmation = json.loads(document.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             raise OPCError("cannot read standards confirmation: " + str(exc)) from exc
-        if not isinstance(confirmation, dict):
-            raise OPCError("standards confirmation must be an object")
-        changes = {k:{"old":frozen.get(k), "new":engine.task.raw.get(k)}
-                   for k in ("requirements", "acceptance") if frozen.get(k) != engine.task.raw.get(k)}
-        if (not changes or confirmation.get("confirmed_by") != "user" or
-            confirmation.get("source_run") != source_run or
-            confirmation.get("from_revision") != run["revision"] or
-            confirmation.get("to_revision") != engine.task.revision or confirmation.get("changes") != changes):
-            raise OPCError("confirmation must explicitly bind user-approved old and new standards to this run/revision")
+        validate_standards_confirmation(engine, run, confirmation)
         confirmation = dict(confirmation, sha256=hashlib.sha256(document.read_bytes()).hexdigest())
     champs = engine.ledger.champions(engine.run_id)
     selected = engine.selected_commit()

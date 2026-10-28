@@ -616,3 +616,46 @@ def test_delivery_checks_hard_gates_after_diagnostic_failure(make_project, engin
     assert {g['gate_id'] for g in report['evaluation']['gates']} == {'diagnostic', 'evaluate', 'hard'}
     if hard_exit == 0:
         assert report['selected_metrics']['loss'] == 17
+
+
+def test_confirmed_revision_can_repair_remaining_findings(make_project, engine_for):
+    from opc.core.engine import Engine
+    from opc.core.promote import promote
+    from opc.core.model import OPCError
+    root = make_project(tsk=task(acceptance={}, requirements=[
+        {'id': 'R', 'text': 'loss', 'check': {'metric': 'loss', 'op': '<=', 'value': 1}}]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), stop], [4]))
+    first = e.run()
+    e.ledger.charge(first['run_id'], None, 'expert', Cost(0, 123, 0.0))
+    original = promote(e, source_run=first['run_id'])
+    old_bytes = (Path(original['report_dir']) / 'report.json').read_bytes()
+    new = dict(e.task.raw, revision='r0002', requirements=[
+        {'id': 'R', 'text': 'relaxed loss', 'check': {'metric': 'loss', 'op': '<=', 'value': 2}}])
+    path = root / '.opc/tasks/t-toy/revisions/r0002/task.json'
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(new))
+    git(root, 'add', str(path)); git(root, 'commit', '-qm', 'confirmed standards')
+    receipt = root / 'confirmation.json'
+    receipt.write_text(json.dumps(dict(confirmed_by='user', source_run=first['run_id'],
+        from_revision='r0001', to_revision='r0002', changes={
+            'requirements': {'old': e.task.raw['requirements'], 'new': new['requirements']}})))
+    revised = Engine(root, 't-toy', 'r0002')
+    failed = promote(revised, source_run=first['run_id'], standards_confirmation=receipt)
+    assert not failed['complete']
+    failed_path = Path(failed['report_dir']) / 'report.json'
+    failed_bytes = failed_path.read_bytes()
+    receipt.unlink()  # registered report preserves the approved standards
+    # A later budget edit cannot reuse this confirmation.
+    altered = dict(new, budget=dict(new['budget'], max_tokens=999999))
+    path.write_text(json.dumps(altered))
+    with pytest.raises(OPCError):
+        Engine(root, 't-toy', 'r0002').repair_delivery(failed_path)
+    path.write_text(json.dumps(new))
+    repair = use_sequence(Engine(root, 't-toy', 'r0002'), Sequence([plan(1), stop], [7]))
+    repaired = repair.repair_delivery(failed_path)
+    assert repaired['baseline'] == first['selected_version']
+    assert repair.ledger.run(repaired['run_id'])['revision'] == 'r0002'
+    assert repaired['spent']['tokens'] == 123
+    assert promote(repair, source_run=repaired['run_id'])['complete']
+    assert failed_path.read_bytes() == failed_bytes
+    assert (Path(original['report_dir']) / 'report.json').read_bytes() == old_bytes
