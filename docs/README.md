@@ -7,6 +7,7 @@
 | [design/](design/) | 框架设计、接入与目录规范；原根目录两份设计文档迁入这里 |
 | [research/](research/) | 固定版本论文、源码与复用方案核查 |
 | [discussions/](discussions/) | 用户确认的方案、纠偏与后续讨论入口 |
+| [下一阶段方向](plans/archa-next-stage-goals.md) | 先建测试平台与真实案例，再逐项验证阅读接口、研究闭环、共享经验与只读 dashboard；待验证路线，不是全面实施规格 |
 | [reviews/](reviews/) | 独立审核和复核记录；原 docs/review-*.md 迁入这里 |
 | [reports/](reports/) | 可提交的验证摘要、条件、结果与证据路径 |
 | [evidence/](evidence/) | 已保留的审核探针与原始证据 |
