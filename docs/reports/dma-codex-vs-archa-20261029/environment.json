@@ -1,0 +1,18 @@
+{
+  "framework_head": "68fb9188cfd7e79f116ef473398ac936ca618e2e",
+  "python": "3.12.3",
+  "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.39",
+  "model": "gpt-6.1-sol",
+  "reasoning_effort": "medium",
+  "replicates": 1,
+  "order": [
+    "direct",
+    "archa"
+  ],
+  "sha256": {
+    "TASK.md": "730d1aa8354bb0e219459f5aaaf69a148a838b992ebcdc35e4849af917a0d6c7",
+    "starter/dma_model.py": "d14493ded27077da2dd9f3a421ac4d759e0a468df6b2784137eb46165d0e38b6",
+    "starter/public_checks.py": "cb39a396fe40ec4c61564196eee785b18e1bfb6180dd51908df165d44a7c2ea6",
+    "acceptance.py": "e6bf9ea0d5995cd00ce439a6d0706fea1e971c4c1eb73340b8bd937ce38a7dc9"
+  }
+}

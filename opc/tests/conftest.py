@@ -17,6 +17,15 @@ ARCHA = Path(__file__).resolve().parents[2]
 if str(ARCHA) not in sys.path:
     sys.path.insert(0, str(ARCHA))
 
+
+@pytest.fixture
+def observer_test_client():
+    """Only HTTP tests require the observer extra and its test transport."""
+    pytest.importorskip('fastapi')
+    pytest.importorskip('httpx')
+    from fastapi.testclient import TestClient
+    return TestClient
+
 EVALUATE = """
 import json, sys
 from pathlib import Path

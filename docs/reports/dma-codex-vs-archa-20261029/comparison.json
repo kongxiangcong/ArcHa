@@ -1,0 +1,112 @@
+{
+  "direct": {
+    "timing": {
+      "seconds": 112.41403563499989,
+      "exit_code": 0,
+      "argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--skip-git-repo-check",
+        "-s",
+        "workspace-write",
+        "-C",
+        "/tmp/dma-ab-20261029/direct",
+        "-m",
+        "gpt-6.1-sol",
+        "-c",
+        "model_reasoning_effort=\"medium\"",
+        "-o",
+        "/tmp/dma-ab-20261029/direct-last.txt",
+        "-"
+      ]
+    },
+    "acceptance": {
+      "cases": 82,
+      "failures": [],
+      "passed": true
+    },
+    "usage": [
+      {
+        "log": "direct-events.jsonl",
+        "usage": [
+          {
+            "input_tokens": 181228,
+            "cached_input_tokens": 163840,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 5149,
+            "reasoning_output_tokens": 332
+          }
+        ]
+      }
+    ],
+    "runtime": {
+      "valid_cases": 74,
+      "repeats_per_sample": 100,
+      "samples_seconds": [
+        0.3334367839997867,
+        0.31414899500123283,
+        0.31630757600032666,
+        0.3297663410012319,
+        0.30980111499957275,
+        0.3157136299996637,
+        0.3181199230002676
+      ],
+      "median_us_per_simulate": 42.74426702707117
+    },
+    "readme": true
+  },
+  "archa": {
+    "timing": {
+      "seconds": 119.56842061399948,
+      "exit_code": 0
+    },
+    "acceptance": {
+      "cases": 82,
+      "failures": [],
+      "passed": true
+    },
+    "usage": [
+      {
+        "log": "archa/.opc/local/artifacts/dma-ab/t-main/run-5fe6cf049c9e/attempts/a000001/designer/designer-events.jsonl",
+        "usage": [
+          {
+            "input_tokens": 147763,
+            "cached_input_tokens": 138112,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 5503,
+            "reasoning_output_tokens": 139
+          }
+        ]
+      },
+      {
+        "log": "archa/.opc/local/artifacts/dma-ab/t-main/run-5fe6cf049c9e/attempts/a000001/expert/expert-events.jsonl",
+        "usage": [
+          {
+            "input_tokens": 52487,
+            "cached_input_tokens": 15616,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 628,
+            "reasoning_output_tokens": 18
+          }
+        ]
+      }
+    ],
+    "runtime": {
+      "valid_cases": 74,
+      "repeats_per_sample": 100,
+      "samples_seconds": [
+        0.28494269300063024,
+        0.2892564379999385,
+        0.31973534699864103,
+        0.2840829439992376,
+        0.2821369289995346,
+        0.2969787689999066,
+        0.2922475619998295
+      ],
+      "median_us_per_simulate": 39.08870783782953
+    },
+    "readme": true
+  }
+}

@@ -8,12 +8,13 @@ user enables execution by hand.
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 from pathlib import Path
 from typing import Any
 
 from ..core.model import OPCError
-from ..core.worker_config import CONFIG_PATH, load_worker_config, worker_options
+from ..core.worker_config import CONFIG_PATH, load_worker_config, worker_options, load_budget_config, validate_limits
 from ..core.workspace import dirty_paths
 
 HERE = Path(__file__).resolve().parent
@@ -91,10 +92,10 @@ def _draft(project_root: Path, agent: str, brief: str | Path | None = None) -> d
     # contract; dsh ignores the schema and is asked to write its answer as prose.
     if agent == "dsh":
         from ..adapters.dsh import DshWorker
-        worker = DshWorker(worker_options(config, "onboard", {"timeout_s": 1800, **_dsh_options()}))
+        worker = DshWorker(worker_options(config, "onboard", _dsh_options()))
     else:
         from ..adapters.codex import CodexWorker
-        worker = CodexWorker(worker_options(config, "onboard", {"timeout_s": 1800}))
+        worker = CodexWorker(worker_options(config, "onboard"))
     log = root / ".opc" / "local" / "onboard"
     call, text = worker._run("onboard", prompt, root, log, "workspace-write", None)
     after = _snapshot(root)
@@ -129,7 +130,7 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
     """Develop readiness within scope; never dispatch a formal experiment here.
 
     prior_tokens is cumulative host/nested usage outside the worker receipts,
-    including cached input. Unknown accounting stops dispatch, rather than guessing.
+    including cached input. Missing usage is recorded as unknown; only an explicit relevant cap blocks dispatch.
     """
     from ..core.ledger import Ledger
     from ..core.model import Cost, write_json
@@ -139,14 +140,16 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
     root = project_root.resolve()
     if agent not in ("codex", "dsh"):
         raise OPCError("the onboarding agent must be codex or dsh")
-    if any(value is None for value in (max_tokens, max_wall_seconds, prior_tokens, prior_wall_seconds)):
-        return {"ok": False, "preparation": "accounting_unknown", "responsibility": "accounting owner",
-                "error": "authorized budget and cumulative host/nested tokens and wall time required; no dispatch"}
     if not (root / ".opc/project.json").exists():
         if brief:
             load_brief_text(root, brief)
         from . import init
         init(root, "research-project", root.name, "main", task_id, True)
+    explicit = {key: value for key, value in (("max_tokens", max_tokens), ("max_wall_seconds", max_wall_seconds)) if value is not None}
+    contracts = sorted((root / ".opc/tasks" / task_id / "revisions").glob("r[0-9][0-9][0-9][0-9]/task.json"))
+    legacy = json.loads(contracts[-1].read_text(encoding="utf-8-sig")).get("budget", {}) if contracts else {}
+    caps = validate_limits({k: legacy.get(k) for k in ("max_tokens", "max_wall_seconds")} | load_budget_config(root) | explicit)
+    max_tokens, max_wall_seconds = caps.get("max_tokens"), caps.get("max_wall_seconds")
     ledger = Ledger(root / ".opc/local/ledger.sqlite3")
     with ledger.writer():
         rows = [r for r in ledger.runs() if r["task_id"] == task_id and r["revision"] == "preparation"]
@@ -170,23 +173,36 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                     "ok": state == "ready", "preparation": state, "error": reason if state != "ready" else "", "reason": reason,
                     "next": "freeze, check/preflight, then run only if authorized" if state == "ready"
                     else "continue scoped preparation after resolving the stated condition", **fields}
-        if max_tokens is None or max_wall_seconds is None or prior_tokens is None or prior_wall_seconds is None:
-            return finish("accounting_unknown", "authorized budget and cumulative host/nested token usage required")
-        if max_tokens <= 0 or max_wall_seconds <= 0 or prior_tokens < 0 or prior_wall_seconds < 0:
-            raise OPCError("preparation budget must be positive; prior_tokens must be nonnegative")
+        if ((max_tokens is not None and prior_tokens is None) or
+                (max_wall_seconds is not None and prior_wall_seconds is None)):
+            return finish("accounting_unknown", "cumulative host usage required for the configured limit")
+        for value in (prior_tokens, prior_wall_seconds):
+            if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or value < 0):
+                raise OPCError("prior usage must be finite and nonnegative")
         limits = ledger.events(rid, "preparation_budget")
         budget = {"tokens": max_tokens, "wall_seconds": max_wall_seconds}
-        if limits and limits[0]["body"] != budget:
-            raise OPCError("preparation budget is already authorized; do not reset it")
-        if not limits:
+        if explicit:
+            path = root / CONFIG_PATH
+            data = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
+            data["budget"] = {**data.get("budget", {}), **explicit}
+            write_json(path, data)
+        if not limits or limits[-1]["body"] != budget:
             ledger.event(rid, "preparation_budget", None, **budget)
         prior = ledger.events(rid, "host_usage")
         previous = prior[-1]["body"]["tokens"] if prior else 0
         previous_wall = prior[-1]["body"].get("wall_seconds", 0) if prior else 0
-        if prior_tokens < previous or prior_wall_seconds < previous_wall:
+        if ((prior_tokens is not None and prior_tokens < previous) or
+                (prior_wall_seconds is not None and prior_wall_seconds < previous_wall)):
             raise OPCError("cumulative host usage cannot decrease")
-        ledger.charge(rid, None, "host", Cost(prior_wall_seconds - previous_wall, prior_tokens - previous, None))
-        ledger.event(rid, "host_usage", None, tokens=prior_tokens, wall_seconds=prior_wall_seconds)
+        if prior_tokens is None or prior_wall_seconds is None:
+            ledger.event(rid, "host_usage_unknown", tokens=prior_tokens, wall_seconds=prior_wall_seconds)
+        if prior_tokens is not None or prior_wall_seconds is not None:
+            ledger.charge(rid, None, "host", Cost(
+                prior_wall_seconds - previous_wall if prior_wall_seconds is not None else 0,
+                prior_tokens - previous if prior_tokens is not None else 0, None))
+            ledger.event(rid, "host_usage", None,
+                         tokens=prior_tokens if prior_tokens is not None else previous,
+                         wall_seconds=prior_wall_seconds if prior_wall_seconds is not None else previous_wall)
         had_unknown = bool(ledger.unresolved_accounting(rid))
         if reconcile_usage is not None:
             try:
@@ -197,14 +213,15 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                 raise OPCError("reconciliation receipt must be an object with entries")
             ledger.reconcile_accounting(rid, document.get("entries"), root)
         unknown = ledger.unresolved_accounting(rid)
-        if unknown:
+        if unknown and max_tokens is not None:
             return finish("accounting_unknown", "unaccounted prior call; use --reconcile-usage with actual usage evidence",
                           unresolved_accounting=unknown)
         def remaining():
             used = ledger.task_totals(task_id)
-            if used["tokens"] >= max_tokens or used["wall_seconds"] >= max_wall_seconds:
+            if ((max_tokens is not None and used["tokens"] >= max_tokens) or
+                    (max_wall_seconds is not None and used["wall_seconds"] >= max_wall_seconds)):
                 raise OPCError("preparation budget exhausted; saved work retained; no new dispatch")
-            return max_wall_seconds - used["wall_seconds"]
+            return max_wall_seconds - used["wall_seconds"] if max_wall_seconds is not None else None
         try:
             remaining()
         except OPCError as exc:
@@ -214,7 +231,7 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             previous_receipt = previous_receipts[-1]["body"] if previous_receipts else {}
             state = previous_receipt.get("state", "pending")
             reason = "usage updated; " + previous_receipt.get("reason", "preparation remains")
-            if state == "accounting_unknown" or had_unknown:
+            if state == "accounting_unknown" or (had_unknown and max_tokens is not None):
                 state = "pending"
                 reason = "accounting reconciled; rerun preparation and independent review"
             return finish(state, reason,
@@ -262,8 +279,9 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             import uuid
             log = root / ".opc/local/onboard" / uuid.uuid4().hex
             used = ledger.task_totals(task_id)
-            prompt = ("Remaining shared tokens: %d; wall seconds: %.1f.\n" %
-                      (max_tokens-used["tokens"], max_wall_seconds-used["wall_seconds"]) +
+            prompt = ("Remaining shared limits (null = unlimited): " + json.dumps({
+                      "tokens": max_tokens-used["tokens"] if max_tokens is not None else None,
+                      "wall_seconds": remaining()}) + "\n" +
                       (HERE / "ONBOARDING.md").read_text(encoding="utf-8") + "\n" +
                       "PREPARATION: Complete necessary evaluator integration and focused validation "
                       "and bounded capability probes within the confirmed task. Write only .opc except protected "
@@ -281,8 +299,9 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             if not call.extra.get("usage_complete", False):
                 ledger.event(rid, "accounting_unknown", None, reason="worker usage missing/incomplete",
                              call_id=call.call_id, log_dir=str(log), charged=call.cost.as_dict(), error=call.error)
-                return finish("accounting_unknown", "worker usage unavailable; no further dispatch",
-                              worker_error=call.error, unresolved_accounting=ledger.unresolved_accounting(rid))
+                if max_tokens is not None:
+                    return finish("accounting_unknown", "worker usage unavailable; no further dispatch",
+                                  worker_error=call.error, unresolved_accounting=ledger.unresolved_accounting(rid))
             after = _snapshot(root)
             outside = [p for p in set(before)|set(after) if before.get(p)!=after.get(p) and not p.startswith(".opc/")]
             if (outside or protected != _inputs_snapshot(root) or any(
@@ -339,8 +358,9 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
         if not rc.extra.get("usage_complete", False):
             ledger.event(rid, "accounting_unknown", None, reason="review usage missing",
                          call_id=rc.call_id, log_dir=str(log / "reviewer"), charged=rc.cost.as_dict(), error=rc.error)
-            return finish("accounting_unknown", "review usage unavailable",
-                          worker_error=rc.error, unresolved_accounting=ledger.unresolved_accounting(rid))
+            if max_tokens is not None:
+                return finish("accounting_unknown", "review usage unavailable",
+                              worker_error=rc.error, unresolved_accounting=ledger.unresolved_accounting(rid))
         try:
             accepted = rc.ok and json.loads(reply).get("verdict") == "accept"
         except ValueError:

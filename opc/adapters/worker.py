@@ -23,10 +23,11 @@ PLAN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": [*PLAN_FIELDS, "hypothesis", "expected", "falsifier", "evaluate",
-                 "exhausted", "base_attempt", "conclusions", "stop_reason"],
+                 "exhausted", "base_attempt", "conclusions", "stop_reason", "experiment_id"],
     "properties": {
         "title": {"type": "string", "description": "short name of the experiment"},
-        "hypothesis": {"type": "string", "description": "why this should improve the objective"},
+        "hypothesis": {"type": "string", "description": "research question and competing explanations, or engineering rationale"},
+        "experiment_id": {"type": ["string", "null"], "description": "stable question ID within this task, reused across runs; null for ordinary engineering work"},
         "changes": {"type": "string", "description": "method and experiment for the designer to implement"},
         "evaluate": {"type": ["boolean", "null"], "description": "formal evaluation: null uses objective-dependent default"},
         "base_attempt": {"type": ["integer", "null"],
@@ -36,7 +37,7 @@ PLAN_SCHEMA: dict[str, Any] = {
             "required": ["attempt", "conclusion"], "properties": {
                 "attempt": {"type": "integer"}, "conclusion": {"type": "string"}}}},
         "stop_reason": {"type": "string", "description": "why exploration should end; empty while continuing"},
-        "expected": {"type": "string", "description": "expected effect on metrics"},
+        "expected": {"type": "string", "description": "distinguishing predictions under stated inputs and controls, not a mandatory result"},
         "falsifier": {"type": "string", "description": "observation that would refute it"},
         # codex's --output-schema admits only an object, so a worker with nothing
         # left to try has no way to say so in text. Strict structured output
@@ -91,6 +92,12 @@ def make_worker(spec: WorkerSpec, evaluator_tree: Path) -> Worker:
 def validate_plan(plan: Any) -> str | None:
     if not isinstance(plan, dict):
         return "plan is not an object"
+    from ..core.results import validate_experiment_id
+    from ..core.model import OPCError
+    try:
+        validate_experiment_id(plan.get("experiment_id"))
+    except OPCError as exc:
+        return str(exc)
     for k in PLAN_FIELDS:
         if not isinstance(plan.get(k), str) or not plan[k].strip():
             return "plan.%s is empty" % k

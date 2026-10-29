@@ -68,8 +68,8 @@ $archa-loop /absolute/project/.opc/research/tasks/<task>/task-brief.md
 ```
 
 1. 第一阶段先初始化当前项目 `.opc/`，保存 `.opc/runtime/` 和本地入口 `.opc/archa.py`，再共同形成研究地图。地图正文自由组织，末尾包含 task to-do、每个方向的占位目录以及第二阶段提示词。此时只部署框架，不生成任务合同和评价器；已有项目合同和执行状态保留。
-2. 第二阶段每次选一个依赖证据足够的任务，派 sub-agent 调查源码或外部原始来源，证据保存在任务 `evidence/`。主 agent 调研后在回复中展示建议 brief 大纲，覆盖用途、一句话目标与完成状态、范围、交付物、验收条件、有无数值指标和留给 onboard 的未决项，请用户检查修改并确认。确认前仅保存 evidence 和讨论记录，不创建 `task-brief.md`。
-3. 用户确认整体大纲后生成 `task-brief.md`，结构检查通过才勾选该 task；勾选仅表示简报就绪。技能随后自动调用 onboard，核对合同并处理未决项，在 `.opc/context/DECISIONS.md` 记录简报路径、摘要与对应 task/revision。起草阶段保持执行关闭；缺失预算、评价器等如实报告为阻塞。底层调用：
+2. 第二阶段每次选一个依赖证据足够的任务，派 sub-agent 调查源码或外部原始来源，证据保存在任务 `evidence/`。主 agent 调研后记录 brief 大纲，覆盖用途、一句话目标与完成状态、范围、交付物、验收条件、有无数值指标和留给 onboard 的未决项，依据用户任务与证据直接生成简报，记录合理假设，无需停下来等待额外确认。
+3. 形成大纲后直接生成 `task-brief.md`，结构检查通过才勾选该 task；勾选仅表示简报就绪。技能随后自动调用 onboard，核对合同并处理未决项，在 `.opc/context/DECISIONS.md` 记录简报路径、摘要与对应 task/revision。起草阶段保持执行关闭；token/时间默认无上限；必要评价器由 agent 自主准备。底层调用：
 
 ```bash
 python3 /absolute/project/.opc/archa.py brief-check -p /absolute/project --brief .opc/research/tasks/<task>/task-brief.md
@@ -219,15 +219,31 @@ Apache License 2.0，见 [LICENSE](LICENSE)。
 base_attempt 同样适用于停止回复；run 停止、预算用尽、数值 target 达标和任务完成分别报告。promote 对 selected_version 完整终验，只有满足必要条件才允许显式 apply；同版本补 review 可复用仍适用的评价。
 旧 benchmark 执行工具与 FP32 包已退役，历史报告保留，框架回归仍为 python -m pytest -q。
 
-## 自主准备
+## 默认资源配置
 
-授权范围及总预算确定后，缺失评价器/负控/证据与用量工具属于 agent 的准备待办：
+模型与资源上限统一放在 `.opc/local/workers.json`，新项目默认：
 
-```bash
-opc onboard -p . --brief <brief> --prepare --task <task-id> --max-tokens <授权总额> --max-wall-seconds <授权秒数> --prior-wall-seconds <累计主流程及外部嵌套秒数> --prior-tokens <累计主流程及外部嵌套用量>
+```json
+{
+  "budget": {"max_tokens": null, "max_wall_seconds": null},
+  "expert": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
+  "designer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
+  "reviewer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
+  "onboard": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"}
+}
 ```
 
-该命令仅做准备和只读审阅，不启动正式设备实验。pending 由 agent 继续，ready 仍需提交冻结文件和 check/preflight，external_blocked 必须带真实观测证据与外部下一步。未声明可靠用量时停止派发；input 包含 cached input，主流程与外部嵌套用量由调用者累计报告，命令内 worker/reviewer 自动记账。正式 run 沿用同一账本与授权总额，不能以 new-run 重置准备消耗。onboard 默认采用同一计量准备路径；未提供可靠预算和主流程累计用量/耗时，不会派发模型。
+`null` 表示无上限。只有用户明确指定相应上限时写入数值，可分别设置；技能不会主动索要预算或等待大纲确认。角色设置与 budget 独立；本地 budget 显式字段覆盖旧合同同名限制，缺失则兼容旧合同，二者都缺失时无上限。预算变更纳入运行冻结摘要，需新 run，累计用量保留。模型单次调用默认也无超时；既有显式 worker 超时、评价器工具超时、轮数限制与用户 pause/stop 继续生效。
+
+## 自主准备
+
+授权范围确定后，缺失评价器/负控/证据与用量工具属于 agent 的准备待办：
+
+```bash
+opc onboard -p . --brief <brief> --prepare --task <task-id>
+```
+
+该命令仅做准备和只读审阅，不启动正式设备实验。pending 由 agent 继续，ready 仍需提交冻结文件和 check/preflight，external_blocked 必须带真实观测证据与外部下一步。无上限时缺失用量记录为 unknown 并继续；input 包含 cached input，主流程与外部嵌套用量由调用者累计报告，命令内 worker/reviewer 自动记账。正式 run 沿用同一账本与授权总额，不能以 new-run 重置准备消耗。onboard 默认采用同一准备路径；显式 token 上限要求可靠累计 token，显式时间上限要求可靠累计耗时。
 
 已部署的 runtime 和全局技能不会自动升级；使用前核对项目入口 --help 与已安装技能内容。本仓库修改只影响后续明确部署的副本。
 
@@ -264,13 +280,17 @@ python -m opc.observer --project /absolute/path/to/project
 后端可选依赖锁定在 `pyproject.toml`，前端与传递依赖锁定在 `web/package-lock.json`。升级 ArcHa 时，在 `opc/observer/adapter.py` 核对变化的路径、账本列、冻结合同和 provider 日志映射；前端只消费 `/api/observer/v1` DTO。实体及接口模型见 `opc/observer/models.py`，服务的 `/openapi.json` 可读取生成的合同。升级后运行以下离线检查，不要求模型密钥：
 
 ```bash
-python -m pip install pytest httpx
-python -m pytest opc/tests/test_observer.py -q
+python -m pip install -e '.[observer]' pytest httpx
+python -m pytest opc/tests/test_observer.py opc/tests/test_results.py -q
 npm --prefix web run typecheck
 npm --prefix web run build
 # 浏览器验收另需 Playwright 与本机 Chromium
 python tools/observer_browser_smoke.py
 ```
+
+框架基础安装的回归只需 `python -m pip install -e . pytest` 后运行 `python -m pytest -q`。
+未安装 FastAPI 或 HTTPX 时只跳过依赖它们的 HTTP 测试，观察器文件适配器测试仍运行。
+CI 在基础安装和安装 observer 测试依赖后分别运行完整回归，并显式检查 HTTP 测试依赖可导入。
 
 实施/验收记录及已知边界见 [观察工作台 tickets](docs/design/observer-workbench/tickets.md)。当前格式的离线夹具验证不代表用户实际部署已验证；未识别来源以 partial/unsupported 和具体诊断降级，不迁移源数据。
 

@@ -1,0 +1,355 @@
+--- a/dma_model.py
++++ b/dma_model.py
+@@ -1,9 +1,10 @@
+-"""Usable serial descriptor executor; queue admission and overlap are not implemented.
++"""Deterministic descriptor executor with DMA backpressure and compute overlap.
+ 
+ Python 3.10+, standard library only. The task is specified in TASK.md.
+ """
+ from __future__ import annotations
+ import argparse
++from collections import deque
+ import json
+ 
+ 
+@@ -49,23 +50,66 @@
+ 
+ 
+ def simulate(case):
+-    """Serial baseline: correct functional execution, no DMA/compute overlap."""
++    """Execute in issue order, advancing directly between completion/release times."""
+     validate(case)
+     memory = list(case["memory"])
+     cfg = case["config"]
++    jobs = case["descriptors"]
+     now, events, checksums = 0, [], {}
+-    for job in case["descriptors"]:
+-        now = max(now, job.get("release", 0))
+-        start = now
++    cursor, completed = 0, set()
++    waiting = deque()
++    dma = compute = None
++
++    def start_dma(job, event):
+         n, src = job["nbytes"], job["src"]
+-        if job["kind"] == "dma":
+-            duration = cfg["setup_cycles"] + (n + cfg["bytes_per_cycle"] - 1) // cfg["bytes_per_cycle"]
+-            memory[job["dst"]:job["dst"] + n] = memory[src:src + n]
+-        else:
+-            duration = job["cycles"]
+-            checksums[job["id"]] = sum(memory[src:src + n])
+-        now += duration
+-        events.append({"id": job["id"], "admitted": start, "start": start, "end": now})
++        duration = cfg["setup_cycles"] + (n + cfg["bytes_per_cycle"] - 1) // cfg["bytes_per_cycle"]
++        event.update(start=now, end=now + duration)
++        return job, event, memory[src:src + n]
++
++    while cursor < len(jobs) or waiting or dma is not None or compute is not None:
++        # Publish every completion before any start at this timestamp.
++        if dma is not None and dma[1]["end"] == now:
++            job, event, snapshot = dma
++            memory[job["dst"]:job["dst"] + job["nbytes"]] = snapshot
++            completed.add(job["id"])
++            dma = None
++        if compute is not None and compute[1]["end"] == now:
++            job, event, checksum = compute
++            checksums[job["id"]] = checksum
++            completed.add(job["id"])
++            compute = None
++
++        if dma is None and waiting:
++            dma = start_dma(*waiting.popleft())
++
++        while cursor < len(jobs):
++            job = jobs[cursor]
++            if job.get("release", 0) > now or not completed.issuperset(job.get("depends", [])):
++                break
++            if job["kind"] == "dma":
++                if len(waiting) + (dma is not None) >= cfg["queue_depth"]:
++                    break
++            elif compute is not None:
++                break
++
++            event = {"id": job["id"], "admitted": now}
++            events.append(event)
++            cursor += 1
++            if job["kind"] == "dma":
++                if dma is None:
++                    dma = start_dma(job, event)
++                else:
++                    waiting.append((job, event))
++            else:
++                event.update(start=now, end=now + job["cycles"])
++                src = job["src"]
++                compute = job, event, sum(memory[src:src + job["nbytes"]])
++
++        next_times = [running[1]["end"] for running in (dma, compute) if running is not None]
++        if cursor < len(jobs) and jobs[cursor].get("release", 0) > now:
++            next_times.append(jobs[cursor]["release"])
++        if next_times:
++            now = min(next_times)
+     return {"events": events, "memory": memory, "checksums": checksums, "total_cycles": now}
+ 
+ 
+--- a/README.md
++++ b/README.md
+@@ -0,0 +1,54 @@
++# DMA descriptor executor
++
++Python 3.10+; standard library only. Run a JSON input file with:
++
++```sh
++python dma_model.py example.json
++```
++
++Valid input prints one JSON object and exits with code 0. Invalid input raises
++`ValueError` through the Python API, or prints a CLI error to stderr and exits
++with code 2. Import `simulate` from `dma_model` to call `simulate(case)` directly.
++The function preserves caller input and each call is independent.
++
++Descriptors issue in input order, stopping at the first blocked descriptor.
++Release times and dependencies gate admission. `queue_depth` counts both the
++running DMA and accepted DMA waiting for the single channel. Capacity becomes
++available only on completion. Compute has one unit and no waiting queue; it
++starts on admission and can overlap DMA.
++
++For `example.json`, each DMA lasts `1 + ceil(4 / 2) = 3` cycles:
++
++| Depth | ID | Admitted | Start | End |
++| --- | --- | ---: | ---: | ---: |
++| 1 | a | 0 | 0 | 3 |
++| 1 | b | 3 | 3 | 6 |
++| 1 | c | 3 | 3 | 5 |
++| 2 | a | 0 | 0 | 3 |
++| 2 | b | 0 | 3 | 6 |
++| 2 | c | 0 | 0 | 2 |
++
++Both depths finish at cycle 6, with memory `[1,2,3,4,1,2,3,4,1,2,3,4]`
++and checksums `{"c":10}`. Admission timestamps reveal backpressure even when
++final memory and total duration match. With `c.src=8` and `c.depends=["b"]`,
++compute runs from 6 to 8 and returns 10. With depth 2, `c.src=4`, `c.cycles=8`
++and no dependencies, compute runs from 0 to 8 and returns 0.
++
++At each event time, all completions commit before queued DMA starts and further
++issue occurs. DMA snapshots source bytes at start, including overlapping copies,
++and writes at completion. Compute snapshots its sum at start and publishes it
++at completion. Output contains exactly `events` (in input order, each with
++`id`, `admitted`, `start`, `end`), `memory`, `checksums`, and `total_cycles`.
++Empty descriptor lists finish at cycle 0.
++
++Run local verification with:
++
++```sh
++python -m unittest discover -s dev_tests -v
++python public_checks.py
++```
++
++This is an abstract deterministic scheduling model using integer cycles and
++byte-indexed memory. It does not model address mapping, DDR rows, caches, bus
++protocols, or hardware contention beyond the specified resources. It is not a
++cycle-accurate DDR simulator or a calibrated hardware performance predictor.
+--- a/dev_tests/test_dma_model.py
++++ b/dev_tests/test_dma_model.py
+@@ -0,0 +1,202 @@
++"""Hand-calculated checks of scheduling, memory timing, validation and CLI."""
++import copy
++import json
++from pathlib import Path
++import subprocess
++import sys
++import tempfile
++import unittest
++
++from dma_model import simulate
++
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++def example(depth=1):
++    return {
++        "config": {"queue_depth": depth, "bytes_per_cycle": 2, "setup_cycles": 1},
++        "memory": [1, 2, 3, 4] + [0] * 8,
++        "descriptors": [
++            {"id": "a", "kind": "dma", "src": 0, "dst": 4, "nbytes": 4},
++            {"id": "b", "kind": "dma", "src": 4, "dst": 8, "nbytes": 4},
++            {"id": "c", "kind": "compute", "src": 0, "nbytes": 4, "cycles": 2},
++        ],
++    }
++
++
++def event(ident, admitted, start, end):
++    return dict(id=ident, admitted=admitted, start=start, end=end)
++
++
++class SchedulingTests(unittest.TestCase):
++    def test_public_depths_and_exact_schema(self):
++        for depth, times in [(1, [(0, 0, 3), (3, 3, 6), (3, 3, 5)]),
++                             (2, [(0, 0, 3), (0, 3, 6), (0, 0, 2)])]:
++            with self.subTest(depth=depth):
++                self.assertEqual(simulate(example(depth)), {
++                    "events": [event(ident, *time) for ident, time in zip("abc", times)],
++                    "memory": [1, 2, 3, 4] * 3,
++                    "checksums": {"c": 10}, "total_cycles": 6,
++                })
++
++    def test_dependency_and_release_block_later_issue(self):
++        data = example(2)
++        data["descriptors"][1].update(depends=["a"], release=5)
++        data["descriptors"][2].update(src=8, depends=["b"])
++        result = simulate(data)
++        self.assertEqual(result["events"], [event("a", 0, 0, 3), event("b", 5, 5, 8),
++                                            event("c", 8, 8, 10)])
++        self.assertEqual(result["checksums"], {"c": 10})
++
++    def test_dependency_example(self):
++        data = example(2)
++        data["descriptors"][2].update(src=8, depends=["b"])
++        result = simulate(data)
++        self.assertEqual(result["events"][2], event("c", 6, 6, 8))
++        self.assertEqual(result["checksums"], {"c": 10})
++
++    def test_compute_snapshot_precedes_dma_write(self):
++        data = example(2)
++        data["descriptors"][2].update(src=4, cycles=8)
++        result = simulate(data)
++        self.assertEqual(result["events"][2], event("c", 0, 0, 8))
++        self.assertEqual(result["checksums"], {"c": 0})
++        self.assertEqual(result["total_cycles"], 8)
++
++    def test_compute_busy_blocks_later_dma(self):
++        data = example(2)
++        data["descriptors"] = [
++            {"id": "x", "kind": "compute", "src": 0, "nbytes": 1, "cycles": 5},
++            {"id": "y", "kind": "compute", "src": 1, "nbytes": 1, "cycles": 2},
++            data["descriptors"][0],
++        ]
++        result = simulate(data)
++        self.assertEqual(result["events"], [event("x", 0, 0, 5), event("y", 5, 5, 7),
++                                            event("a", 5, 5, 8)])
++        self.assertEqual(result["checksums"], {"x": 1, "y": 2})
++
++    def test_simultaneous_completions_before_queued_and_new_reads(self):
++        data = example(2)
++        a, b, c = data["descriptors"]
++        c.update(cycles=3)
++        data["descriptors"] = [a, b, c, {
++            "id": "d", "kind": "compute", "src": 4, "nbytes": 4, "cycles": 1,
++            "depends": ["a", "c"],
++        }]
++        result = simulate(data)
++        self.assertEqual(result["events"], [event("a", 0, 0, 3), event("b", 0, 3, 6),
++                                            event("c", 0, 0, 3), event("d", 3, 3, 4)])
++        self.assertEqual(result["checksums"], {"c": 10, "d": 10})
++        # b reads at cycle 3, after a writes, despite admission at cycle 0.
++        self.assertEqual(result["memory"], [1, 2, 3, 4] * 3)
++
++    def test_queue_counts_running_and_waiting_dma(self):
++        data = example(2)
++        a, b, c = data["descriptors"]
++        data["descriptors"] = [a, b, dict(a, id="d"), c]
++        self.assertEqual(simulate(data)["events"], [
++            event("a", 0, 0, 3), event("b", 0, 3, 6),
++            event("d", 3, 6, 9), event("c", 3, 3, 5),
++        ])
++
++    def test_overlapping_copy_uses_snapshot_and_integer_ceiling(self):
++        data = example()
++        data["memory"] = [1, 2, 3, 4, 5]
++        data["descriptors"] = [{"id": "a", "kind": "dma", "src": 0, "dst": 1, "nbytes": 3}]
++        result = simulate(data)
++        self.assertEqual(result["memory"], [1, 1, 2, 3, 5])
++        self.assertEqual(result["events"], [event("a", 0, 0, 3)])
++
++    def test_large_release_and_zero_setup(self):
++        data = example()
++        data["config"].update(setup_cycles=0, bytes_per_cycle=100)
++        data["descriptors"] = [dict(data["descriptors"][0], release=10**15)]
++        self.assertEqual(simulate(data)["events"], [event("a", 10**15, 10**15, 10**15 + 1)])
++
++    def test_empty_and_independent_calls(self):
++        data = example()
++        before = copy.deepcopy(data)
++        first = simulate(data)
++        self.assertEqual(data, before)
++        first["memory"][0] = 99
++        first["events"][0]["start"] = 99
++        self.assertEqual(simulate(data)["events"][0], event("a", 0, 0, 3))
++        self.assertEqual(simulate(data)["memory"][0], 1)
++        data.update(memory=[], descriptors=[])
++        self.assertEqual(simulate(data), dict(events=[], memory=[], checksums={}, total_cycles=0))
++
++
++class ValidationTests(unittest.TestCase):
++    def test_invalid_values(self):
++        mutations = [
++            ("config", key, value) for key, values in {
++                "queue_depth": [True, 0, -1, 1.0, None],
++                "bytes_per_cycle": [False, 0, -2, "2"],
++                "setup_cycles": [True, -1, 0.0],
++            }.items() for value in values
++        ] + [
++            ("job", key, value) for key, values in {
++                "id": ["", None, 1], "kind": ["other", None],
++                "src": [True, -1, 9, 0.0], "dst": [False, -1, 9],
++                "nbytes": [True, 0, -1, 13], "release": [False, -1, 1.0],
++                "depends": [None, "a", ["a"], ["c"], [1]],
++            }.items() for value in values
++        ]
++        for target, key, value in mutations:
++            with self.subTest(target=target, key=key, value=value):
++                data = example()
++                (data["config"] if target == "config" else data["descriptors"][0])[key] = value
++                with self.assertRaises(ValueError):
++                    simulate(data)
++        for value in [True, 0, -1, 1.0, None]:
++            data = example()
++            data["descriptors"][2]["cycles"] = value
++            with self.subTest(cycles=value), self.assertRaises(ValueError):
++                simulate(data)
++        for value in [True, False, -1, 256, 1.0, None]:
++            data = example()
++            data["memory"][0] = value
++            with self.subTest(byte=value), self.assertRaises(ValueError):
++                simulate(data)
++
++    def test_structure_and_duplicate_ids(self):
++        for data in [None, [], {}, dict(example(), config=[]),
++                     dict(example(), memory={}), dict(example(), descriptors={}),
++                     dict(example(), descriptors=[None])]:
++            with self.subTest(data=data), self.assertRaises(ValueError):
++                simulate(data)
++        data = example()
++        data["descriptors"][1]["id"] = "a"
++        with self.assertRaises(ValueError):
++            simulate(data)
++
++
++class CliTests(unittest.TestCase):
++    def test_success_and_invalid_input_exit_codes(self):
++        with tempfile.TemporaryDirectory() as directory:
++            path = Path(directory) / "input.json"
++            for content, code in [(json.dumps(example(2)), 0), ("{", 2),
++                                  (json.dumps(dict(example(), config={})), 2)]:
++                path.write_text(content, encoding="utf-8")
++                result = subprocess.run([sys.executable, str(ROOT / "dma_model.py"), str(path)],
++                                        capture_output=True, text=True)
++                self.assertEqual(result.returncode, code, result.stderr)
++                if code == 0:
++                    self.assertEqual(json.loads(result.stdout), simulate(example(2)))
++                    self.assertEqual(result.stderr, "")
++                else:
++                    self.assertEqual(result.stdout, "")
++                    self.assertIn("invalid input:", result.stderr)
++            path.unlink()
++            result = subprocess.run([sys.executable, str(ROOT / "dma_model.py"), str(path)],
++                                    capture_output=True, text=True)
++            self.assertEqual(result.returncode, 2)
++            self.assertEqual(result.stdout, "")
++            result = subprocess.run([sys.executable, str(ROOT / "dma_model.py")],
++                                    capture_output=True, text=True)
++            self.assertEqual(result.returncode, 2)
++
++
++if __name__ == "__main__":
++    unittest.main()

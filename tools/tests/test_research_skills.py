@@ -140,6 +140,7 @@ def test_runtime_allowlist_excludes_unrelated_files(tmp_path):
     assert "opc/new_dev_tool.py" not in manifest["files"]
     assert "opc/README.md" not in manifest["files"]
     assert "pyproject.toml" not in manifest["files"]
+    assert 'opc/core/results.py' in manifest['files']
     assert not any("tests" in Path(p).parts for p in manifest["files"])
     assert manifest["snapshot_sha256"] and manifest["source_commit"] is None
 
@@ -226,13 +227,56 @@ assert (root / '.opc/local/onboard/task-brief.md').read_text() == brief.read_tex
     initialize.verify(project / ".opc/runtime")
 
 
-def test_deployed_cli_refuses_unmetered_preparation(tmp_path, runtime):
+def test_deployed_cli_records_unknown_usage_without_limits(tmp_path, runtime):
     project = tmp_path / 'metered-project'
     project.mkdir()
     initialize.initialize(project, runtime)
     cli = project / '.opc/archa.py'
     help_result = subprocess.run([sys.executable, str(cli), 'onboard', '--help'], capture_output=True, text=True)
     assert help_result.returncode == 0 and '--prior-wall-seconds' in help_result.stdout
-    result = subprocess.run([sys.executable, str(cli), 'onboard', '-p', str(project)], capture_output=True, text=True)
-    assert result.returncode != 0 and 'accounting_unknown' in result.stdout
-    assert not (project / '.opc/project.json').exists()  # no drafting/model dispatch
+    subprocess.run(['git', 'init', str(project)], check=True, capture_output=True)
+    result = subprocess.run([sys.executable, str(cli), 'onboard', '-p', str(project), '--record-usage'], capture_output=True, text=True)
+    assert result.returncode == 1 and json.loads(result.stdout)['preparation'] == 'pending'
+    config = json.loads((project / '.opc/local/workers.json').read_text())
+    assert config['budget'] == {'max_tokens': None, 'max_wall_seconds': None}
+    assert (project / '.opc/project.json').exists()  # initialized without budget confirmation or model dispatch
+
+
+def test_explicit_runtime_upgrade_keeps_budget_contract_and_backup(tmp_path, runtime):
+    project = tmp_path / 'upgrade-project'
+    project.mkdir()
+    initialize.initialize(project, runtime)
+    control = project / '.opc'
+    (control / 'local').mkdir()
+    (control / 'local/ledger.sqlite3').write_bytes(b'preserve cumulative accounting')
+    (control / 'project.json').write_text('{"execution_enabled": false}')
+    previous = (control / 'runtime/manifest.json').read_bytes()
+    changed = runtime / 'opc/__init__.py'
+    changed.write_text(changed.read_text() + '\n# updated package\n')
+    manifest = json.loads((runtime / 'manifest.json').read_text())
+    manifest['files']['opc/__init__.py'] = initialize.digest(changed)
+    manifest['snapshot_sha256'] = 'new-package-for-test'
+    (runtime / 'manifest.json').write_text(json.dumps(manifest))
+    result = initialize.initialize(project, runtime, update=True)
+    backup = Path(result['runtime_backup'])
+    assert (backup / 'manifest.json').read_bytes() == previous
+    assert (control / 'local/ledger.sqlite3').read_bytes() == b'preserve cumulative accounting'
+    assert (control / 'project.json').read_text() == '{"execution_enabled": false}'
+    initialize.verify(control / 'runtime')
+    cli = subprocess.run([sys.executable, str(control / 'archa.py'), 'results', '--help'],
+                         capture_output=True, text=True)
+    assert cli.returncode == 0 and '--sync-run' in cli.stdout
+    assert initialize.initialize(project, runtime, update=True)['runtime_backup'] is None
+
+
+def test_runtime_upgrade_refuses_active_controller(tmp_path, runtime):
+    from opc.core.ledger import Ledger
+    project = tmp_path / 'active-project'
+    project.mkdir()
+    initialize.initialize(project, runtime)
+    ledger = Ledger(project / '.opc/local/ledger.sqlite3')
+    before = (project / '.opc/runtime/manifest.json').read_bytes()
+    with ledger.writer():
+        with pytest.raises(ValueError, match='active controller'):
+            initialize.upgrade_runtime(project / '.opc', runtime)
+    assert (project / '.opc/runtime/manifest.json').read_bytes() == before

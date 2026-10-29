@@ -1,0 +1,90 @@
+{
+  "run_id": "run-5fe6cf049c9e",
+  "task": "t-main",
+  "revision": "r0001",
+  "state": "closed",
+  "stop_reason": "budget_exhausted: max_tokens: crossed mid-attempt",
+  "result": "no_valid_candidate",
+  "champion_ref": "refs/heads/opc/t-main",
+  "champion": null,
+  "selected_version": "0dc2e28d25c64d1a010815b1eb05df19bd1c6521",
+  "working_version": "0dc2e28d25c64d1a010815b1eb05df19bd1c6521",
+  "baseline": "f483b1ce19ebc0a80aa34d2966f4d118a0ffbaac",
+  "baseline_metrics": null,
+  "champion_metrics": null,
+  "target_met": false,
+  "objective": null,
+  "objective_gain": null,
+  "outcomes": {
+    "abandoned": 1
+  },
+  "pending_conclusions": [
+    1
+  ],
+  "spent": {
+    "wall_seconds": 119.21766138076782,
+    "tokens": 206381,
+    "usd": 0,
+    "usd_known": false,
+    "search_attempts": 0,
+    "attempts": 1
+  },
+  "budget_left": {
+    "attempts": 3,
+    "wall_seconds": 780.8,
+    "tokens": -56381
+  },
+  "attempts": [
+    {
+      "run_id": "run-5fe6cf049c9e",
+      "attempt_no": 1,
+      "state": "decided",
+      "champion_before": "f483b1ce19ebc0a80aa34d2966f4d118a0ffbaac",
+      "focus": null,
+      "plan": {
+        "title": "Implement deterministic DMA backpressure and compute overlap",
+        "hypothesis": "An event-driven executor can implement the required admission, resource, and memory timing semantics. The depth example distinguishes real admission backpressure from implementations that merely reproduce final memory and total duration.",
+        "experiment_id": null,
+        "changes": "Implement all TASK.md semantics in dma_model.py while preserving simulate(case) and the JSON CLI, standard-library-only operation, validation, and caller-input immutability. Track an in-order issue cursor, a bounded FIFO counting running plus waiting DMA, one DMA channel, and one compute unit without a compute waiting queue. At each event time, commit all completions and release resources, start queued DMA, then issue repeatedly until the first blocked descriptor. Advance directly to the next relevant completion or release. Snapshot DMA data only at start and write at completion; snapshot compute sums at start and publish at completion. Preserve exact output fields and input event order. Add meaningful development checks for the public depth example, dependency and release blocking, compute-unit head-of-line blocking, simultaneous completion before new reads, queued DMA start-time snapshots, overlapping copies, empty input, validation including booleans, repeated-call independence, and CLI exit codes. Use independently calculated expectations. Document invocation, depth semantics and example timestamps, and abstract-model limitations in README.md. Run development checks and python public_checks.py, fix discovered issues, and request formal public gate evaluation. Modify only the authorized implementation, README, and development-test paths.",
+        "evaluate": true,
+        "base_attempt": null,
+        "conclusions": [],
+        "stop_reason": "",
+        "expected": "For the supplied example, depth 1 admits and starts c at cycle 3, whereas depth 2 admits and starts c at cycle 0; both finish all work at cycle 6 with identical final memory and checksum 10. With c depending on b and reading src=8, c runs from 6 to 8 and returns 10. With depth 2 and independent c reading src=4 for 8 cycles, its checksum is 0. Additional checks should distinguish start-time snapshots, completion ordering, and strict in-order admission.",
+        "falsifier": "Any mismatch with the specified timestamps, snapshots, output schema, validation, CLI behavior, or input independence demonstrates an implementation defect; execution failure without semantic observations leaves correctness unresolved.",
+        "exhausted": false
+      },
+      "patch_sha": "9ac7414efc6054dc49fee87e440cd810d1ecb4490773133e95d457e7f007d91d",
+      "files": [
+        "README.md",
+        "dev_tests/__pycache__/test_dma_model.cpython-312.pyc",
+        "dev_tests/test_dma_model.py",
+        "dma_model.py"
+      ],
+      "gates": null,
+      "metrics": null,
+      "outcome": "abandoned",
+      "reason": "budget: max_tokens: crossed mid-attempt",
+      "gain": 0.0,
+      "cost": {
+        "wall_seconds": 119.21766138076782,
+        "tokens": 206381,
+        "usd": null
+      },
+      "started_at": "2026-10-29T00:25:42+08:00",
+      "finished_at": "2026-10-29T00:27:41+08:00",
+      "parent": "f483b1ce19ebc0a80aa34d2966f4d118a0ffbaac",
+      "candidate": "0dc2e28d25c64d1a010815b1eb05df19bd1c6521",
+      "execution": {
+        "completed": true,
+        "summary": "Implemented deterministic DMA backpressure, compute overlap, start-time snapshots, and completion ordering. Added README and 13 development tests.\n\nVerified:\n- Depth 1 starts `c` at cycle 3; depth 2 starts it at 0.\n- Both finish at cycle 6 with checksum 10.\n- All 13 development tests and 4 public checks pass; diff checks pass.\n\nNo design deviations. Used `python3` because `python` is unavailable. Changes remain uncommitted within authorized paths.\n\nRequesting formal public gate evaluation; official evaluation was not run here."
+      },
+      "experiment": null,
+      "conclusion": null,
+      "comparison": null,
+      "recoverable_patch": true,
+      "base_attempt": null
+    }
+  ],
+  "champions": []
+}

@@ -64,10 +64,10 @@ def task_template(task_id: str, component_id: str) -> dict[str, Any]:
             "repeats": 1,
             "noise_k": 2.0,
         },
-        "budget": {"max_attempts": 20, "max_wall_seconds": 7200, "max_tokens": 2000000,
+        "budget": {"max_attempts": 20, "max_wall_seconds": None, "max_tokens": None,
                    "max_stagnation": 6, "max_consecutive_infra": 3},
-        "workers": {"expert": {"kind": "codex", "timeout_s": 900},
-                    "designer": {"kind": "codex", "timeout_s": 1800}},
+        "workers": {"expert": {"kind": "codex", "timeout_s": None},
+                    "designer": {"kind": "codex", "timeout_s": None}},
         "base_ref": "HEAD",
     }
 

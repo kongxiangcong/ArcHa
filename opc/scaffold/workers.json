@@ -1,6 +1,22 @@
 {
-  "expert": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
-  "designer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
-  "reviewer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
-  "onboard": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"}
+  "budget": {
+    "max_tokens": null,
+    "max_wall_seconds": null
+  },
+  "expert": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "medium"
+  },
+  "designer": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "medium"
+  },
+  "reviewer": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "medium"
+  },
+  "onboard": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "medium"
+  }
 }

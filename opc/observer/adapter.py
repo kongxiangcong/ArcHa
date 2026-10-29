@@ -70,6 +70,7 @@ class ObserverAdapter:
         self.project_key = 'p_' + digest(str(self.root))[:16]
         self.lock = threading.RLock()
         self.artifact_registry: dict[str, dict] = {}
+        self.results_sources: set[Path] = set()
         self.last_files: dict[str, tuple[Any, str]] = {}
         self.discovery_at = 0.0
         self.tasks: dict[str, dict] = {}
@@ -94,6 +95,13 @@ class ObserverAdapter:
         return (self.root / path).resolve() if not path.is_absolute() else path.resolve()
 
     def _allowed(self, path):
+        if Path(path).absolute() in self.results_sources:
+            from ..core.results import source_path
+            try:
+                if source_path(self.root, self.artifact_root, self.root / 'README.md', str(Path(path).absolute())) is None:
+                    return False
+            except (OSError, ValueError, RuntimeError):
+                return False
         resolved = Path(path).resolve()
         return any(resolved == root or root in resolved.parents for root in (self.root, self.artifact_root.resolve()))
 
@@ -141,6 +149,7 @@ class ObserverAdapter:
             mime = mimetypes.guess_type(str(p))[0] or ('text/plain' if p.suffix in ('.patch', '.jsonl', '.log') else 'application/octet-stream')
             text = mime.startswith('text/') or p.suffix in ('.json', '.jsonl', '.md', '.patch', '.svg', '.log')
             obj = dict(id=ident, kind=p.suffix.lstrip('.') or 'file', title=title or p.name,
+                       label=title or p.name,
                        display_path=self._display(p), content_origin='file', owner_refs=owners or [],
                        phase=phase, availability=availability, mime=mime, size_bytes=stat.st_size if stat else None,
                        digest=None, digest_algorithm=None, key_facts=[], can_preview=bool(text and stat),
@@ -352,6 +361,21 @@ class ObserverAdapter:
                    objective=mapping(raw.get('acceptance')).get('objective'), budget=raw.get('budget') if isinstance(raw.get('budget'), dict) else None,
                    brief_id=None, link_state='unresolved', contract_artifact_id=art['id'], meta=meta([self._source(art)]), _raw=raw)
         self.revisions[ident] = obj
+        obj['_results_artifacts'] = []
+        if raw.get('results_path'):
+            from ..core.results import snapshot
+            try:
+                material = snapshot(self.root, self.artifact_root, raw['results_path'])
+                obj['results_path'] = raw['results_path']
+                for message in material['issues']:
+                    obj['meta']['issues'].append(issue('results_source_missing', message, ident))
+                for source in material['sources']:
+                    source_path = Path(source['path'])
+                    artifact = self._register(source_path, phase='task', title='任务成果' if str(source_path) == material['entry'] else source_path.name)
+                    obj['_results_artifacts'].append(artifact['id'])
+                    self.results_sources.add(source_path.resolve())
+            except (OSError, ValueError, RuntimeError) as exc:
+                obj['meta']['issues'].append(issue('results_source_invalid', str(exc), ident))
         return obj
 
     def _link_revisions(self):
@@ -487,7 +511,9 @@ class ObserverAdapter:
             rows = [r for r in self.run_rows if any(rv['execution_task_id'] == r.get('task_id') and rv['revision'] == r.get('revision') for rv in revisions)]
             return self.envelope(dict(task=self._public(task), briefs=[self.briefs[b['id']] for b in task['briefs']],
                                       revisions=[self._public(r) for r in revisions], runs=[self._run_ref(r) for r in rows],
-                                      artifacts=[self.artifact_registry[a]['dto'] for a in (task.get('task_artifact_id'), task.get('map_artifact_id')) if a in self.artifact_registry]))
+                                      artifacts=[self.artifact_registry[a]['dto'] for a in dict.fromkeys(
+                                          [task.get('task_artifact_id'), task.get('map_artifact_id')] +
+                                          [a for r in revisions for a in r.get('_results_artifacts', [])]) if a in self.artifact_registry]))
 
     def task_revision(self, ident):
         with self.lock:
@@ -498,7 +524,7 @@ class ObserverAdapter:
                 raise ObserverError(404, 'not_found', '未知合同版本')
             rows = [r for r in (self._db()['runs'] or self.run_rows) if r.get('task_id') == revision['execution_task_id'] and r.get('revision') == revision['revision']]
             return self.envelope(dict(revision=self._public(revision), runs=[self._run_ref(r) for r in rows],
-                                      artifacts=[self.artifact_registry[revision['contract_artifact_id']]['dto']]))
+                                      artifacts=[self.artifact_registry[a]['dto'] for a in [revision['contract_artifact_id']] + revision.get('_results_artifacts', [])]))
 
     def _find_run(self, ident):
         try:
@@ -962,18 +988,29 @@ class ObserverAdapter:
 
     def _markdown_links(self, path, text):
         from urllib.parse import unquote, urlsplit
+        from ..core.results import links
         result = {}
-        for href in re.findall(r'\[[^\]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)', text):
+        for href in links(text):
             parts = urlsplit(href)
-            if parts.scheme or parts.netloc or not parts.path:
+            local_absolute = Path(unquote(href)).is_absolute()
+            if (parts.scheme and not local_absolute) or parts.netloc or not parts.path:
                 continue
-            candidate = (path.parent / unquote(parts.path)).absolute()
+            candidate = (path.parent / unquote(href.split('#', 1)[0] if parts.scheme and local_absolute else parts.path)).absolute()
             resolved = candidate.resolve()
             task = next((t for t in self.tasks.values() if t.get('_path') == resolved), None)
             if task:
                 result[href] = dict(kind='task', id=task['id'])
                 continue
             existing = next((v['dto'] for v in self.artifact_registry.values() if v.get('path') and v['path'].resolve() == resolved and not v.get('call_owner')), None)
+            if existing is None and path.resolve() in self.results_sources:
+                from ..core.results import source_path
+                try:
+                    approved = source_path(self.root, self.artifact_root, path, href)
+                    if approved is not None and approved.is_file():
+                        existing = self._register(approved, phase='task')
+                        self.results_sources.add(approved)
+                except (OSError, ValueError, RuntimeError):
+                    pass
             evidence_root = self.root / '.opc/research/tasks'
             relative_parts = ()
             try:
@@ -1041,7 +1078,7 @@ class ObserverAdapter:
                     value = parsed(raw.decode('utf-8'), {})
                     if not isinstance(value, dict):
                         raise ObserverError(503, 'source_unsupported', '合同配置不是可读取的对象')
-                    allowed = ('task_id', 'revision', 'component', 'goal', 'direction', 'requirements', 'acceptance', 'budget', 'base_ref')
+                    allowed = ('task_id', 'revision', 'component', 'goal', 'direction', 'requirements', 'acceptance', 'budget', 'base_ref', 'results_path')
                     return json.dumps({k: value[k] for k in allowed if k in value}, ensure_ascii=False, indent=2).encode()
                 return raw
             except (OSError, UnicodeError):

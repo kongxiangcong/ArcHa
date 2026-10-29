@@ -29,7 +29,7 @@ from ..domain import DomainAdapter, Evaluation, bounded_data, experimental_data,
 from . import accept as acceptance
 from .config import Bindings, ComponentConfig, ProjectConfig, TaskSpec, WorkerSpec
 from .ledger import Ledger
-from .worker_config import load_worker_config, worker_options
+from .worker_config import load_worker_config, worker_options, load_budget_config
 from .model import (BudgetExhausted, Cost, GateResult, Measurements, OPCError, Outcome, Verdict,
                     write_json, write_text)
 from .workspace import (Workspaces, apply_patch, cas_update_ref, commit_tree, dirty_paths, git,
@@ -60,8 +60,14 @@ class Engine:
         if self.preparation:
             limits = self.ledger.events(self.preparation, "preparation_budget")
             if limits:
-                self.task.budget.max_tokens = min(self.task.budget.max_tokens or limits[0]["body"]["tokens"], limits[0]["body"]["tokens"])
-                self.task.budget.max_wall_seconds = min(self.task.budget.max_wall_seconds, limits[0]["body"]["wall_seconds"])
+                local_limits = load_budget_config(self.root)
+                for field, key in (("max_tokens", "tokens"), ("max_wall_seconds", "wall_seconds")):
+                    if field in local_limits:
+                        continue
+                    prior = limits[-1]["body"].get(key)
+                    current = getattr(self.task.budget, field)
+                    if prior is not None:
+                        setattr(self.task.budget, field, min(current, prior) if current is not None else prior)
         self.log = log
         self.run_id: str | None = None
         self._domain: DomainAdapter | None = None
@@ -101,7 +107,7 @@ class Engine:
         if self.preparation:
             events = self.ledger.events(self.preparation, "preparation")
             receipt = events[-1]["body"] if events else {}
-            if self.ledger.unresolved_accounting(self.preparation):
+            if self.accounting_required() and self.ledger.unresolved_accounting(self.preparation):
                 problems.append("preparation accounting incomplete; no new dispatch")
             if receipt.get("state") != "ready":
                 problems.append("preparation not ready: " + receipt.get("reason", "unmetered draft"))
@@ -421,10 +427,14 @@ class Engine:
         t["attempts"] = len(attempts)
         return t
 
+    def accounting_required(self) -> bool:
+        return self.task.budget.max_tokens is not None or self.task.budget.max_usd is not None
+
     def budget_left(self) -> dict[str, Any]:
         b, s = self.task.budget, self.spent()
         left = {"attempts": b.max_attempts - s["search_attempts"],
-                "wall_seconds": round(b.max_wall_seconds - s["wall_seconds"], 1)}
+                "wall_seconds": (round(b.max_wall_seconds - s["wall_seconds"], 1)
+                                 if b.max_wall_seconds is not None else None)}
         if b.max_tokens is not None:
             left["tokens"] = b.max_tokens - s["tokens"]
         if b.max_usd is not None:
@@ -447,7 +457,7 @@ class Engine:
                 "WHERE r.task_id=? AND c.role IN ('evaluator','reviewer')", (self.task.task_id,)).fetchone()
             est_wall += reserve[0] or 0
             est_tok += reserve[1] or 0
-        if s["wall_seconds"] + est_wall > b.max_wall_seconds:
+        if b.max_wall_seconds is not None and s["wall_seconds"] + est_wall > b.max_wall_seconds:
             raise BudgetExhausted("max_wall_seconds", "spent %.0fs, next ~%.0fs, cap %.0fs"
                                   % (s["wall_seconds"], est_wall, b.max_wall_seconds))
         if b.max_tokens is not None and s["tokens"] + est_tok > b.max_tokens:
@@ -463,7 +473,7 @@ class Engine:
         """Between steps of one attempt: stop as soon as a cap is crossed."""
         b, s = self.task.budget, self.spent()
         if self.delivery_accounting():
-            if any(self.ledger.unresolved_accounting(r["run_id"]) for r in self.ledger.runs() if r["task_id"] == self.task.task_id):
+            if self.accounting_required() and any(self.ledger.unresolved_accounting(r["run_id"]) for r in self.ledger.runs() if r["task_id"] == self.task.task_id):
                 raise OPCError("usage accounting incomplete; no delivery dispatch")
             if self.ledger.control(self.run_id) in ("pause", "stop"):
                 raise OPCError("user paused/stopped delivery")
@@ -473,9 +483,9 @@ class Engine:
             receipts = self.ledger.events(self.preparation, "preparation")
             if not receipts or receipts[-1]["body"].get("state") != "ready":
                 raise OPCError("preparation is not ready; no formal dispatch")
-        if self.preparation and self.ledger.unresolved_accounting(self.preparation):
+        if self.preparation and self.accounting_required() and self.ledger.unresolved_accounting(self.preparation):
             raise OPCError("usage accounting incomplete; no new dispatch")
-        if s["wall_seconds"] >= b.max_wall_seconds:
+        if b.max_wall_seconds is not None and s["wall_seconds"] >= b.max_wall_seconds:
             raise BudgetExhausted("max_wall_seconds", "crossed mid-attempt")
         if b.max_tokens is not None and s["tokens"] >= b.max_tokens:
             raise BudgetExhausted("max_tokens", "crossed mid-attempt")
@@ -572,6 +582,7 @@ class Engine:
 
     def context(self, n: int, champ: tuple[str, Measurements], focus: str | None,
                 tree: Path) -> dict[str, Any]:
+        self.sync_results()
         attempts = self.attempt_records()
         champions = self.ledger.champions(self.run_id)
         decided = [a for a in attempts if a["outcome"] and a["plan"]]
@@ -610,7 +621,7 @@ class Engine:
             # No gate verdict text, worker errors or raw logs in expert context.
             history.append({
                 "attempt": a["attempt_no"],
-                **{k: plan.get(k) for k in ("title", "hypothesis", "changes", "expected", "falsifier")},
+                **{k: plan.get(k) for k in ("title", "hypothesis", "changes", "expected", "falsifier", "experiment_id")},
                 "plan_params": plan.get("params"), "parent": a["parent"],
                 "candidate": a["candidate"], "outcome": a["outcome"],
                 "execution": bounded_data(a["execution"]),
@@ -644,6 +655,7 @@ class Engine:
                 background[rel] = {"excerpt": path.read_text(encoding="utf-8")[:1500], "source": str(self.root / rel)}
         return {
             "attempt": n, "focus": focus,
+            **({"task_results": self.results_context()} if self.task.raw.get("results_path") else {}),
             "task": {"goal": self.task.goal,
                      "direction": directions[-1] if directions else run["direction"],
                      "requirements": self.task.requirements,
@@ -672,6 +684,24 @@ class Engine:
                              and a["outcome"] != Outcome.INFRA.value],
         }
 
+    def results_context(self) -> dict:
+        from .results import snapshot
+        try:
+            return snapshot(self.root, self.bindings.artifact_root, self.task.raw['results_path'])
+        except (OSError, ValueError, OPCError) as exc:
+            return {'entry': self.task.raw.get('results_path'), 'sources': [], 'issues': [str(exc)]}
+
+    def sync_results(self) -> str | None:
+        from .results import sync_engine
+        try:
+            sync_engine(self)
+        except (OSError, ValueError, OPCError) as exc:
+            self._results_error = str(exc)
+            self.log('results registration pending: ' + str(exc))
+            return str(exc)
+        self._results_error = None
+        return None
+
     def save_conclusions(self, output: dict[str, Any], ctx: dict[str, Any], n: int) -> str | None:
         pending = {a["attempt_no"] for a in self.attempt_records()
                    if a["plan"] and a["outcome"] and a["conclusion"] is None}
@@ -688,6 +718,8 @@ class Engine:
         for row in conclusions:
             self.ledger.event(self.run_id, "conclusion", row["attempt"],
                               text=row["conclusion"], reviewed_by_attempt=n)
+        if conclusions:
+            self.sync_results()
         return None
 
     def save_candidate(self, ws: Workspaces, n: int, parent: str, patch: str, title: str) -> str:
@@ -755,10 +787,11 @@ class Engine:
             if call is not None and (self.preparation or self.delivery_accounting()):
                 kind = self.task.expert.kind if role == "expert" else (self.task.designer or self.task.expert).kind
                 if kind in ("codex", "dsh") and not call.extra.get("usage_complete", False):
-                    call.ok = False
-                    call.error = "usage unavailable; stop dispatch until actual accounting is reconciled"
-                    call.extra["infra"] = True
-                    self.ledger.event(self.preparation or self.run_id, "accounting_unknown", None, reason=call.error)
+                    self.ledger.event(self.preparation or self.run_id, "accounting_unknown", None, reason="usage unavailable")
+                    if self.accounting_required():
+                        call.ok = False
+                        call.error = "usage unavailable; stop dispatch until actual accounting is reconciled"
+                        call.extra["infra"] = True
             total = total.add(cost)
             self.ledger.charge(self.run_id, n, role, cost)
             if call is not None:
@@ -773,6 +806,7 @@ class Engine:
                                                 "cost": total.as_dict(),
                                                 "champion_before": champ[0]})
             self.log("a%d %-18s %s" % (n, outcome.value, " ".join(reason.split())[:140]))
+            self.sync_results()
             return outcome, None
 
         try:
@@ -819,6 +853,7 @@ class Engine:
                     why = "plan names non-editable paths: %s" % ", ".join(outside)
             write_json(adir / "plan.json", plan)
             self.ledger.update_attempt(self.run_id, n, "planned", plan=plan)
+            self.sync_results()
             if why:
                 return finish(Outcome.WORKER_FAILED, "plan check: " + why)
             self.hard_check()
@@ -951,7 +986,7 @@ class Engine:
             raise OPCError("retry promotion reviewer only; no candidate development needed")
         # Every repair uses task-wide accounting, including projects without preparation.
         used = self.ledger.task_totals(self.task.task_id)
-        if used["wall_seconds"] >= self.task.budget.max_wall_seconds or (
+        if (self.task.budget.max_wall_seconds is not None and used["wall_seconds"] >= self.task.budget.max_wall_seconds) or (
             self.task.budget.max_tokens is not None and used["tokens"] >= self.task.budget.max_tokens):
             raise OPCError("task budget exhausted; no repair dispatch")
         self.hard_check()
@@ -1039,6 +1074,9 @@ class Engine:
             if best and acceptance.target_met(self.task.acceptance, best["metrics"]["values"]):
                 business = "target_met"
         return {"run_id": self.run_id, "task": self.task.task_id, "revision": self.task.revision,
+                **({'results_path': self.task.raw['results_path'],
+                    'results_registration_error': getattr(self, '_results_error', None)}
+                   if self.task.raw.get('results_path') else {}),
                 "state": run["state"], "stop_reason": run["stop_reason"], "result": business,
                 "champion_ref": self.ref, "champion": best["commit_sha"] if best else None,
                 "selected_version": self.selected_commit(),
@@ -1053,9 +1091,10 @@ class Engine:
                                         if a["plan"] and a["outcome"] and a["conclusion"] is None],
                 "spent": self.spent(), "budget_left": self.budget_left()}
 
-    def write_views(self) -> None:
+    def write_views(self) -> str | None:
         if not self.run_id:
             return
+        results_error = self.sync_results()
         s = self.summary()
         views = self.artifact_dir() / "views"
         write_json(views / "report.json", {**s, "attempts": self.attempt_records(),
@@ -1086,3 +1125,4 @@ class Engine:
                                (a["attempt_no"], a["conclusion"] or "pending review"))
         write_text(views / "STATE.md", "\n".join(lines) + "\n")
         write_text(views / "LESSONS.md", "\n".join(lessons) + "\n")
+        return results_error

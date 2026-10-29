@@ -186,12 +186,11 @@ def test_token_budget_stops_before_overspending(make_project, engine_for, fake_d
 
 
 # -------------------------------------------------------------- the contract
-def test_dsh_task_requires_token_cap(tmp_path):
+def test_dsh_task_defaults_to_unlimited_tokens(tmp_path):
     t = dsh_task("dsh")
     t["budget"].pop("max_tokens")
     write(tmp_path / ".opc/tasks/t-toy/revisions/r0001/task.json", json.dumps(t))
-    with pytest.raises(OPCError, match="max_tokens"):
-        TaskSpec.load(tmp_path, "t-toy")
+    assert TaskSpec.load(tmp_path, "t-toy").budget.max_tokens is None
 
 
 def test_dsh_expert_needs_a_designer(tmp_path):

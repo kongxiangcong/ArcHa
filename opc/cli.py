@@ -135,6 +135,36 @@ def cmd_promote(a) -> int:
     return 0 if rep["promotable"] else 1
 
 
+def cmd_results(a) -> int:
+    from .core.config import TaskSpec, Bindings, ProjectConfig
+    from .core.results import register, external_batch, snapshot, writer
+    root = Path(a.project).resolve()
+    task = TaskSpec.load(root, a.task, a.revision)
+    value = task.raw.get('results_path')
+    if not value:
+        raise OPCError('task has no results_path; bind it in a new revision before enabling results')
+    bindings = Bindings.load(ProjectConfig.load(root))
+    if a.batch:
+        with writer(root):
+            external_batch(root, bindings.artifact_root, value, a.batch, a.experiment_id,
+                           a.question, a.status, {k:getattr(a, k) for k in ('plan', 'evidence', 'analysis', 'review')})
+    elif a.initialize:
+        with writer(root):
+            register(root, value, [], task.goal)
+    elif a.sync_run:
+        e = _engine(a)
+        run = e.ledger.run(a.sync_run)
+        if not run or run['task_id'] != a.task or run['revision'] != e.task.revision:
+            raise OPCError('sync-run must belong to the selected task revision')
+        e.run_id = a.sync_run
+        with e.ledger.writer():
+            error = e.write_views()
+            if error:
+                raise OPCError('results registration pending: ' + error)
+    _print(snapshot(root, bindings.artifact_root, value))
+    return 0
+
+
 def cmd_brief_check(a) -> int:
     from .scaffold.brief import load_brief
     report, _ = load_brief(Path(a.project), a.brief)
@@ -176,13 +206,23 @@ def main(argv=None) -> int:
     p.add_argument("--reconcile-usage", help="evidence-backed JSON missing-usage receipt; record only, no worker dispatch")
     p.add_argument("--record-usage", action="store_true", help="update cumulative host usage without dispatching workers")
     p.add_argument("--task", default="t-main")
-    p.add_argument("--max-tokens", type=int)
-    p.add_argument("--max-wall-seconds", type=float)
+    p.add_argument("--max-tokens", type=int, help="explicit token cap, saved in local workers.json; default unlimited")
+    p.add_argument("--max-wall-seconds", type=float, help="explicit time cap, saved in local workers.json; default unlimited")
     p.add_argument("--prior-wall-seconds", type=float)
     p.add_argument("--prior-tokens", type=int, help="cumulative host/nested input+output including cached input, excluding metered worker receipts")
     p = add("brief-check", cmd_brief_check, task=False)
     p.add_argument("--brief", required=True)
     add("check", cmd_check)
+    p = add("results", cmd_results)
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument('--initialize', action='store_true', help='create minimal entry if absent')
+    mode.add_argument('--sync-run', help='retry registration from existing run; never execute experiments')
+    mode.add_argument('--batch', help='stable external batch ID; no synthetic run')
+    p.add_argument('--experiment-id')
+    p.add_argument('--question', default='')
+    p.add_argument('--status', choices=['planned', 'running', 'completed', 'failed', 'aborted', 'cached'])
+    for key in ('plan', 'evidence', 'analysis', 'review'):
+        p.add_argument('--' + key, help='reference relative to results README; preserve original location')
     add("preflight", cmd_preflight)
     p = add("run", cmd_run)
     p.add_argument("--direction", default=None)

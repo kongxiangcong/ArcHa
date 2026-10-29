@@ -19,9 +19,15 @@ python3 <project>/.opc/archa.py brief-check -p <project> --brief <brief>
 
 ## 准备执行
 
-用户要求启动本技能即授权在已确定的合同范围、预算内准备和运行，无需重复询问是否启动。先核对 `.opc/README.md` 的 Open items、交接记录及实际合同；预算未定或可靠用量记录不可得时停止新增派发；必要评价器接入、关键验证或设备能力未知属于范围内准备待办，先用下述 prepare 路径自主建立与验证，不直接转交用户。不得编造指标或扩大范围。
+若合同有 `results_path`，先执行 `results -p <project> --task <task-id> --revision <revision>` 阅读当前成果、来源与缺项；入口不存在时加 `--initialize` 建最小模板。后续接续沿用同一入口。原生 run 自动登记执行事实；主流程在已有解释步骤更新 README 人工区和所引用 specs：主张、适用条件、证据、未知项、下一步，明确待审核或被替代的结论。保持自动登记区完整。
 
-读取 `status -p <project> --task <task-id>`。已有控制器运行时只跟踪状态，不启动第二个控制器。相同 revision 的 paused/blocked run 在原因解决后可用普通 run 恢复；closed run 默认报告已有结果，不自动用 `--new-run` 重置预算；已登记失败终验的范围内修复使用下文 --repair-promotion，属于同一授权任务。用户明确要求新一轮且预算已确定时才使用 `--new-run`；合同变更也需要新 run，只有明确从上次冠军继续时才传 `--base <冠军提交>`。
+主会话自行执行批次时，在执行前与执行后调用同一个 `results --batch <稳定批次ID> --experiment-id <稳定问题ID>` 入口，用 `--plan/--evidence/--analysis/--review` 引用原位置，路径相对成果 README。按事实使用 `--status planned|running|completed|failed|aborted|cached`；已有批次 ID 可复用，外部批次没有 run。执行前记录问题、对照、竞争预测与判定方式，结果不同于预期或证据不足均可正常登记。缓存仅表示历史证据。
+
+登记失败后用 `results --sync-run <run-id>` 重建引擎登记，外部批次重发相同登记命令；两者均不重新实验。变更累计结论时保留原件及旧版本，说明变化原因，并使旧审核继续仅覆盖旧对象；引用具体 promotion/report.json，不能把 run 通过当成逐条科学主张已审核。通过现有研究解释流程完成这些更新，无需为了收尾另派模型或 reviewer。
+
+用户要求启动本技能即授权在已确定的合同范围、预算内准备和运行，无需重复询问是否启动。先核对 `.opc/README.md` 的 Open items、交接记录及实际合同；未设置 token/时间预算时按无上限继续；必要评价器接入、关键验证或设备能力未知属于范围内准备待办，先用下述 prepare 路径自主建立与验证，不直接转交用户。不得编造指标或扩大范围。
+
+读取 `status -p <project> --task <task-id>`。已有控制器运行时只跟踪状态，不启动第二个控制器。相同 revision 的 paused/blocked run 在原因解决后可用普通 run 恢复；closed run 默认报告已有结果，不自动用 `--new-run` 重置预算；已登记失败终验的范围内修复使用下文 --repair-promotion，属于同一授权任务。用户明确要求新一轮时才使用 `--new-run`；合同变更也需要新 run，只有明确从上次冠军继续时才传 `--base <冠军提交>`。
 
 首次执行准备时打开 `.opc/project.json` 的 `execution_enabled`，然后按顺序完成：
 
@@ -45,12 +51,15 @@ python3 <project>/.opc/archa.py run -p <project> --task <task-id> --revision <re
 
 ## 自主准备与冻结
 
-发现准备待办时使用已有 onboard 命令的 `--prepare --task <task-id> --brief <brief> --max-tokens <授权总额> --max-wall-seconds <授权秒数> --prior-wall-seconds <累计主流程及外部嵌套秒数> --prior-tokens <累计主流程及外部嵌套用量>`。总量包含 cached input，不能填猜测的 0；正常 worker 与只读 reviewer 由 ledger 自动记账，不重复计入 prior-tokens。未知用量停止新增派发。准备与正式 run 共用同一授权总额，不能新建 run 重置。
+预算与模型统一配置在 `.opc/local/workers.json` 的 `budget` 对象：`max_tokens`、`max_wall_seconds` 默认 `null`（无上限），可分别设置。仅用户明确给出相应上限时写入数值；保留已有明确配置，不从模板、历史实验或 agent 估算生成限制，不为预算停下来提问。正常推进已授权工作，持续记录实际用量；无上限时缺失计量只标为 unknown，不阻塞执行。显式 token 上限要求可靠累计 token，显式时间上限要求可靠累计时间；无法自主恢复必要计量时报告实际阻塞。保留用户 pause/stop、真实外部权限和冻结验收边界。
+
+
+发现准备待办时使用已有 onboard 命令的 `--prepare --task <task-id> --brief <brief>`。有可靠计量时附加 --prior-tokens / --prior-wall-seconds 更新累计主流程用量（包含 cached input），不重复计算 ledger 已记录的 worker/reviewer。无记录时保留 unknown，不填猜测的 0。显式上限下准备与正式 run 共用累计消耗，不能新建 run 重置。
 准备 agent 可在 .opc 内完成必要评价器、关键失败路径与原件采集接入，进行授权的有界设备能力探测；不自动开展正式手机实验。未探测不是外部阻塞，失败须保留命令、权限错误与原始回执。pending 表示 agent 继续准备；ready 只表示必要接入检查完成，正式实验尚未开始；external_blocked 必须给出观测证据、缺失外部条件、责任人与下一步。
 准备默认不调用 reviewer；合同 preparation_review=true 时进行针对性独立审核。当前任务及实际共享评价依赖摘要在 ledger 中冻结。提交被审文件，check/preflight 通过且用户允许正式执行才进入 run。“本步只准备”时到此结束，不能自动启动设备实验。产品未实现的功能失败是未完成基线，不能变造评分过门。
 已有正式 run 时不原地改冻结合同/评价器：保留旧 revision/run，准备新 revision 并重新审阅冻结；预算账本沿用。旧部署 runtime/全局技能不会自动更新，先核对入口 --help 是否支持 --prepare，不以仓库源码代替已安装行为。
 
-每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用已有冻结回执。无法取得可靠累计量时停止后续模型派发。
+每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用已有冻结回执。缺失计量按上述预算策略处理；无上限时直接继续。
 
 
 ## 自动终验与修复消费顺序
@@ -60,7 +69,7 @@ python3 <project>/.opc/archa.py run -p <project> --task <task-id> --revision <re
 1. 普通可修复 findings：用 `run ... --repair-promotion <report_dir>/report.json --deliver` 从失败报告的 selected commit 续接，沿用同 task 累计预算，不重启旧 run、不创建新 task。具体 findings 进入新 run direction。
 2. 仅 reviewer 不可用/输出格式错误：用 `promote ... --source-run <run-id> --review <configured-provider>` 重试审核，不调用 designer。沿用 max_consecutive_infra 和总预算；达到限制停止并报告未完成。
 3. 若修复后 selected commit 未变化且 findings 相同，不再次修复或重审；仅具体修复、外部状态变化或用户确认新标准后继续。
-4. 用户 pause/stop、预算耗尽或 accounting_unknown 时立即停止新增派发。用户仅要求准备时不进入本流程。
+4. 用户 pause/stop、显式预算耗尽或显式 token 限制下 accounting_unknown 时停止新增派发。用户仅要求准备时不进入本流程。
 5. scope/evaluator 变化需要明确的新 revision；验收含义变更须用户明确确认。所有终验命令默认不传 --apply。
 
 

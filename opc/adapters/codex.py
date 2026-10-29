@@ -74,7 +74,9 @@ class CodexWorker:
             raise OPCError("codex uses its CLI provider configuration; provider is only for dsh")
         self.profile = options.get("profile")
         self.codex_home = options.get("codex_home") or os.environ.get("OPC_CODEX_HOME")
-        self.timeout = float(options.get("timeout_s", 1800))
+        self.timeout = options.get("timeout_s")
+        if self.timeout is not None:
+            self.timeout = float(self.timeout)
         self.extra = list(options.get("extra_args") or [])
         self.binary = options.get("binary") or os.environ.get("OPC_CODEX_BIN")
         if not self.binary:

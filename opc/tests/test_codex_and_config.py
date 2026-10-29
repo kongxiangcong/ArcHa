@@ -261,12 +261,11 @@ def test_init_templates_parse_once_todos_are_filled(tmp_path):
         init(tmp_path, "p-x", "X", "c-main", "t-main", apply=True)
 
 
-def test_codex_task_requires_token_cap(tmp_path):
+def test_codex_task_defaults_to_unlimited_tokens(tmp_path):
     t = codex_task("codex")
     t["budget"].pop("max_tokens")
     _write(tmp_path, tsk=t)
-    with pytest.raises(OPCError, match="max_tokens"):
-        TaskSpec.load(tmp_path, "t-toy")
+    assert TaskSpec.load(tmp_path, "t-toy").budget.max_tokens is None
 
 
 def test_frozen_wins_over_editable_glob(tmp_path):
