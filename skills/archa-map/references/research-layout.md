@@ -5,16 +5,19 @@
   archa.py                         项目内 CLI；python3 .opc/archa.py --help
   runtime/                         ArcHa 代码、许可证、来源及逐文件摘要
   research/
-    research-map.md                自由结构地图 + 唯一任务清单
-    discussion.md                  用户决定、未决问题、当前焦点和返回点
-    tasks/
-      r01-input-flow/
-        task.md                    第一阶段的方向占位
-        task-brief.md              第二阶段依据任务与证据产生
-        evidence/                  第二阶段产生，保存证据和有限结论
+    index.md                       名称、范围、地图链接；仅导航
+    topics/
+      dma-scheduling/
+        research-map.md            本专题地图与任务清单
+        discussion.md              本专题讨论
+        tasks/
+          r01-baseline/
+            task.md                链接 ../../research-map.md
+            task-brief.md          archa-task 生成
+            evidence/              按需创建
 ```
 
-`research/tasks/` 是研究讨论目录；`.opc/tasks/` 是执行合同目录，两者通过简报 Source 关联，不混用。
+`research/topics/<topic>/tasks/` 是研究讨论目录；`.opc/tasks/` 是执行合同目录，两者通过简报 Source 关联，不混用。
 
 需要持续研究成果时，task 合同的可选 `results_path` 指向稳定 Markdown 入口。项目已有 workloads/specs/index 均保留原位置，入口用相对链接组织计划、批次、累计结论和审核。`opc results` 与引擎共用登记逻辑；运行事实以 ledger 为准，README 自动区只做投影，人工区保存摘要、条件与下一步。具体目录由项目确定，不把领域路径写进 runtime。
 
@@ -34,7 +37,7 @@
 
 推荐 R01，因为 R02 需要知道实际输入消费位置。
 
-`$archa-task /absolute/project/.opc/research/research-map.md`
+`$archa-task /absolute/project/.opc/research/topics/dma-scheduling/tasks/r01-input-flow/`
 ```
 
 状态只有四种：
@@ -51,3 +54,5 @@
 ## 修订
 
 地图记录日期和重大方向变更。新证据推翻前提时，链接证据说明影响，把受影响任务取消勾选改回 `active` 或 `parked`，若已有简报，将其标为 `Status: draft` 并记录修订原因；正文修订由 archa-task 记录新大纲与依据后生成；保留历史版本和证据。执行中的合同变更交由独立 revision/run 流程处理。
+
+同一专题可含多条技术路线，R01 等编号只在专题内唯一。不同专题同编号不共享合同、预算、成果或历史。共享材料显式引用原路径。旧 research-map.md、discussion.md、tasks/ 原位保留。新专题重名追加序号，标题调整不改目录。

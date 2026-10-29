@@ -292,3 +292,30 @@ def test_preparation_review_retry_does_not_repeat_development(make_project, monk
     assert onboard(root, 'codex', **kw)['preparation'] == 'pending'
     assert onboard(root, 'codex', **kw)['ok']
     assert calls == ['onboard', 'reviewer', 'reviewer']
+
+
+def test_preparation_candidate_is_not_reused_for_changed_brief(make_project, monkeypatch):
+    from opc.adapters.worker import WorkerCall
+    from opc.tests.conftest import task
+    from opc.tests.test_brief import brief_project
+    root = make_project(tsk=task(preparation_review=True))
+    brief_project(root)
+    brief = root / 'task-brief.md'
+    calls = []
+    def worker(self, role, prompt, tree, log, sandbox, schema):
+        calls.append(role)
+        log.mkdir(parents=True)
+        if role == 'onboard':
+            assert 'Target task ID: t-toy.' in prompt
+            assert brief.read_text() in prompt
+            (log / 'checks.txt').write_text('focused checks')
+            reply = dict(state='ready', evidence=[(log / 'checks.txt').relative_to(root).as_posix()])
+        else:
+            reply = dict(verdict='reject')
+        return WorkerCall(role, True, Cost(0, 0, None), extra={'usage_complete': True}), json.dumps(reply)
+    monkeypatch.setattr('opc.adapters.codex.CodexWorker._run', worker)
+    kw = dict(task_id='t-toy', brief=brief, prior_tokens=0, prior_wall_seconds=0)
+    assert onboard(root, 'codex', **kw)['preparation'] == 'pending'
+    brief.write_text(brief.read_text() + '\nNew evidence changes the brief.\n')
+    assert onboard(root, 'codex', **kw)['preparation'] == 'pending'
+    assert calls == ['onboard', 'reviewer', 'onboard', 'reviewer']

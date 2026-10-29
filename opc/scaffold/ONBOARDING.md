@@ -316,3 +316,7 @@ Codex 状态目录语义参考：[OpenAI environment variables](https://learn.ch
 准备默认仅执行与本次接入改动对应的必要检查，不固定建设全套负控或通用监控工具。ready 表示必要接入完成，不代表研究结论成立。合同显式设置 `preparation_review: true` 时保留独立准备审核；旧 ready 回执继续有效。冻结仅覆盖当前 task、component 及 evaluator_files（显式共享依赖也在这些 glob 中登记）。
 
 默认按用户任务与证据自主形成简报及合同，不为大纲确认、缺省预算或缺省计量停下来提问。仅用户明确上限时修改本地 budget；onboard 的 --max-tokens / --max-wall-seconds 是显式上限入口并写回该文件，未传时读取现有配置。未知主流程用量记录为 host_usage_unknown，不假报已完整计量。
+
+## 目录式技能交接
+
+archa-task/archa-loop 接受具体任务目录，内部 CLI 继续使用 --brief 文件参数。准备时显式传入按简报路径绑定的 --task；相同目录摘要变化保留 task ID，按已有 revision 规则处理。不同专题的 R01 不代表同一执行任务。worker 必须以提示中的 Target task ID 为目标，缺少时创建其合同，不修改其他任务。交接在 DECISIONS.md 追加 brief 项目相对路径、SHA-256、实际 task ID、revision 与合同路径；索引不参与路由。旧式交接核对后补记，不改旧 ID。

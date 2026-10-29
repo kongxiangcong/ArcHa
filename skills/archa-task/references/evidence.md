@@ -2,7 +2,7 @@
 
 每个 sub-agent 的任务书包含：任务 ID、问题/用途、待核实前提、调查范围、源码根目录、可用已有证据、唯一输出路径和停止点。停止点是足以界定目标/交付物，或记录现有证据下仍无法确定的外部条件；不是实现研究方案。
 
-输出到 `.opc/research/tasks/<task>/evidence/YYYYMMDD-<topic>-<unique>.md`，不覆盖旧证据。若原始数据已有权威归档，引用原路径与摘要，不搬动它。主 agent 审阅后在简报 Evidence 中索引相关证据，无需另造一个状态数据库。
+输出到 `.opc/research/topics/<topic>/tasks/<task>/evidence/YYYYMMDD-<topic>-<unique>.md`，不覆盖旧证据。若原始数据已有权威归档，引用原路径与摘要，不搬动它。主 agent 审阅后在简报 Evidence 中索引相关证据，无需另造一个状态数据库。
 
 每份证据记录：
 

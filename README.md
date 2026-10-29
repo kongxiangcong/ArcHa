@@ -62,21 +62,23 @@ python3 tools/install_research_skills.py
 安装包按 `RUNTIME_FILES` 白名单包含当前工作树的运行模块、起草资源和许可证，不包含测试、仓库文档、示例、构建元数据或开发工具；manifest 记录逐文件摘要、快照摘要及相对 HEAD 的差异，不依赖原仓库绝对路径。更新安装不会自动升级已经初始化的项目。安装后在能发现新技能的会话中使用：
 
 ```text
-$archa-map
-$archa-task /absolute/project/.opc/research/research-map.md
-$archa-loop /absolute/project/.opc/research/tasks/<task>/task-brief.md
+$archa-map 探讨 DMA 调度优化的研究方向
+$archa-task /absolute/project/.opc/research/topics/dma-scheduling/tasks/r01-baseline/
+$archa-loop /absolute/project/.opc/research/topics/dma-scheduling/tasks/r01-baseline/
 ```
 
 1. 第一阶段先初始化当前项目 `.opc/`，保存 `.opc/runtime/` 和本地入口 `.opc/archa.py`，再共同形成研究地图。地图正文自由组织，末尾包含 task to-do、每个方向的占位目录以及第二阶段提示词。此时只部署框架，不生成任务合同和评价器；已有项目合同和执行状态保留。
-2. 第二阶段每次选一个依赖证据足够的任务，派 sub-agent 调查源码或外部原始来源，证据保存在任务 `evidence/`。主 agent 调研后记录 brief 大纲，覆盖用途、一句话目标与完成状态、范围、交付物、验收条件、有无数值指标和留给 onboard 的未决项，依据用户任务与证据直接生成简报，记录合理假设，无需停下来等待额外确认。
+2. 第二阶段读取用户指定的具体任务目录，核对依赖证据，派 sub-agent 调查源码或外部原始来源，证据保存在任务 `evidence/`。主 agent 调研后记录 brief 大纲，覆盖用途、一句话目标与完成状态、范围、交付物、验收条件、有无数值指标和留给 onboard 的未决项，依据用户任务与证据直接生成简报，记录合理假设，无需停下来等待额外确认。
 3. 形成大纲后直接生成 `task-brief.md`，结构检查通过才勾选该 task；勾选仅表示简报就绪。技能随后自动调用 onboard，核对合同并处理未决项，在 `.opc/context/DECISIONS.md` 记录简报路径、摘要与对应 task/revision。起草阶段保持执行关闭；token/时间默认无上限；必要评价器由 agent 自主准备。底层调用：
 
 ```bash
-python3 /absolute/project/.opc/archa.py brief-check -p /absolute/project --brief .opc/research/tasks/<task>/task-brief.md
-python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --brief .opc/research/tasks/<task>/task-brief.md
+python3 /absolute/project/.opc/archa.py brief-check -p /absolute/project --brief .opc/research/topics/<topic>/tasks/<task>/task-brief.md
+python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --task <resolved-task-id> --brief .opc/research/topics/<topic>/tasks/<task>/task-brief.md
 ```
 
-4. 用户调用 `archa-loop <task-brief-path>` 后，技能定位对应合同，在已确定的范围与预算内完成执行开关、静态检查、接入文件提交和基线 preflight，再启动或恢复引擎迭代。已有运行先检查状态；已关闭的 run 不自动重置预算。结束时交付实际结果和报告，不自动晋升到用户分支。`archa-loop` 是技能入口，不是新增的 CLI 子命令。
+4. 用户调用 `archa-loop <task-directory>` 后，技能定位对应合同，在已确定的范围与预算内完成执行开关、静态检查、接入文件提交和基线 preflight，再启动或恢复引擎迭代。已有运行先检查状态；已关闭的 run 不自动重置预算。结束时交付实际结果和报告，不自动晋升到用户分支。`archa-loop` 是技能入口，不是新增的 CLI 子命令。
+
+每次显式 archa-map 创建新专题；继续旧专题请直接给原目录和修改需求。archa-task 与 archa-loop 必须给具体任务目录，含空格时加引号；不提供目录不会自动选择任务。旧布局原位兼容，index.md 仅导航。
 
 布局见 [研究材料约定](skills/archa-map/references/research-layout.md)，简报见 [模板](skills/archa-task/references/task-brief.md)，证据见 [证据约定](skills/archa-task/references/evidence.md)，引擎映射见 [消费链](skills/archa-task/references/archa-workflow.md)。`brief-check` 只检查结构、占位项和来源，**不证明研究设计正确或可运行**。目标可随证据调整；已冻结执行合同的变化需要新 revision/run。
 
@@ -148,8 +150,8 @@ pyproject.toml           包元数据（archa-opc 0.3.0，无运行时依赖）
   project.json                          项目身份；execution_enabled 默认 false
   ONBOARDING.md                         接入指南（init 复制进来）
   archa.py / runtime/                   地图技能初始化的项目内 CLI 与代码快照
-  research/research-map.md              方向地图、简报 to-do 和下一阶段提示词
-  research/tasks/<id>/                  task.md、task-brief.md 和 evidence/
+  research/topics/<topic>/research-map.md              方向地图、简报 to-do 和下一阶段提示词
+  research/topics/<topic>/tasks/<id>/                  task.md、task-brief.md 和 evidence/
   context/PROJECT.md REQUIREMENTS.md DECISIONS.md
   components/<id>.json                  可改范围、冻结评价器、门命令、工具链
   tasks/<task>/revisions/rNNNN/task.json  目标、方向、需求、接纳规则、预算、worker

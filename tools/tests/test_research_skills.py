@@ -116,12 +116,19 @@ def test_bundle_relocation_and_reinstall_backup(tmp_path):
         "archa-map", "archa-task", "archa-loop"}
     assert (destination / "archa-loop/SKILL.md").is_file()
     assert (backups[0] / "local-note.txt").read_text(encoding="utf-8") == "keep my local changes"
+    for name in ('archa-map', 'archa-task', 'archa-loop'):
+        assert (destination / name / 'SKILL.md').read_bytes() == (ROOT / 'skills' / name / 'SKILL.md').read_bytes()
+    assert (skill / 'scripts/research.py').read_bytes() == (ROOT / 'skills/archa-map/scripts/research.py').read_bytes()
     moved = tmp_path / "relocated"
     shutil.move(str(skill), moved)
     target = tmp_path / "unrelated-project"
     target.mkdir()
     subprocess.run([sys.executable, str(moved / "scripts/initialize.py"),
                     "--project", str(target)], cwd=tmp_path, check=True, capture_output=True)
+    created = subprocess.run([sys.executable, str(moved / 'scripts/research.py'), 'create',
+                              '--project', str(target), '--name', 'relocated', '--title', 'Moved',
+                              '--scope', 'offline check'], check=True, capture_output=True, text=True)
+    assert Path(json.loads(created.stdout)['topic']).is_dir()
     assert (target / ".opc/runtime/LICENSE").is_file()
     assert (target / ".opc/runtime/opc/scaffold/brief.py").is_file()
     initialize.verify(target / ".opc/runtime")
@@ -280,3 +287,178 @@ def test_runtime_upgrade_refuses_active_controller(tmp_path, runtime):
         with pytest.raises(ValueError, match='active controller'):
             initialize.upgrade_runtime(project / '.opc', runtime)
     assert (project / '.opc/runtime/manifest.json').read_bytes() == before
+
+
+spec_research = importlib.util.spec_from_file_location(
+    'research_directories', ROOT / 'skills/archa-map/scripts/research.py')
+research = importlib.util.module_from_spec(spec_research)
+spec_research.loader.exec_module(research)
+
+
+def write_topic_brief(project, directory):
+    from opc.scaffold.brief import SECTIONS
+    brief = directory / 'task-brief.md'
+    fields = {
+        'Source': f'Task: {(directory / "task.md").relative_to(project).as_posix()}\nStatus: ready-for-onboard',
+        'Goal': 'Goal: explain baseline\nDone when: evidence recorded\nDirection: inspect baseline',
+        'Scope and deliverables': '- D1: report\n- R1: evidence cited | verification=review\nObjective: none: explanation',
+    }
+    brief.write_text('\n\n'.join('## ' + name + '\n' + fields.get(name, 'Baseline evidence and scope recorded.')
+                               for name in SECTIONS), encoding='utf-8')
+    return brief
+
+
+def test_topics_preserve_old_layout_runtime_and_same_session(tmp_path, runtime):
+    root = tmp_path / 'project with spaces'
+    root.mkdir()
+    initialize.initialize(root, runtime)
+    old = root / '.opc/research'
+    old.mkdir()
+    (old / 'tasks/r01-old').mkdir(parents=True)
+    for rel in ('research-map.md', 'discussion.md', 'tasks/r01-old/task.md'):
+        (old / rel).write_text('old evidence: ' + rel)
+    before = {p: p.read_bytes() for p in (root / '.opc').rglob('*') if p.is_file()}
+    a = research.create(root, 'dma-scheduling', 'DMA', 'schedule')
+    first = Path(a['topic'])
+    first_files = {p: p.read_bytes() for p in first.rglob('*') if p.is_file()}
+    b = research.create(root, 'dma-scheduling', 'DMA', 'other goal')
+    assert Path(b['topic']).name == 'dma-scheduling-2'
+    assert b['topic'] in b['task_directory'] and '"' in b['next']
+    assert all(p.read_bytes() == content for p, content in (before | first_files).items())
+    index = (old / 'index.md').read_text()
+    assert 'topics/dma-scheduling-2/research-map.md' in index and '(research-map.md)' in index
+    # Fixed continuation: use the returned topic; no create on supplementary messages.
+    with (first / 'discussion.md').open('a') as stream:
+        stream.write('\n补充：关注 DMA 排队。\n')
+    assert len(list((old / 'topics').iterdir())) == 2
+    initialize.initialize(root, runtime)
+    assert all(p.read_bytes() == content for p, content in before.items())
+
+
+def test_two_r01_real_onboard_resume_revision_and_history(tmp_path, runtime, monkeypatch):
+    import re
+    from opc.adapters.worker import WorkerCall
+    from opc.core.model import Cost
+    from opc.core.ledger import Ledger
+    from opc.scaffold.onboard import onboard
+    from opc.tests.conftest import component, task as contract_template
+    root = tmp_path / 'two topics'
+    root.mkdir()
+    subprocess.run(['git', 'init', str(root)], check=True, capture_output=True)
+    initialize.initialize(root, runtime)
+    dirs = [Path(research.create(root, name, name, 'independent goal')['task_directory'])
+            for name in ('dma', 'quantization')]
+    briefs = [write_topic_brief(root, d) for d in dirs]
+    targets = []
+    revisions = {}
+    def worker(self, role, prompt, tree, log, sandbox, schema):
+        target = re.search(r'Target task ID: ([a-z0-9-]+)\.', prompt).group(1)
+        targets.append(target)
+        revision = revisions.get(target, 'r0001')
+        path = root / f'.opc/tasks/{target}/revisions/{revision}/task.json'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(contract_template(task_id=target, revision=revision, component='main')))
+        (root / '.opc/components/main.json').write_text(json.dumps(component(component_id='main')))
+        log.mkdir(parents=True)
+        (log / 'checks.txt').write_text('offline integration fixture')
+        return WorkerCall(role, True, Cost(0.01, 7, None), extra={'usage_complete': True}), json.dumps(
+            dict(state='ready', evidence=[(log / 'checks.txt').relative_to(root).as_posix()]))
+    monkeypatch.setattr('opc.adapters.codex.CodexWorker._run', worker)
+    ids = []
+    for directory, brief in zip(dirs, briefs):
+        selected = research.resolve(root, str(directory), prepare=True)
+        task_id = selected['task_id']
+        ids.append(task_id)
+        assert research.resolve(root, str(directory), prepare=True)['task_id'] == task_id
+        result = onboard(root, 'codex', brief=brief, task_id=task_id)
+        assert result['ok'], result
+        research.record(root, str(directory), task_id, 'r0001')
+    assert len(set(ids)) == 2 and 't-main' not in ids and targets == ids
+    old_contracts = {root / research.resolve(root, str(d))['contract']: (root / research.resolve(root, str(d))['contract']).read_bytes() for d in dirs}
+    ledger = Ledger(root / '.opc/local/ledger.sqlite3')
+    initial_runs = {r['task_id']: r['run_id'] for r in ledger.runs()}
+    for directory, brief, task_id in zip(dirs, briefs, ids):
+        assert research.resolve(root, str(directory))['task_id'] == task_id
+        assert onboard(root, 'codex', brief=brief, task_id=task_id)['ok']
+        assert ledger.task_totals(task_id)['tokens'] == 14
+    # A recorded formal run freezes r0001. Revision preparation must preserve it.
+    formal = ledger.create_run(task_id=ids[0], revision='r0001', task_digest='frozen',
+                               component='main', base_commit='fixture', evaluator_digest='frozen',
+                               toolchain_digest='fixture', champion_ref='', direction='offline history')
+    ledger.set_run_state(formal, 'closed', 'offline historical fixture')
+    initial_runs[ids[0]] = formal
+    # Changed brief keeps its path-bound identity, but loop must return to preparation.
+    briefs[0].write_text(briefs[0].read_text() + '\nRevised evidence scope.\n')
+    with pytest.raises(ValueError, match='简报已变化'):
+        research.resolve(root, str(dirs[0]))
+    assert research.resolve(root, str(dirs[0]), True)['task_id'] == ids[0]
+    revisions[ids[0]] = 'r0002'
+    assert onboard(root, 'codex', brief=briefs[0], task_id=ids[0])['ok']
+    research.record(root, str(dirs[0]), ids[0], 'r0002')
+    assert research.resolve(root, str(dirs[0]))['revision'] == 'r0002'
+    assert research.resolve(root, str(dirs[1]))['revision'] == 'r0001'
+    assert all(p.read_bytes() == content for p, content in old_contracts.items())
+    assert {r['task_id']: r['run_id'] for r in ledger.runs()} == initial_runs
+    assert ledger.task_totals(ids[0])['tokens'] == 21
+    history = (root / '.opc/local/ledger.sqlite3').read_bytes()
+    research.create(root, 'third', 'Third', 'new objective')
+    initialize.initialize(root, runtime)
+    assert (root / '.opc/local/ledger.sqlite3').read_bytes() == history
+
+
+def test_legacy_external_collision_and_ambiguous_bindings(tmp_path):
+    root = tmp_path
+    (root / '.opc').mkdir()
+    (root / '.opc/project.json').write_text('{}')
+    for rel in ('.opc/research/tasks/r01-old', 'specs/external-task'):
+        directory = root / rel
+        directory.mkdir(parents=True)
+        (directory / 'task.md').write_text('Original source')
+        write_topic_brief(root, directory)
+        task_id = 'old-task' if 'r01' in rel else 'external-task'
+        contract = root / f'.opc/tasks/{task_id}/revisions/r0003/task.json'
+        contract.parent.mkdir(parents=True)
+        contract.write_text(json.dumps(dict(task_id=task_id, revision='r0003')))
+        decisions = root / '.opc/context/DECISIONS.md'
+        decisions.parent.mkdir(exist_ok=True)
+        with decisions.open('a') as stream:
+            stream.write(f'\nLegacy: {rel}/task-brief.md -> {task_id} r0003\n')
+        with pytest.raises(ValueError, match='legacy handoff'):
+            research.resolve(root, str(directory), True)
+        research.record(root, str(directory), task_id, 'r0003')
+        assert research.resolve(root, str(directory))['task_id'] == task_id
+        assert contract.exists() and directory.exists()
+    directory = Path(research.create(root, 'dma', 'DMA', 'goal')['task_directory'])
+    write_topic_brief(root, directory)
+    (root / '.opc/tasks/t-dma-r01-baseline').mkdir()
+    row = research.resolve(root, str(directory), True)
+    assert row['task_id'] == 't-dma-r01-baseline-2'
+    conflicting = dict(row, task_id='different-task')
+    research.append(decisions, conflicting)
+    with pytest.raises(ValueError, match='ambiguous'):
+        research.resolve(root, str(directory), True)
+
+
+def test_directory_input_errors_are_read_only(tmp_path, monkeypatch):
+    directory = Path(research.create(tmp_path, 'dma', 'DMA', 'goal')['task_directory'])
+    before = {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    for bad in (None, str(tmp_path), str(directory.parents[1]), str(directory.parent), str(directory / 'task.md')):
+        with pytest.raises(ValueError, match='任务目录'):
+            research.resolve(tmp_path, bad, True)
+    with pytest.raises(ValueError, match='archa-task'):
+        research.resolve(tmp_path, str(directory))
+    assert {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()} == before
+    write_topic_brief(tmp_path, directory)
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match='尚未 onboard'):
+        research.resolve(tmp_path, str(directory.relative_to(tmp_path)))
+
+
+def test_explicit_parent_relative_task_directory(tmp_path, monkeypatch):
+    directory = Path(research.create(tmp_path, 'relative', 'Relative', 'goal')['task_directory'])
+    write_topic_brief(tmp_path, directory)
+    cwd = tmp_path / 'working'
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    with pytest.raises(ValueError, match='尚未 onboard'):
+        research.resolve(tmp_path, '../' + directory.relative_to(tmp_path).as_posix())

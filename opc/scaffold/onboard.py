@@ -145,6 +145,13 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             load_brief_text(root, brief)
         from . import init
         init(root, "research-project", root.name, "main", task_id, True)
+    brief_identity = None
+    if brief is not None:
+        from .brief import load_brief
+        report, _ = load_brief(root, brief)
+        if not report['ok']:
+            raise OPCError('brief is not ready: ' + '; '.join(report['problems']))
+        brief_identity = {'brief': report['brief'], 'sha256': report['sha256']}
     explicit = {key: value for key, value in (("max_tokens", max_tokens), ("max_wall_seconds", max_wall_seconds)) if value is not None}
     contracts = sorted((root / ".opc/tasks" / task_id / "revisions").glob("r[0-9][0-9][0-9][0-9]/task.json"))
     legacy = json.loads(contracts[-1].read_text(encoding="utf-8-sig")).get("budget", {}) if contracts else {}
@@ -243,7 +250,8 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
         reuse = False
         if candidate:
             try:
-                reuse = candidate["files"] == preparation_files(root, task_id)
+                reuse = (candidate["files"] == preparation_files(root, task_id)
+                         and candidate.get("brief_input") == brief_identity)
             except OPCError:
                 pass
         if reuse:
@@ -283,6 +291,7 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                       "tokens": max_tokens-used["tokens"] if max_tokens is not None else None,
                       "wall_seconds": remaining()}) + "\n" +
                       (HERE / "ONBOARDING.md").read_text(encoding="utf-8") + "\n" +
+                      f"Target task ID: {task_id}. Create its contract if missing; do not prepare another task.\n"
                       "PREPARATION: Complete necessary evaluator integration and focused validation "
                       "and bounded capability probes within the confirmed task. Write only .opc except protected "
                       "runtime/research/workers inputs. Do not change user requirements or execute formal device "
@@ -343,7 +352,7 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
         if not prepared_task.raw.get("preparation_review", False):
             return finish("ready", "necessary integration checks recorded; commit prepared files before execution",
                           files=files, evidence=evidence)
-        ledger.event(rid, "preparation_candidate", files=files, evidence=evidence,
+        ledger.event(rid, "preparation_candidate", files=files, evidence=evidence, brief_input=brief_identity,
                      evidence_hashes={rel: hashlib.sha256((root / rel).read_bytes()).hexdigest() for rel in evidence})
         # Independent read-only inspection; cannot certify its own mutable drafts.
         review = Worker(worker_options(config, "reviewer", {"timeout_s": timeout}))
