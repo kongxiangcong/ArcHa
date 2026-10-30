@@ -182,13 +182,14 @@ class MaterialTests(unittest.TestCase):
             project = run / "project"
             git_root = subprocess.check_output(
                 ["git", "rev-parse", "--show-toplevel"], cwd=project, text=True).strip()
-            self.assertEqual(Path(git_root).resolve(), project.resolve())
+            self.assertTrue(Path(git_root).samefile(project))
             tracked = subprocess.check_output(["git", "ls-files"], cwd=project, text=True)
             self.assertEqual(set(tracked.splitlines()), {
                 ".gitignore", "TASK.md", "dma_model.py", "public_checks.py", "example.json"})
             self.assertFalse((project / ".opc").exists())
             bindings = json.loads((run / "bindings.json").read_text(encoding="utf-8"))
-            self.assertEqual(Path(bindings["workspace_root"]), run / "workspaces")
+            # Windows TEMP can use RUNNER~1 while prepare resolves the long name.
+            self.assertTrue(Path(bindings["workspace_root"]).samefile(run / "workspaces"))
             before = (run / "manifest.json").read_bytes()
             self.assertEqual(json.loads(before)["status"], "prepared")
             repeated = subprocess.run(command, capture_output=True, text=True, timeout=30)
