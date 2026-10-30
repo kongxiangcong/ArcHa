@@ -403,5 +403,7 @@ def preparation_files(root: Path, task_id: str | None = None) -> dict[str, str]:
                 ".opc/components/%s.json" % task.component]
     names = str(git("ls-files", "--cached", "--others", "--exclude-standard", "-z", "--",
                     *patterns, cwd=root)).split("\0")
-    return {rel: hashlib.sha256((root / rel).read_bytes()).hexdigest()
+    # Bind review to the bytes Git will commit, including its clean/EOL filters.
+    # Prefix the blob ID so existing raw SHA-256 receipts remain distinguishable.
+    return {rel: "git-blob:" + str(git("hash-object", "--path=" + rel, "--", rel, cwd=root)).strip()
             for rel in sorted(set(names)) if rel and (root / rel).is_file()}

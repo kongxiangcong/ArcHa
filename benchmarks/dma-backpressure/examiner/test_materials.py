@@ -123,7 +123,7 @@ def _check_serial_baseline_rejected_but_valid():
 
 def _check_external_cli_positive_and_negative(tmp_path):
     data = tmp_path / "inputs.json"
-    data.write_text(json.dumps(a.corpus()))
+    data.write_text(json.dumps(a.corpus()), encoding="utf-8")
     # Positive control is generated ONLY in a temporary examiner directory.
     # It must never be distributed to the task workers as a candidate solution.
     good = tmp_path / "control.py"
@@ -180,14 +180,14 @@ class MaterialTests(unittest.TestCase):
             prepared = subprocess.run(command, capture_output=True, text=True, timeout=30)
             self.assertEqual(prepared.returncode, 0, prepared.stdout + prepared.stderr)
             project = run / "project"
-            self.assertEqual(subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"], cwd=project, text=True).strip(),
-                str(project.resolve()))
+            git_root = subprocess.check_output(
+                ["git", "rev-parse", "--show-toplevel"], cwd=project, text=True).strip()
+            self.assertEqual(Path(git_root).resolve(), project.resolve())
             tracked = subprocess.check_output(["git", "ls-files"], cwd=project, text=True)
             self.assertEqual(set(tracked.splitlines()), {
                 ".gitignore", "TASK.md", "dma_model.py", "public_checks.py", "example.json"})
             self.assertFalse((project / ".opc").exists())
-            bindings = json.loads((run / "bindings.json").read_text())
+            bindings = json.loads((run / "bindings.json").read_text(encoding="utf-8"))
             self.assertEqual(Path(bindings["workspace_root"]), run / "workspaces")
             before = (run / "manifest.json").read_bytes()
             self.assertEqual(json.loads(before)["status"], "prepared")
