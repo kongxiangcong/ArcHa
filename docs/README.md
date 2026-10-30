@@ -20,6 +20,6 @@
 
 任务成果统一：[实施 tickets 与字段归属](design/task-results/tickets.md)、[使用与升级](design/task-results/usage.md)。支持跨 run 实验关联、当前累计成果消费、审核版本和只读成果入口；验证状态以 tickets 为准。
 
-旧 benchmark 工具及 FP32 包已退役，历史报告在 benchmarks/reports 保留。运行工程、账本、候选、原始 worker 日志留在本地 benchmarks/experiments 或配置的外置 artifact_root；依赖在 benchmarks/cache；临时脚本和测试夹具归 .tmp。根目录的 pip-* 是可再生成的安装临时目录，已清理并忽略。不要将本地依赖、独立 Git 工程或原始会话批量加入主仓库。
+测试项目统一放在 [benchmarks/](../benchmarks/README.md)：DMA 背压用于闭环冒烟，DeepStack 主线固定版本已登记、任务待定。各项目的 reports 保存可提交摘要，runs 保存不提交的独立工程、账本、工作树和完整日志。旧 benchmark 工具及 FP32 包已退役，历史准备记录迁至 [reports/benchmark-preparation-20261024/](reports/benchmark-preparation-20261024/preparation-20261024.md)。已有未跟踪运行原件和缓存不随本次整理删除。
 
 新报告注明日期、代码/合同版本、验证范围与证据来源。报告中的旧根目录文件名、绝对路径和当时的未提交状态属于历史事实；目录调整只修正文档链接，不改写历史结果。

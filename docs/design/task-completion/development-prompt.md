@@ -25,7 +25,7 @@
 **验证方式**
 
 - 每票运行对应测试；最后执行完整 pytest 与 diff 检查，查看实际 CI，分别报告 Linux/Windows 结果。缺测试依赖可在隔离环境安装，不改变产品依赖来适应当前机器。
-- 已备齐材料在 `tools/tests/fixtures/dma_backpressure/`，不需要我提供任何原始数据。先执行素材 unittest 自检，再按 validation 生成固定 82 个输入、检查起始功能失败和冻结数据摘要。
+- 已备齐材料在 `benchmarks/dma-backpressure/`，不需要我提供任何原始数据。先执行素材 unittest 自检，再按 validation 生成固定 82 个输入、检查起始功能失败和冻结数据摘要。
 - 使用两个隔离的新会话和独立任务仓库执行同一 DMA 背压开发任务：直接 Codex vs 当前改造后的 ArcHa。只给相同 TASK.md、starter 和公开检查，不给参考实现、隐藏输入、另一组成果、本次框架改造 tickets 或预先分解的产品实现路线。
 - 按 validation 的默认模型与预算执行：gpt-6.1-sol / medium；每组开发端到端 30 分钟、累计 input+output 2,000,000 token，ArcHa 最多 12 次 attempt；最终独立 review 每组另限 10 分钟/500,000 token，并归入总成本。只执行一组 pilot，不自动重试到成功或扩展实验矩阵。
 - 共用相同运行条件，随机记录先后顺序。ArcHa 准备/onboard/expert/designer/收尾都计成本，不能只统计 run。外置终验脚本不调用模型；最终 reviewer 在新会话中尽力匿名审阅两份产物。

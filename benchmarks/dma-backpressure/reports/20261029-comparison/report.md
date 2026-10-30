@@ -2,6 +2,8 @@
 
 2026-10-29，本机各执行一次，先直接组、后框架组，串行执行。两份候选均通过同一外置验收；ArcHa 因 token 预算中断，未完成框架正式评价及专家复盘。本记录比较实际发生的运行，不将中断运行等同于完整闭环。
 
+原报告从 `docs/reports/` 迁入本项目；文中的旧路径、版本和预算中断结论保留当时事实，不作为当前冒烟通过记录。
+
 ## 结果
 
 | 项目 | Codex 直接执行 | ArcHa + Codex |
@@ -39,12 +41,12 @@ ArcHa 专家消耗 53,115 tokens，设计者消耗 153,266 tokens。合同设置
 
 ## 证据与复核
 
-可提交的结构化数据、候选补丁位于 [同名目录](dma-codex-vs-archa-20261029/)：
+可提交的结构化数据、候选补丁位于 [同名目录](./)：
 
-- [comparison.json](dma-codex-vs-archa-20261029/comparison.json)：token 原始 usage、时间、终验、微基准全部样本。
-- [archa-report.json](dma-codex-vs-archa-20261029/archa-report.json)：框架状态、预算、计划、执行摘要与保存版本。
-- [environment.json](dma-codex-vs-archa-20261029/environment.json)：框架 HEAD、运行环境和任务材料 SHA-256。
-- [direct.patch](dma-codex-vs-archa-20261029/direct.patch)、[archa.patch](dma-codex-vs-archa-20261029/archa.patch)：可审阅的交付代码及测试差异。
+- [comparison.json](comparison.json)：token 原始 usage、时间、终验、微基准全部样本。
+- [archa-report.json](archa-report.json)：框架状态、预算、计划、执行摘要与保存版本。
+- [environment.json](environment.json)：框架 HEAD、运行环境和任务材料 SHA-256。
+- [direct.patch](direct.patch)、[archa.patch](archa.patch)：可审阅的交付代码及测试差异。
 
 完整本地原件保存在 `work/dma-ab-20261029/`（Git 忽略）：CLI JSONL、stderr、实际提示词与请求、合同、SQLite、Git 工程、候选导出、corpus、验收和复测日志、测量脚本。工作目录最初为 `/tmp/dma-ab-20261029/`，原日志中的绝对路径保留。无模型价格数据。原件中的 prepare.py 后又经上下文补全提交，最终合同/上下文以保存的 Git 工程和候选导出为准。
 
