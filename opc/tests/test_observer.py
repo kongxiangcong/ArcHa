@@ -391,10 +391,12 @@ def test_unknown_run_state_preserves_raw_and_never_asserts_success(client,projec
     assert value['raw_value']=='future-state'
 
 
-def test_utf8_content_pagination_reassembles_exact_source(client,project):
+@pytest.mark.parametrize('line_ending', ['\n', '\r\n'], ids=['lf', 'crlf'])
+def test_utf8_content_pagination_reassembles_exact_source(client,project,line_ending):
     patch=project/'.opc/local/artifacts/test/dma/old-run/attempts/a000001/candidate.patch'
-    expected='中文边界\nASCII\n最后一行'
-    patch.write_text(expected,encoding='utf-8')
+    expected=line_ending.join(['中文边界', 'ASCII', '最后一行'])
+    # Exact source bytes: text-mode writes translate LF on Windows.
+    patch.write_bytes(expected.encode('utf-8'))
     artifact=next(a for a in run(client)['artifacts'] if 'candidate.patch' in a['label'])
     offset=0
     result=''
