@@ -1,17 +1,15 @@
 ---
 name: archa-task
-description: 读取 research-map 的任务清单，调查一个任务并提出 brief 大纲；依据用户需求自主生成 task-brief.md，自动调用 ArcHa onboard 并核对合同，为 archa-loop 准备执行入口。
+description: 以具体任务目录为必需输入，读取所属地图，调查该任务并提出 brief 大纲；依据用户需求自主生成 task-brief.md，自动调用 ArcHa onboard 并核对合同，为 archa-loop 准备执行入口。
 ---
 
 # 单个研究任务的背景与简报
 
-输入 research-map.md、已确认任务或简报路径。明确工程任务可直接接入，无需先建地图；来源使用 `Task: <项目相对的任务文件>`。缺少 runtime 时复用 archa-map/scripts/initialize.py 的项目初始化能力，不生成空地图。已有调查和确认简报直接复用，仅核对关键依据和交接；只有范围仍不明确时继续讨论。
+必需输入具体任务目录（绝对路径，或相对当前工作目录的明确路径）。缺少路径时只提示“请提供具体任务目录”；项目根、专题根、tasks 集合目录均提示改为具体任务目录，不自动选择任务。旧文件式输入只提示使用所属任务目录。不得按最近使用、唯一专题、active/todo 或最新合同猜测。
 
-## 选择一个任务
+## 读取指定任务
 
-有地图时读取相关段落、`discussion.md` 和任务占位文件；直接任务读取其需求和现有调查。先检查 `parked` 项的重开条件，满足时记录依据并恢复 `todo`；再优先用户指定 ID，其次继续 `active` 的任务，否则选清单中首个依赖已满足的 `todo` 项。本次只推进一个任务。上游简报就绪不代替依赖所需的研究结果；全部已 ready 时报告可交接，不重复调研。
-
-用户指定的任务依赖不足时解释缺口，可以先厘清它的前置问题，但不假装依赖已满足。全部 parked 时给出最先缺少的东西和建议下一步。
+读取目录内 task.md 和 task-brief.md（如已有），按 task.md 明确的地图链接读取所属地图及 discussion.md。标准布局可核对上两级的 research-map.md；旧 `.opc/research/tasks/<task>/` 和有明确 task 来源的外置目录保持原位置。明确工程任务无需先建地图，简报 Source 使用 `Task: <项目相对任务文件>`。读取依赖和 parked 重开条件，缺口留在本任务，不自动准备其他任务。缺少 runtime 时复用 archa-map/scripts/initialize.py，不生成空地图。
 
 ## 派 sub-agent 调研
 
@@ -47,14 +45,20 @@ sub-agent 只调查本任务，不改项目实现、地图状态或执行合同�
 随后运行
 
 ```bash
-python3 /absolute/project/.opc/archa.py brief-check -p /absolute/project --brief .opc/research/tasks/<task>/task-brief.md
+python3 /absolute/project/.opc/archa.py brief-check -p /absolute/project --brief .opc/research/topics/<topic>/tasks/<task>/task-brief.md
 ```
 
 有地图时，通过后在地图勾选该项并设为 `ready-for-onboard`，链接简报；该状态仅表示简报就绪，不表示合同或执行就绪。检查失败则保持未勾选并修复。结构通过不证明研究设计正确。
 
 ## 自动完成 onboard
 
-简报检查通过后，先检查 `.opc/context/DECISIONS.md` 是否已有同一简报路径及摘要、且合同核对完成的交接；有则复用并核对当前合同。否则直接运行，无需用户再发起 onboard：
+简报检查通过后运行相邻 archa-map 技能的辅助脚本：
+
+```bash
+python3 /absolute/path/to/archa-map/scripts/research.py resolve --project /absolute/project --directory "<任务绝对目录>" --prepare
+```
+
+先读取旧合同/context 的明确来源关系；旧式关系存在但脚本无法解析时先核对并 record 补记，不能当作新任务。再按简报项目相对路径定位 DECISIONS 关系，再核对摘要与实际合同。复用返回的 task_id（包括旧 ID）；摘要变化仍沿同一身份走现有 revision 流程，不新建任务。无关系时脚本生成不冲突的可读 ID；若提示存在旧式交接，先读取其明确来源关系，核对合同后用 record 补记，不能绕过歧义。脚本先在 DECISIONS 预留身份，重试仍复用；全新项目先用既有 init 创建该 ID 的合同骨架，再记录预留。骨架不等于已核对合同。使用返回的 task_id 显式执行 onboard，绝不能省略 --task 落入 t-main。新任务在已有项目中由 onboard worker 起草新合同；已有关系不修改其他任务。同一路径、摘要与已核对合同均未变化时直接复用并核对，不重复起草；仅新任务或需要更新时执行下列 onboard。无需用户手动分配 ID 或再次发起 onboard：
 
 ```bash
 python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --brief <brief> --prepare --task <task-id>
@@ -64,9 +68,9 @@ python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --brief <br
 
 依据消费链核对目标、交付物、验收条件、评价器、范围、基线、预算与 worker。自动解决已确认范围内能从证据确定的事项；只将超出已授权范围的事项或有实际证据的外部条件列为 external_blocked；必要评价器接入、关键失败路径、证据采集和未知设备能力列为 pending，由当前 agent 在预算内开发核验，不要求另建任务。保持 `execution_enabled=false`，用项目入口运行 `check -p <project> --task <task-id> --revision <revision>`。执行关闭、接入文件尚未提交以及因此尚未进入基线的评价器属于待 loop 完成的准备项；其他问题修复或列为阻塞，不把所有非零退出都当作预期。不运行 preflight 或 run。
 
-在 `.opc/context/DECISIONS.md` 记录本次交接：简报的项目相对路径及当前 SHA-256、对应 task ID、revision、合同路径、已定执行预算和剩余阻塞项。从实际生成的合同核对 ID，不把地图 ID 当作引擎 ID。保留其他任务记录。已投入执行的合同修改沿用新 revision/run 流程。
+核对完成后运行 `research.py record --project <project> --directory "<任务绝对目录>" --task <实际task-id> --revision <实际revision>`，在 `.opc/context/DECISIONS.md` 追加可解析交接（不另建映射文件）。仅在已核对合同后执行 record；旧式明确关系补记同样需要核对。记录内容包括：简报的项目相对路径及当前 SHA-256、对应 task ID、revision、合同路径、已定执行预算和剩余阻塞项。从实际生成的合同核对 ID，不把地图 ID 当作引擎 ID。保留其他任务记录。已投入执行的合同修改沿用新 revision/run 流程。
 
-最后给出简报、合同位置和准备状态；有阻塞时说明缺项，无阻塞时给出 `$archa-loop <task-brief绝对路径>`。本次结束于本任务的合同准备，不自动启动 loop 或处理下一个任务。
+最后给出简报、合同位置和准备状态；有阻塞时说明缺项，无阻塞时给出 `$archa-loop "<任务绝对目录>"`。本次结束于本任务的合同准备，不自动启动 loop 或处理下一个任务。
 
 ## 自主准备与冻结
 

@@ -1,21 +1,23 @@
 ---
 name: archa-loop
-description: 用户要求从已确认的 task-brief 启动或恢复 ArcHa 自动迭代时使用；定位对应合同，完成执行检查，调用项目内引擎并报告结果。
+description: 用户要求从具体任务目录内已确认的 task-brief 启动或恢复 ArcHa 自动迭代时使用；定位对应合同，完成执行检查，调用项目内引擎并报告结果。
 ---
 
 # 从简报启动自动迭代
 
-调用：`archa-loop <task-brief-path>`（技能提示词可写 `$archa-loop <task-brief-path>`）。这是技能入口，底层复用项目 `.opc/archa.py` 的命令。
+调用：`archa-loop <task-directory>`（技能提示词可写 `$archa-loop <task-directory>`）。这是技能入口，底层复用项目 `.opc/archa.py` 的命令。
 
 ## 定位任务
 
-解析简报真实路径，从其祖先目录定位包含 `.opc/archa.py` 的项目根目录；路径有空格时引用完整参数。使用可用的 Python 3.10+（Windows 通常是 `python`，下文以 `python3` 示意）。先读项目约定和本地 CLI `--help`，再运行：
+必需输入具体任务目录，接受绝对路径或相对当前工作目录的明确路径。缺少时只提示补充具体任务目录；项目根、专题根、tasks 集合目录及文件输入不运行，文件输入提示所属任务目录。不得根据当前目录、最近记录或唯一专题选择任务。
+
+从指定目录定位 task-brief.md，再从祖先目录定位项目根；路径有空格时引用完整参数。使用可用的 Python 3.10+（Windows 通常是 `python`，下文以 `python3` 示意）。先读项目约定和本地 CLI `--help`，再运行：
 
 ```bash
 python3 <project>/.opc/archa.py brief-check -p <project> --brief <brief>
 ```
 
-读取 `.opc/context/DECISIONS.md` 的交接记录，按简报相对路径和 SHA-256 找到 task ID、revision、合同路径；核对实际合同与简报的目标和验收条件。摘要变化、对应关系缺失或存在歧义时先解决交接，不猜测 `t-main` 或默认最新 revision。旧项目可从合同和 context 的明确来源关系补记交接；无法唯一确认时说明缺项。brief 校验失败或尚未 onboard 时交回 archa-task 完成合同准备。
+运行 `python3 /absolute/path/to/archa-map/scripts/research.py resolve --project <project> --directory "<任务绝对目录>"`。读取 `.opc/context/DECISIONS.md` 的交接记录，先按简报相对路径找身份，再核对 SHA-256，取得 task ID、revision、合同路径；核对实际合同与简报的目标和验收条件。摘要变化、对应关系缺失或存在歧义时先解决交接，不猜测 `t-main` 或默认最新 revision。旧项目可从合同和 context 的明确来源关系补记交接；无法唯一确认时说明缺项。brief 缺失、摘要变化、校验失败或尚未 onboard 时给出 `$archa-task "<任务绝对目录>"` 完成合同准备。真实绑定歧义说明缺项，不改用其他任务。
 
 ## 准备执行
 

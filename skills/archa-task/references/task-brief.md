@@ -13,7 +13,7 @@
 # 任务名称
 
 ## Source
-Map: .opc/research/research-map.md
+Map: .opc/research/topics/<topic>/research-map.md
 Status: ready-for-onboard
 
 TODO：地图中对应的方向 ID/名称、依赖；用户任务来源、会话日期或文档依据及所采用的假设。
