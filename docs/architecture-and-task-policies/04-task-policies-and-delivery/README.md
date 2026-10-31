@@ -1,12 +1,14 @@
 # S4 任务策略、成果接纳与交付闭环
 
-状态：方向已建立，需求待讨论；本阶段可以在讨论后形成多份 spec 与多张 tickets。
+状态：S0 已确定共同边界，本阶段接口与实现细节待设计；本阶段可以在讨论后形成多份 spec 与多张 tickets。
 
 入口：[总规划](../ArcHa_Phased_Development_Plan.md)。整体文档依据：[§6](../ArcHa_Overall_Architecture_and_Task_Policies.md#s06)、[§8](../ArcHa_Overall_Architecture_and_Task_Policies.md#s08)、[§11](../ArcHa_Overall_Architecture_and_Task_Policies.md#s11)、[§12](../ArcHa_Overall_Architecture_and_Task_Policies.md#s12)、[§14](../ArcHa_Overall_Architecture_and_Task_Policies.md#s14)、[§15](../ArcHa_Overall_Architecture_and_Task_Policies.md#s15)。
 
 **依赖：** S1–S3。目标是让同一个引擎按任务用途判断进展与完成。
 
 ## 需要讨论的方向
+
+S0 已确认停止与完成的分工：专家判断继续价值，提出停止或交付；引擎按契约执行必要验收并记录完成状态。用户控制、明确资源边界和真实阻塞仍由引擎处理。不以连续无收益次数替代专家判断，不新增常驻或逐轮 Reviewer。停止记录复用证据，说明原因、已满足要求和尚缺项。无收益可以收尾但不能标记提速目标已达成；有效反证可以保留，未知能否作为交付取决于事先约定，不能在结果不理想后临时降标。
 
 - 将 Decision、Acceptance、Accumulation 落成清楚的职责；确定 Profile 默认行为与任务可覆盖范围，不预设三套插件 API。Expert 保留选择方法和下一步的自主权。
 - 开发按需求缺口推进、保留未完成工作版本；优化按可比较条件和约定噪声规则选择冠军；探索累计有效观测、反证和有边界的结论。辅助活动允许跨类型，交付目标不随每次活动变化。

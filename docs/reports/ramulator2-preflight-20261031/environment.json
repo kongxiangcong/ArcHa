@@ -1,0 +1,22 @@
+{
+  "commit": "be93be78055d922aa1d4d33e15bcc8f2b0c61a9d",
+  "tag": "v2.0a",
+  "compiler": "g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "cmake": "cmake version 3.31.10",
+  "flags": "-O3 -DNDEBUG",
+  "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.39",
+  "cpu_affinity": [
+    0,
+    1
+  ],
+  "lscpu": "Architecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           46 bits physical, 48 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  2\nOn-line CPU(s) list:                     0,1\nVendor ID:                               GenuineIntel\nBIOS Vendor ID:                          Smdbmds\nModel name:                              Intel(R) Xeon(R) Gold 6133 CPU @ 2.50GHz\nBIOS Model name:                         3.0  CPU @ 2.0GHz\nBIOS CPU family:                         1\nCPU family:                              6\nModel:                                   94\nThread(s) per core:                      1\nCore(s) per socket:                      2\nSocket(s):                               1\nStepping:                                3\nBogoMIPS:                                4988.28\nFlags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch pti fsgsbase bmi1 hle avx2 smep bmi2 erms invpcid rtm mpx rdseed adx smap clflushopt xsaveopt xsavec xgetbv1 arat\nHypervisor vendor:                       KVM\nVirtualization type:                     full\nL1d cache:                               64 KiB (2 instances)\nL1i cache:                               64 KiB (2 instances)\nL2 cache:                                8 MiB (2 instances)\nL3 cache:                                27.5 MiB (1 instance)\nNUMA node(s):                            1\nNUMA node0 CPU(s):                       0,1\nVulnerability Gather data sampling:      Unknown: Dependent on hypervisor status\nVulnerability Indirect target selection: Mitigation; Aligned branch/return thunks\nVulnerability Itlb multihit:             KVM: Mitigation: VMX unsupported\nVulnerability L1tf:                      Mitigation; PTE Inversion\nVulnerability Mds:                       Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown\nVulnerability Meltdown:                  Mitigation; PTI\nVulnerability Mmio stale data:           Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown\nVulnerability Reg file data sampling:    Not affected\nVulnerability Retbleed:                  Vulnerable\nVulnerability Spec rstack overflow:      Not affected\nVulnerability Spec store bypass:         Vulnerable\nVulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization\nVulnerability Spectre v2:                Mitigation; Retpolines; STIBP disabled; RSB filling; PBRSB-eIBRS Not affected; BHI Retpoline\nVulnerability Srbds:                     Unknown: Dependent on hypervisor status\nVulnerability Tsa:                       Not affected\nVulnerability Tsx async abort:           Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown\nVulnerability Vmscape:                   Not affected",
+  "dependencies": {
+    "yaml-cpp": "0579ae3d976091d7d664aa9d2527e0d0cff25763",
+    "spdlog": "ad0e89cbfb4d0c1ce4d097e134eb7be67baebb36",
+    "argparse": "997da9255618311d1fcb0135ce86022729d1f1cb"
+  },
+  "binary_sha256": {
+    "/root/ramulator2/build/ramulator2": "3be0f9168535a6d4986b23c415689f0fac5539d4851a2793b93ff671262ed2ea",
+    "/root/ramulator2/libramulator.so": "6986c83071d36808bfdf45d36f0358c3c189b9ccc7b4936ecf3e557017cdcac3"
+  }
+}

@@ -5,3 +5,6 @@
 /projects/
 /experiments/
 __pycache__/
+/.runtime/
+/*/materials/
+/*/examiner/private/

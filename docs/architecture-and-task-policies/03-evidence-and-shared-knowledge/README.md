@@ -1,10 +1,18 @@
 # S3 证据、结论、共享空间与上下文反馈
 
-状态：方向已建立，需求待讨论；本阶段可以在讨论后形成多份 spec 与多张 tickets。
+状态：S0 已确定共同边界，本阶段接口与实现细节待设计；本阶段可以在讨论后形成多份 spec 与多张 tickets。
 
 入口：[总规划](../ArcHa_Phased_Development_Plan.md)。整体文档依据：[§4](../ArcHa_Overall_Architecture_and_Task_Policies.md#s04)、[§9](../ArcHa_Overall_Architecture_and_Task_Policies.md#s09)、[§10](../ArcHa_Overall_Architecture_and_Task_Policies.md#s10)、[§11](../ArcHa_Overall_Architecture_and_Task_Policies.md#s11)、[§14](../ArcHa_Overall_Architecture_and_Task_Policies.md#s14)。
 
 **依赖：** S2。目标是让后续工作能利用真实经验，并能修正旧判断。
+
+## S0 已确认的记录与披露原则
+
+提示词/skills 只补充项目特有的材料入口、索引覆盖与省略内容、原件定位/读取方式，避免重复维护。优先依靠清楚的材料组织与 Agent 自主选择，暂不新增通用阅读纪律、固定阅读顺序或数量。若实际测试暴露全量读取、漏查证据或无法定位原件，再诊断组织、访问能力或提示的具体缺口并修正；不把所有读取问题都归因于提示不足。
+
+记录保持轻量，结果、实验数据和 trace 均按“简短入口 → 单项详情 → 原件”组织，Agent 在角色授权内自主选择读取深度和顺序。入口保留结果的必要条件、关键失败/反例、待分析或缺失状态和详情引用；不全量注入历史，也不只展示赢家。代码采用、证据保存和结论状态可分别表达，不要求每轮填写多份报告或完整状态表。
+
+Markdown 负责导航和解释；实验数据、调用记录与 trace 保留原生格式。小记录可合并，体量增长后才拆文件/索引或提供范围读取；视觉折叠不能代替实际按需加载。框架自动关联身份、版本与原件，既有 Worker 输出必要分析，不新增总结角色、账本或强制每条结论一个文件。复用 `opc/core/results.py` 的成果登记和原件链接，以及已有 context/evidence 连接；S3 需要补齐可发现、可选择的读取方式，不能把固定历史窗口或无提示截断当作渐进式披露。S2/S5 复用相同 trace 来源与导航。
 
 ## 需要讨论的方向
 

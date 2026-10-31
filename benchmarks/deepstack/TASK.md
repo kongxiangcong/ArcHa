@@ -1,5 +1,7 @@
 # DeepStack：建模探索方向已确定，执行合同待讨论
 
+> 历史登记（2026-10-30），已由 [现行四题](../README.md)替代。以下待讨论状态仅保留前序语境，不作为当前考试输入。
+
 2026-10-30 用户明确最终目标：使用改造后的 ArcHa 探索 DeepStack 的底层建模方法，弄清约定范围内它怎样建模。前期讨论测试方法，框架改造与必要集成验收完成后才开展正式测试。阶段安排见 [S6](../../docs/architecture-and-task-policies/06-deepstack-exploration-validation/README.md)。
 
 主线固定版本见 [source.json](source.json)，执行状态仍为 `task_pending`。具体研究范围、证据标准和执行条件尚需讨论；本文件不是可执行任务合同。

@@ -1,0 +1,1159 @@
+[
+  {
+    "name": "gemm_h100_1",
+    "config": {
+      "shape": [
+        1,
+        4096,
+        4096
+      ],
+      "tiling": [
+        1,
+        32,
+        32,
+        1,
+        16,
+        32,
+        3,
+        2
+      ]
+    },
+    "first_s": 0.0027309310098644346,
+    "status": "ok",
+    "calls_per_batch": 10,
+    "warm_s": [
+      0.002158860900090076,
+      0.0020850220025749877,
+      0.0021170766005525364,
+      0.0020847905980190262,
+      0.0021777682995889336,
+      0.0020883744000457227,
+      0.002155105900601484
+    ],
+    "median_s": 0.0021170766005525364,
+    "min_s": 0.0020847905980190262,
+    "max_s": 0.0021777682995889336,
+    "output": {
+      "predicted_latency_s": 1.3482555223880597e-05
+    }
+  },
+  {
+    "name": "gemm_h100_128",
+    "config": {
+      "shape": [
+        128,
+        4096,
+        4096
+      ],
+      "tiling": [
+        64,
+        64,
+        32,
+        32,
+        32,
+        32,
+        3,
+        11
+      ]
+    },
+    "first_s": 0.001992222008993849,
+    "status": "ok",
+    "calls_per_batch": 15,
+    "warm_s": [
+      0.001865086801505337,
+      0.001821658801054582,
+      0.0018406579348569116,
+      0.001917565466525654,
+      0.0018678501345372447,
+      0.0018671673994200926,
+      0.001826766333154713
+    ],
+    "median_s": 0.001865086801505337,
+    "min_s": 0.001821658801054582,
+    "max_s": 0.001917565466525654,
+    "output": {
+      "predicted_latency_s": 2.2016867777935376e-05
+    }
+  },
+  {
+    "name": "gemm_h100_1024",
+    "config": {
+      "shape": [
+        1024,
+        4096,
+        4096
+      ],
+      "tiling": [
+        128,
+        256,
+        32,
+        64,
+        128,
+        32,
+        3,
+        8
+      ]
+    },
+    "first_s": 0.0017987430037464947,
+    "status": "ok",
+    "calls_per_batch": 16,
+    "warm_s": [
+      0.0014475198131549405,
+      0.001427665874871309,
+      0.0014425893732550321,
+      0.0014554974386555841,
+      0.0014365195002028486,
+      0.0014639868113590637,
+      0.0014362584388436517
+    ],
+    "median_s": 0.0014425893732550321,
+    "min_s": 0.001427665874871309,
+    "max_s": 0.0014639868113590637,
+    "output": {
+      "predicted_latency_s": 5.6033262713445186e-05
+    }
+  },
+  {
+    "name": "gemm_h100_4096",
+    "config": {
+      "shape": [
+        4096,
+        4096,
+        4096
+      ],
+      "tiling": [
+        256,
+        256,
+        32,
+        128,
+        128,
+        32,
+        3,
+        11
+      ]
+    },
+    "first_s": 0.0031198399956338108,
+    "status": "ok",
+    "calls_per_batch": 9,
+    "warm_s": [
+      0.002804153110547405,
+      0.002815632666978571,
+      0.002770363110660886,
+      0.0028066931117791682,
+      0.002825578888102124,
+      0.0028662328905839887,
+      0.002915835667711993
+    ],
+    "median_s": 0.002815632666978571,
+    "min_s": 0.002770363110660886,
+    "max_s": 0.002915835667711993,
+    "output": {
+      "predicted_latency_s": 0.00016116454159077108
+    }
+  },
+  {
+    "name": "gemm_candidate_scan_h100",
+    "config": {
+      "shape": [
+        64,
+        512,
+        512
+      ],
+      "candidates": 27
+    },
+    "first_s": 2.221426069008885,
+    "status": "ok",
+    "calls_per_batch": 1,
+    "warm_s": [
+      2.2084359340078663,
+      2.162951760023134,
+      2.3224600889952853,
+      2.2927106260030996,
+      2.327819345984608,
+      2.442684836976696,
+      2.272886161983479
+    ],
+    "median_s": 2.2927106260030996,
+    "min_s": 2.162951760023134,
+    "max_s": 2.442684836976696,
+    "output": {
+      "min_predicted_latency_s": 2.5756384522028963e-06,
+      "candidates": 27
+    }
+  },
+  {
+    "name": "gemm_synthetic_3d_1",
+    "config": {
+      "shape": [
+        1,
+        4096,
+        4096
+      ],
+      "tiling": [
+        1,
+        128,
+        32,
+        1,
+        64,
+        32,
+        3,
+        1
+      ]
+    },
+    "first_s": 0.0008783790108282119,
+    "status": "ok",
+    "calls_per_batch": 34,
+    "warm_s": [
+      0.0005356439120505991,
+      0.0005436340588323004,
+      0.0008877044713110937,
+      0.0006123408829272889,
+      0.0005857650591197479,
+      0.0005427485876305796,
+      0.0005607236474615467
+    ],
+    "median_s": 0.0005607236474615467,
+    "min_s": 0.0005356439120505991,
+    "max_s": 0.0008877044713110937,
+    "output": {
+      "predicted_latency_s": 0.0011566929339403493
+    }
+  },
+  {
+    "name": "gemm_synthetic_3d_128",
+    "config": {
+      "shape": [
+        128,
+        4096,
+        4096
+      ],
+      "tiling": [
+        128,
+        128,
+        32,
+        64,
+        64,
+        32,
+        3,
+        4
+      ]
+    },
+    "first_s": 0.0008283159986604005,
+    "status": "ok",
+    "calls_per_batch": 36,
+    "warm_s": [
+      0.0006049145554748571,
+      0.0005184790279599838,
+      0.0005233694165427652,
+      0.0005174696666977575,
+      0.0005153254727095676,
+      0.0005421609716399366,
+      0.000553466527586958
+    ],
+    "median_s": 0.0005233694165427652,
+    "min_s": 0.0005153254727095676,
+    "max_s": 0.0006049145554748571,
+    "output": {
+      "predicted_latency_s": 0.0013229846926600152
+    }
+  },
+  {
+    "name": "gemm_synthetic_3d_1024",
+    "config": {
+      "shape": [
+        1024,
+        4096,
+        4096
+      ],
+      "tiling": [
+        256,
+        256,
+        32,
+        128,
+        128,
+        32,
+        3,
+        4
+      ]
+    },
+    "first_s": 0.0012677809863816947,
+    "status": "ok",
+    "calls_per_batch": 23,
+    "warm_s": [
+      0.0009988811747778368,
+      0.0009444884351029506,
+      0.0009434329998760444,
+      0.0009601280009677714,
+      0.0009599745225505499,
+      0.0011125349998980275,
+      0.0013303576523195143
+    ],
+    "median_s": 0.0009601280009677714,
+    "min_s": 0.0009434329998760444,
+    "max_s": 0.0013303576523195143,
+    "output": {
+      "predicted_latency_s": 0.004472986041249712
+    }
+  },
+  {
+    "name": "gemm_synthetic_3d_4096",
+    "config": {
+      "shape": [
+        4096,
+        4096,
+        4096
+      ],
+      "tiling": [
+        256,
+        256,
+        32,
+        128,
+        128,
+        32,
+        3,
+        4
+      ]
+    },
+    "first_s": 0.003818806988419965,
+    "status": "ok",
+    "calls_per_batch": 7,
+    "warm_s": [
+      0.0036198934290691148,
+      0.003427701856708154,
+      0.003483411140872964,
+      0.003457552570450519,
+      0.003453109284496999,
+      0.003571420575359038,
+      0.0036216147169138174
+    ],
+    "median_s": 0.003483411140872964,
+    "min_s": 0.003427701856708154,
+    "max_s": 0.0036216147169138174,
+    "output": {
+      "predicted_latency_s": 0.01788590075125573
+    }
+  },
+  {
+    "name": "gemm_candidate_scan_synthetic_3d",
+    "config": {
+      "shape": [
+        64,
+        512,
+        512
+      ],
+      "candidates": 27
+    },
+    "first_s": 2.1749623569776304,
+    "status": "ok",
+    "calls_per_batch": 1,
+    "warm_s": [
+      2.0869998400157783,
+      2.0729742019902915,
+      2.0955622420005966,
+      2.2748271960008424,
+      2.129173635999905,
+      2.0810882310033776,
+      2.102932313020574
+    ],
+    "median_s": 2.0955622420005966,
+    "min_s": 2.0729742019902915,
+    "max_s": 2.2748271960008424,
+    "output": {
+      "min_predicted_latency_s": 4.392465172315372e-05,
+      "candidates": 27
+    }
+  },
+  {
+    "name": "bank_sampled_64",
+    "config": {
+      "shape": [
+        64,
+        64,
+        64
+      ],
+      "tiling": {
+        "tb_m": 32,
+        "tb_n": 32,
+        "tb_k": 32,
+        "stage": 2,
+        "ctas_per_wave": 8,
+        "row_panel": 1,
+        "column_panel": null,
+        "raster_axis": "legacy"
+      },
+      "options": {
+        "connectivity": "direct",
+        "a_miss_rate": 1.0,
+        "b_miss_rate": 1.0,
+        "c_write_rate": 1.0,
+        "coalesce_scope": "wave",
+        "max_spatial_samples": 4,
+        "max_k_samples": 4,
+        "sampling_mode": "representative",
+        "deterministic_seed": 0,
+        "smem_buffer_bytes_per_cta": null,
+        "apply_littles_law": true,
+        "l2_cache": null,
+        "l2_exact_profile_threshold": 4096
+      }
+    },
+    "first_s": 0.005661777016939595,
+    "status": "ok",
+    "calls_per_batch": 5,
+    "warm_s": [
+      0.004771554004400968,
+      0.004793127399170771,
+      0.0048462658014614135,
+      0.004700695403153076,
+      0.004678881197469309,
+      0.004668084596050903,
+      0.004699914396042004
+    ],
+    "median_s": 0.004700695403153076,
+    "min_s": 0.004668084596050903,
+    "max_s": 0.0048462658014614135,
+    "output": {
+      "predicted_memory_cycles": 515.0,
+      "profiles": 3
+    }
+  },
+  {
+    "name": "bank_exact_64",
+    "config": {
+      "shape": [
+        64,
+        64,
+        64
+      ],
+      "tiling": {
+        "tb_m": 32,
+        "tb_n": 32,
+        "tb_k": 32,
+        "stage": 2,
+        "ctas_per_wave": 8,
+        "row_panel": 1,
+        "column_panel": null,
+        "raster_axis": "legacy"
+      },
+      "options": {
+        "connectivity": "direct",
+        "a_miss_rate": 1.0,
+        "b_miss_rate": 1.0,
+        "c_write_rate": 1.0,
+        "coalesce_scope": "wave",
+        "max_spatial_samples": null,
+        "max_k_samples": null,
+        "sampling_mode": "representative",
+        "deterministic_seed": 0,
+        "smem_buffer_bytes_per_cta": null,
+        "apply_littles_law": true,
+        "l2_cache": null,
+        "l2_exact_profile_threshold": 4096
+      }
+    },
+    "first_s": 0.00521351199131459,
+    "status": "ok",
+    "calls_per_batch": 5,
+    "warm_s": [
+      0.004718506202334538,
+      0.00468778419890441,
+      0.004684528202051297,
+      0.004769222799222916,
+      0.004691671597538516,
+      0.004918237595120445,
+      0.0047805506037548184
+    ],
+    "median_s": 0.004718506202334538,
+    "min_s": 0.004684528202051297,
+    "max_s": 0.004918237595120445,
+    "output": {
+      "predicted_memory_cycles": 515.0,
+      "profiles": 3
+    }
+  },
+  {
+    "name": "bank_sampled_256",
+    "config": {
+      "shape": [
+        256,
+        256,
+        256
+      ],
+      "tiling": {
+        "tb_m": 32,
+        "tb_n": 32,
+        "tb_k": 32,
+        "stage": 2,
+        "ctas_per_wave": 8,
+        "row_panel": 1,
+        "column_panel": null,
+        "raster_axis": "legacy"
+      },
+      "options": {
+        "connectivity": "direct",
+        "a_miss_rate": 1.0,
+        "b_miss_rate": 1.0,
+        "c_write_rate": 1.0,
+        "coalesce_scope": "wave",
+        "max_spatial_samples": 4,
+        "max_k_samples": 4,
+        "sampling_mode": "representative",
+        "deterministic_seed": 0,
+        "smem_buffer_bytes_per_cta": null,
+        "apply_littles_law": true,
+        "l2_cache": null,
+        "l2_exact_profile_threshold": 4096
+      }
+    },
+    "first_s": 0.027712925017112866,
+    "status": "ok",
+    "calls_per_batch": 1,
+    "warm_s": [
+      0.028314514987869188,
+      0.036436831986065954,
+      0.027684050000971183,
+      0.02752154800691642,
+      0.03125962600461207,
+      0.02817795000737533,
+      0.028384412988089025
+    ],
+    "median_s": 0.028314514987869188,
+    "min_s": 0.02752154800691642,
+    "max_s": 0.036436831986065954,
+    "output": {
+      "predicted_memory_cycles": 4272.0,
+      "profiles": 20
+    }
+  },
+  {
+    "name": "bank_exact_256",
+    "config": {
+      "shape": [
+        256,
+        256,
+        256
+      ],
+      "tiling": {
+        "tb_m": 32,
+        "tb_n": 32,
+        "tb_k": 32,
+        "stage": 2,
+        "ctas_per_wave": 8,
+        "row_panel": 1,
+        "column_panel": null,
+        "raster_axis": "legacy"
+      },
+      "options": {
+        "connectivity": "direct",
+        "a_miss_rate": 1.0,
+        "b_miss_rate": 1.0,
+        "c_write_rate": 1.0,
+        "coalesce_scope": "wave",
+        "max_spatial_samples": null,
+        "max_k_samples": null,
+        "sampling_mode": "representative",
+        "deterministic_seed": 0,
+        "smem_buffer_bytes_per_cta": null,
+        "apply_littles_law": true,
+        "l2_cache": null,
+        "l2_exact_profile_threshold": 4096
+      }
+    },
+    "first_s": 0.09540304500842467,
+    "status": "ok",
+    "calls_per_batch": 1,
+    "warm_s": [
+      0.09374778301571496,
+      0.09300015599001199,
+      0.09277999901678413,
+      0.09346100702532567,
+      0.10152640400337987,
+      0.09333033999428153,
+      0.09688120501232333
+    ],
+    "median_s": 0.09346100702532567,
+    "min_s": 0.09277999901678413,
+    "max_s": 0.10152640400337987,
+    "output": {
+      "predicted_memory_cycles": 4272.0,
+      "profiles": 72
+    }
+  },
+  {
+    "name": "bank_sampled_512",
+    "config": {
+      "shape": [
+        512,
+        512,
+        512
+      ],
+      "tiling": {
+        "tb_m": 32,
+        "tb_n": 32,
+        "tb_k": 32,
+        "stage": 2,
+        "ctas_per_wave": 8,
+        "row_panel": 1,
+        "column_panel": null,
+        "raster_axis": "legacy"
+      },
+      "options": {
+        "connectivity": "direct",
+        "a_miss_rate": 1.0,
+        "b_miss_rate": 1.0,
+        "c_write_rate": 1.0,
+        "coalesce_scope": "wave",
+        "max_spatial_samples": 4,
+        "max_k_samples": 4,
+        "sampling_mode": "representative",
+        "deterministic_seed": 0,
+        "smem_buffer_bytes_per_cta": null,
+        "apply_littles_law": true,
+        "l2_cache": null,
+        "l2_exact_profile_threshold": 4096
+      }
+    },
+    "first_s": 0.03311160200973973,
+    "status": "ok",
+    "calls_per_batch": 1,
+    "warm_s": [
+      0.04249369300669059,
+      0.028510619013104588,
+      0.02847345100599341,
+      0.03143136799917556,
+      0.02912579698022455,
+      0.02867674600565806,
+      0.028522518987301737
+    ],
+    "median_s": 0.02867674600565806,
+    "min_s": 0.02847345100599341,
+    "max_s": 0.04249369300669059,
+    "output": {
+      "predicted_memory_cycles": 30848.0,
+      "profiles": 20
+    }
+  },
+  {
+    "name": "bank_exact_512",
+    "config": {
+      "shape": [
+        512,
+        512,
+        512
+      ],
+      "tiling": {
+        "tb_m": 32,
+        "tb_n": 32,
+        "tb_k": 32,
+        "stage": 2,
+        "ctas_per_wave": 8,
+        "row_panel": 1,
+        "column_panel": null,
+        "raster_axis": "legacy"
+      },
+      "options": {
+        "connectivity": "direct",
+        "a_miss_rate": 1.0,
+        "b_miss_rate": 1.0,
+        "c_write_rate": 1.0,
+        "coalesce_scope": "wave",
+        "max_spatial_samples": null,
+        "max_k_samples": null,
+        "sampling_mode": "representative",
+        "deterministic_seed": 0,
+        "smem_buffer_bytes_per_cta": null,
+        "apply_littles_law": true,
+        "l2_cache": null,
+        "l2_exact_profile_threshold": 4096
+      }
+    },
+    "first_s": 0.6225452400103677,
+    "status": "ok",
+    "calls_per_batch": 1,
+    "warm_s": [
+      0.6437492859840859,
+      0.632314826012589,
+      0.6302814150112681,
+      0.6253156999882776,
+      0.6284451079845894,
+      0.6444183929997962,
+      0.6383154799987096
+    ],
+    "median_s": 0.632314826012589,
+    "min_s": 0.6253156999882776,
+    "max_s": 0.6444183929997962,
+    "output": {
+      "predicted_memory_cycles": 30848.0,
+      "profiles": 544
+    }
+  },
+  {
+    "name": "bank_sampled_1024",
+    "config": {
+      "shape": [
+        1024,
+        1024,
+        1024
+      ],
+      "tiling": {
+        "tb_m": 32,
+        "tb_n": 32,
+        "tb_k": 32,
+        "stage": 2,
+        "ctas_per_wave": 8,
+        "row_panel": 1,
+        "column_panel": null,
+        "raster_axis": "legacy"
+      },
+      "options": {
+        "connectivity": "direct",
+        "a_miss_rate": 1.0,
+        "b_miss_rate": 1.0,
+        "c_write_rate": 1.0,
+        "coalesce_scope": "wave",
+        "max_spatial_samples": 4,
+        "max_k_samples": 4,
+        "sampling_mode": "representative",
+        "deterministic_seed": 0,
+        "smem_buffer_bytes_per_cta": null,
+        "apply_littles_law": true,
+        "l2_cache": null,
+        "l2_exact_profile_threshold": 4096
+      }
+    },
+    "first_s": 0.02943722199415788,
+    "status": "ok",
+    "calls_per_batch": 1,
+    "warm_s": [
+      0.02896016399608925,
+      0.029362996021518484,
+      0.028740025009028614,
+      0.02960518401232548,
+      0.02952953800559044,
+      0.02931355600594543,
+      0.02897770397248678
+    ],
+    "median_s": 0.02931355600594543,
+    "min_s": 0.028740025009028614,
+    "max_s": 0.02960518401232548,
+    "output": {
+      "predicted_memory_cycles": 276480.0,
+      "profiles": 20
+    }
+  },
+  {
+    "name": "bank_sampled_4096",
+    "config": {
+      "shape": [
+        4096,
+        4096,
+        4096
+      ],
+      "tiling": {
+        "tb_m": 32,
+        "tb_n": 32,
+        "tb_k": 32,
+        "stage": 2,
+        "ctas_per_wave": 8,
+        "row_panel": 1,
+        "column_panel": null,
+        "raster_axis": "legacy"
+      },
+      "options": {
+        "connectivity": "direct",
+        "a_miss_rate": 1.0,
+        "b_miss_rate": 1.0,
+        "c_write_rate": 1.0,
+        "coalesce_scope": "wave",
+        "max_spatial_samples": 4,
+        "max_k_samples": 4,
+        "sampling_mode": "representative",
+        "deterministic_seed": 0,
+        "smem_buffer_bytes_per_cta": null,
+        "apply_littles_law": true,
+        "l2_cache": null,
+        "l2_exact_profile_threshold": 4096
+      }
+    },
+    "first_s": 0.0406531990156509,
+    "status": "ok",
+    "calls_per_batch": 1,
+    "warm_s": [
+      0.03984472597949207,
+      0.04094589001033455,
+      0.04038348500034772,
+      0.04211013199528679,
+      0.040271199017297477,
+      0.04014401399763301,
+      0.040420095989247784
+    ],
+    "median_s": 0.04038348500034772,
+    "min_s": 0.03984472597949207,
+    "max_s": 0.04211013199528679,
+    "output": {
+      "predicted_memory_cycles": 45219840.0,
+      "profiles": 20
+    }
+  },
+  {
+    "name": "bank_layout_search_1024",
+    "config": {
+      "shape": [
+        1024,
+        1024,
+        1024
+      ],
+      "tiling": {
+        "tb_m": 32,
+        "tb_n": 32,
+        "tb_k": 32,
+        "stage": 2,
+        "ctas_per_wave": 8,
+        "row_panel": 1,
+        "column_panel": null,
+        "raster_axis": "legacy"
+      },
+      "options": {
+        "connectivity": "direct",
+        "a_miss_rate": 1.0,
+        "b_miss_rate": 1.0,
+        "c_write_rate": 1.0,
+        "coalesce_scope": "wave",
+        "max_spatial_samples": 4,
+        "max_k_samples": 4,
+        "sampling_mode": "representative",
+        "deterministic_seed": 0,
+        "smem_buffer_bytes_per_cta": null,
+        "apply_littles_law": true,
+        "l2_cache": null,
+        "l2_exact_profile_threshold": 4096
+      },
+      "backend": "serial"
+    },
+    "first_s": 0.38873255398357287,
+    "status": "ok",
+    "calls_per_batch": 1,
+    "warm_s": [
+      0.43246180898859166,
+      0.38698193200980313,
+      0.38723771201330237,
+      0.38127847597934306,
+      0.37849418399855494,
+      0.38028416599263437,
+      0.3827780569845345
+    ],
+    "median_s": 0.3827780569845345,
+    "min_s": 0.37849418399855494,
+    "max_s": 0.43246180898859166,
+    "output": {
+      "candidates": 13,
+      "best_memory_cycles": 154112.0
+    }
+  },
+  {
+    "name": "bank_sectors_4096",
+    "config": {
+      "sectors": 4096,
+      "pattern": "contiguous"
+    },
+    "first_s": 0.0028483390051405877,
+    "status": "ok",
+    "calls_per_batch": 10,
+    "warm_s": [
+      0.002500394798698835,
+      0.0024045636993832884,
+      0.002413272499688901,
+      0.002551110301283188,
+      0.0025497250986518337,
+      0.002506345199071802,
+      0.0024061181000433864
+    ],
+    "median_s": 0.002500394798698835,
+    "min_s": 0.0024045636993832884,
+    "max_s": 0.002551110301283188,
+    "output": {
+      "sectors": 4096,
+      "predicted_cycles": 412.0
+    }
+  },
+  {
+    "name": "bank_sectors_65536",
+    "config": {
+      "sectors": 65536,
+      "pattern": "contiguous"
+    },
+    "first_s": 0.027632346987957135,
+    "status": "ok",
+    "calls_per_batch": 1,
+    "warm_s": [
+      0.024180259002605453,
+      0.030775377003010362,
+      0.029325038980459794,
+      0.023790759994881228,
+      0.023365139990346506,
+      0.023982471000635996,
+      0.02642487100092694
+    ],
+    "median_s": 0.024180259002605453,
+    "min_s": 0.023365139990346506,
+    "max_s": 0.030775377003010362,
+    "output": {
+      "sectors": 65536,
+      "predicted_cycles": 6592.0
+    }
+  },
+  {
+    "name": "bank_sectors_1048576",
+    "config": {
+      "sectors": 1048576,
+      "pattern": "contiguous"
+    },
+    "first_s": 0.9172478359832894,
+    "status": "ok",
+    "calls_per_batch": 1,
+    "warm_s": [
+      1.0123388259962667,
+      0.8502884080226067,
+      0.8361372420040425,
+      0.8454362110060174,
+      0.8568391889857594,
+      0.8573863339843228,
+      0.8340962890069932
+    ],
+    "median_s": 0.8502884080226067,
+    "min_s": 0.8340962890069932,
+    "max_s": 1.0123388259962667,
+    "output": {
+      "sectors": 1048576,
+      "predicted_cycles": 105472.0
+    }
+  },
+  {
+    "name": "gemm_h100_tile_16",
+    "config": {
+      "shape": [
+        1024,
+        4096,
+        4096
+      ],
+      "tiling": [
+        16,
+        16,
+        32,
+        8,
+        8,
+        32,
+        3,
+        4
+      ]
+    },
+    "first_s": 0.30229016198427416,
+    "status": "ok",
+    "calls_per_batch": 1,
+    "warm_s": [
+      0.2820345280051697,
+      0.26495718301157467,
+      0.2706965830002446,
+      0.26666268301778473,
+      0.2569288119848352,
+      0.2622844869911205,
+      0.2844423299829941
+    ],
+    "median_s": 0.26666268301778473,
+    "min_s": 0.2569288119848352,
+    "max_s": 0.2844423299829941,
+    "output": {
+      "predicted_latency_s": 0.0004999273812798897
+    }
+  },
+  {
+    "name": "gemm_h100_tile_32",
+    "config": {
+      "shape": [
+        1024,
+        4096,
+        4096
+      ],
+      "tiling": [
+        32,
+        32,
+        32,
+        16,
+        16,
+        32,
+        3,
+        4
+      ]
+    },
+    "first_s": 0.10628626999096014,
+    "status": "ok",
+    "calls_per_batch": 1,
+    "warm_s": [
+      0.12126876998809166,
+      0.1100903210171964,
+      0.10489490200416185,
+      0.10802970299846493,
+      0.1086764280044008,
+      0.10511402800329961,
+      0.10779191402252764
+    ],
+    "median_s": 0.10802970299846493,
+    "min_s": 0.10489490200416185,
+    "max_s": 0.12126876998809166,
+    "output": {
+      "predicted_latency_s": 0.0002603773372210491
+    }
+  },
+  {
+    "name": "gemm_h100_tile_64",
+    "config": {
+      "shape": [
+        1024,
+        4096,
+        4096
+      ],
+      "tiling": [
+        64,
+        64,
+        32,
+        32,
+        32,
+        32,
+        3,
+        4
+      ]
+    },
+    "first_s": 0.016740154998842627,
+    "status": "ok",
+    "calls_per_batch": 1,
+    "warm_s": [
+      0.016761520004365593,
+      0.01653175099636428,
+      0.016355816973373294,
+      0.01648858599946834,
+      0.016379932989366353,
+      0.016166121000424027,
+      0.01640931799192913
+    ],
+    "median_s": 0.01640931799192913,
+    "min_s": 0.016166121000424027,
+    "max_s": 0.016761520004365593,
+    "output": {
+      "predicted_latency_s": 0.0001346319700942715
+    }
+  },
+  {
+    "name": "gemm_h100_tile_128",
+    "config": {
+      "shape": [
+        1024,
+        4096,
+        4096
+      ],
+      "tiling": [
+        128,
+        128,
+        32,
+        64,
+        64,
+        32,
+        3,
+        4
+      ]
+    },
+    "first_s": 0.003261848003603518,
+    "status": "ok",
+    "calls_per_batch": 9,
+    "warm_s": [
+      0.002782578777340758,
+      0.0028054143347415244,
+      0.002825904776626784,
+      0.0028262783339919727,
+      0.0028085295537797115,
+      0.002817721555604496,
+      0.004105959889582462
+    ],
+    "median_s": 0.002817721555604496,
+    "min_s": 0.002782578777340758,
+    "max_s": 0.004105959889582462,
+    "output": {
+      "predicted_latency_s": 7.197900214299955e-05
+    }
+  },
+  {
+    "name": "bank_four_workload_search_batch",
+    "config": {
+      "shapes": [
+        [
+          128,
+          1024,
+          1024
+        ],
+        [
+          256,
+          2048,
+          1024
+        ],
+        [
+          1024,
+          1024,
+          1024
+        ],
+        [
+          1024,
+          4096,
+          4096
+        ]
+      ],
+      "backend": "serial",
+      "tiling": {
+        "tb_m": 32,
+        "tb_n": 32,
+        "tb_k": 32,
+        "stage": 2,
+        "ctas_per_wave": 8,
+        "row_panel": 1,
+        "column_panel": null,
+        "raster_axis": "legacy"
+      },
+      "options": {
+        "connectivity": "direct",
+        "a_miss_rate": 1.0,
+        "b_miss_rate": 1.0,
+        "c_write_rate": 1.0,
+        "coalesce_scope": "wave",
+        "max_spatial_samples": 4,
+        "max_k_samples": 4,
+        "sampling_mode": "representative",
+        "deterministic_seed": 0,
+        "smem_buffer_bytes_per_cta": null,
+        "apply_littles_law": true,
+        "l2_cache": null,
+        "l2_exact_profile_threshold": 4096
+      }
+    },
+    "first_s": 1.5188088540162425,
+    "status": "ok",
+    "calls_per_batch": 1,
+    "warm_s": [
+      1.533466298977146,
+      1.5286000940250233,
+      1.4978121590102091,
+      1.488831538008526,
+      1.5540790560189635,
+      1.5012344059941825,
+      1.5145966240088455
+    ],
+    "median_s": 1.5145966240088455,
+    "min_s": 1.488831538008526,
+    "max_s": 1.5540790560189635,
+    "output": {
+      "candidates": [
+        13,
+        13,
+        13,
+        13
+      ]
+    }
+  }
+]
