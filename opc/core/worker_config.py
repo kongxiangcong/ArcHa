@@ -174,6 +174,8 @@ def resolve_worker(config: dict, role: str, base=None, *, restricted: bool = Fal
         if located:
             prefix_argv[0] = str(Path(located).resolve())
         else:
+            # Even an unavailable lookup must not become a future PATH search.
+            prefix_argv[0] = str(Path(prefix_argv[0]).expanduser().resolve())
             options["binary_unavailable"] = True
         if isinstance(binary, str) and not binary.startswith("[") and binary.lower().endswith(".py"):
             options["binary"] = str(Path(binary).expanduser().resolve())
