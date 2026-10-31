@@ -8,7 +8,6 @@ produces a report and, only with an explicit flag, moves a branch the user named
 from __future__ import annotations
 
 import json
-import os
 import hashlib
 import subprocess
 import time
@@ -202,10 +201,7 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
                     % (cur["seq"], cur["metrics"]["degraded_by"]))
 
     # Full delivery evidence belongs to the selected commit, never another champion.
-    key = {"delivery_policy": 2, "diagnostic_gates": sorted(engine.diagnostic_gates()), "commit": selected, "evaluator": now, "toolchain": engine.toolchain_digest(selected),
-           "task": task.digest, "environment": hashlib.sha256(json.dumps({
-               "process": dict(os.environ), "component": engine.comp.env, "gates": [g.env for g in engine.comp.gates]},
-               sort_keys=True).encode()).hexdigest()}
+    key = engine.delivery_evidence_key(selected, now, engine.toolchain_digest(selected))
     evidence = None
     evidence_source = None
     previous_confirm = next(((previous, path) for previous, path in reversed(records)
@@ -419,11 +415,14 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
             action = 'supplement_evidence'
         else:
             action = 'repair_candidate'
+    baselines = engine.ledger.events(engine.run_id, 'measurement_baseline')
+    baseline_source = baselines[-1]['body'].get('evidence_source') if baselines else None
     report = {"promotion_id": pid, "run_id": engine.run_id, "task": task.task_id,
               "execution_revision": run["revision"], "execution_task_digest": run["task_digest"],
               "acceptance_revision": task.revision, "acceptance_task_digest": task.digest,
               "standards_confirmation": confirmation, "reassessed": revised,
               "baseline": base["commit_sha"], "selected_version": selected,
+              "baseline_source": baseline_source, "baseline_mode": ("referenced" if baseline_source else "executed") if m else "not_applicable",
               "candidate": candidate,
               "review_kind": review, "confirm_repeats": confirm_repeats,
               "next_step": dict(action=action, gaps=[f for f in findings if f['severity'] == 'block']),
@@ -590,6 +589,7 @@ def render(r: dict[str, Any]) -> str:
              "- run: `%s`, task `%s`" % (r["run_id"], r["task"]),
              "- baseline `%s` -> selected `%s`" % (r["baseline"][:12], r["selected_version"][:12]),
              "- delivery candidate: %s" % json.dumps(r.get("candidate"), ensure_ascii=False),
+             "- baseline measurement: %s; source: %s" % (r.get('baseline_mode'), r.get('baseline_source')),
              "- evaluation: %s; source: %s" % (r.get('evaluation_mode'), r.get('evidence_source')),
              "- next step: %s" % (r.get('next_step') or {}).get('action'),
              "- objective `%s`: claimed gain %+.2f%%" % (r["objective"], 100 * (r["claimed_gain"] or 0)),
