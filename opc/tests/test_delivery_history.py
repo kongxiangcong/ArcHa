@@ -189,3 +189,40 @@ def test_history_distinguishes_claim_versions_with_the_same_code_commit(make_pro
     observed = observer.run(observer._id('run', second.run_id))['data']['acceptance_history'][0]
     assert observed['candidate'] == history['candidate']
     assert second.ledger.path.read_bytes() == before and len(second.ledger.calls(second.run_id)) == calls
+
+
+def test_same_acceptance_source_allows_new_run_with_different_local_budget(make_project, engine_for):
+    contract = task(requirements=[])
+    root = make_project(tsk=contract)
+    source_path = root / '.opc/tasks/t-toy/revisions/r0001/task.json'
+    original_contract = source_path.read_bytes()
+    settings = root / '.opc/local/workers.json'
+    write(settings, json.dumps(dict(budget=dict(max_wall_seconds=300))))
+    first = use_sequence(engine_for(root), Sequence([plan(1), stop], [7]))
+    first.run()
+    accepted = promote(first, source_run=first.run_id)
+    assert accepted['complete'] and accepted['selected_metrics']['loss'] == 1
+    old_report = Path(accepted['report_dir']) / 'report.json'
+    old_bytes = old_report.read_bytes()
+    old_markdown = (old_report.parent / 'PROMOTION.md').read_bytes()
+    write(settings, json.dumps(dict(budget=dict(max_wall_seconds=400))))
+    later = use_sequence(engine_for(root), Sequence([stop]))
+    result = later.run(new_run=True)
+    assert result['run_id'] != first.run_id
+    assert later.task.digest != first.task.digest
+    assert source_path.read_bytes() == original_contract
+    assert later.ledger.events(later.run_id, 'promotion_report') == []
+    failed = promote(later, source_run=later.run_id)
+    assert not failed['complete'] and failed['selected_metrics']['loss'] == 17
+    assert failed['evidence_source'] is None
+    assert failed['acceptance_source_digest'] == accepted['acceptance_source_digest']
+    assert failed['acceptance_task_digest'] != accepted['acceptance_task_digest']
+    assert old_report.read_bytes() == old_bytes
+    assert (old_report.parent / 'PROMOTION.md').read_bytes() == old_markdown
+    # An actual edit of the source standards still requires a new revision.
+    changed = json.loads(original_contract)
+    changed['acceptance']['target']['value'] = 18
+    source_path.write_text(json.dumps(changed))
+    with pytest.raises(OPCError, match='frozen revision.*new revision'):
+        use_sequence(engine_for(root), Sequence([])).run(new_run=True)
+    assert len(later.ledger.runs()) == 2
