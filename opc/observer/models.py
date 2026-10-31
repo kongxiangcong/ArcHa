@@ -156,6 +156,7 @@ class Run(Entity):
     preparation: ObservedState
     execution: ObservedState
     acceptance: ObservedState
+    acceptance_history: list[dict[str, Any]] = Field(default_factory=list)
     stop_reason: str | None = None
     phase: str
     last_activity_at: str | None = None
