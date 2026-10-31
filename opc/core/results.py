@@ -36,11 +36,12 @@ def acceptance_history(revisions: dict[str, str], reports: list[tuple[dict, str]
         applicable = current is None or current == recorded
         latest[revision] = dict(revision=revision, run_id=report['run_id'],
             execution_revision=report.get('execution_revision'), selected_version=report['selected_version'],
+            candidate=report.get('candidate', dict(commit=report['selected_version'])),
             status=('passed' if report['complete'] else 'failed') if applicable else 'not_evaluated',
             reason=None if applicable else 'current contract differs from recorded acceptance revision',
             report_path=path)
     return [latest.get(revision, dict(revision=revision, run_id=None, execution_revision=None,
-                selected_version=None, status='not_evaluated', reason=None, report_path=None))
+                selected_version=None, candidate=None, status='not_evaluated', reason=None, report_path=None))
             for revision in sorted(set(revisions) | set(latest))]
 
 
