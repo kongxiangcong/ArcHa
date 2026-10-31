@@ -1,0 +1,40 @@
+{
+  "deepstack-development": {
+    "files": 8,
+    "source": {
+      "upstream": "https://github.com/tile-ai/DeepStack",
+      "commit": "17e21bf54115e11b9e7c6edc0b2d1723d25d022b",
+      "distribution": "interface-only derived task; solution withheld"
+    },
+    "starter_commit": "f30e8ae0648e7bd0ff22d8eb8213c6ed0f2ca1b7"
+  },
+  "ramulator2-optimization": {
+    "files": 796,
+    "source": {
+      "upstream": "https://github.com/CMU-SAFARI/ramulator2",
+      "commit": "be93be78055d922aa1d4d33e15bcc8f2b0c61a9d",
+      "distribution": "complete fixed source and vendored build dependencies"
+    },
+    "starter_commit": "249dc1ac495b0f016453787532980384b6d773fe"
+  },
+  "deepstack-exploration": {
+    "files": 411,
+    "source": {
+      "upstream": "https://github.com/tile-ai/DeepStack",
+      "commit": "17e21bf54115e11b9e7c6edc0b2d1723d25d022b",
+      "distribution": "complete fixed original release; independent copy"
+    },
+    "starter_commit": "b40e138268552f6b2f097d692187d0aaa4341b83",
+    "paper_sha256": "d6c33a1a5358c6be67264645e5b91ac95ab904014a93d56a0b99a695ef8cd920"
+  },
+  "deepstack-end-to-end": {
+    "files": 411,
+    "source": {
+      "upstream": "https://github.com/tile-ai/DeepStack",
+      "commit": "17e21bf54115e11b9e7c6edc0b2d1723d25d022b",
+      "distribution": "complete fixed original release; independent copy"
+    },
+    "starter_commit": "919c4c4df13f979b4ebdcdabd86b92609ddf1d6d",
+    "paper_sha256": "d6c33a1a5358c6be67264645e5b91ac95ab904014a93d56a0b99a695ef8cd920"
+  }
+}

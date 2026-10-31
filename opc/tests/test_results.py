@@ -17,11 +17,11 @@ def test_external_batch_idempotence_preserves_judgments_and_originals(tmp_path):
     root = tmp_path
     raw = root / 'research/raw'
     raw.mkdir(parents=True)
-    (raw / 'plan.md').write_text('A predicts 4, B predicts 2; same conditions')
-    (raw / 'index.json').write_text('{"observed": 3}')
+    (raw / 'plan.md').write_text('A predicts 4, B predicts 2; same conditions', encoding="utf-8")
+    (raw / 'index.json').write_text('{"observed": 3}', encoding="utf-8")
     register(root, ENTRY, [])
     entry = root / ENTRY
-    entry.write_text(entry.read_text().replace('待分析；独立审核待完成。', 'C1: 尚不能判定；条件为 X。'))
+    entry.write_text(entry.read_text(encoding="utf-8").replace('待分析；独立审核待完成。', 'C1: 尚不能判定；条件为 X。'), encoding="utf-8")
     kwargs = dict(root=root, artifact_root=root / 'artifacts', value=ENTRY, batch='batch-1',
                   experiment_id='E001', question='distinguish A/B', status='completed',
                   refs={'plan':'../raw/plan.md', 'evidence':'../raw/index.json'})
@@ -30,7 +30,7 @@ def test_external_batch_idempotence_preserves_judgments_and_originals(tmp_path):
     external_batch(**kwargs)
     assert entry.read_bytes() == first
     assert 'C1: 尚不能判定' in first.decode()
-    assert (raw / 'index.json').read_text() == '{"observed": 3}'
+    assert (raw / 'index.json').read_text(encoding="utf-8") == '{"observed": 3}'
     rows = split(first.decode())[1]
     assert len(rows) == 1 and rows[0]['key'] == 'external/batch-1'
     assert rows[0]['issues'] == ['analysis: 未提供', 'review: 未提供']
@@ -53,14 +53,14 @@ def test_two_runs_external_batch_and_current_conclusion(make_project, engine_for
     original = (root / 'research/raw.json').read_bytes()
     external_batch(root, e.bindings.artifact_root, ENTRY, 'control-1', 'E001', 'control', 'failed',
                    {'evidence': '../raw.json'})
-    (root / 'research/spec.md').write_text('C1: refuted by control; condition X; old review does not cover revision')
+    (root / 'research/spec.md').write_text('C1: refuted by control; condition X; old review does not cover revision', encoding="utf-8")
     seq = Sequence([plan(1, experiment_id='E001'), stop], [5])
     e2 = use_sequence(engine_for(root), seq)
     e2.run(new_run=True)
     assert e2.run_id != first_run
     assert seq.contexts[0]['history'] == []
     assert 'refuted by control' in json.dumps(seq.contexts[0]['task_results'])
-    rows = split((root / ENTRY).read_text())[1]
+    rows = split((root / ENTRY).read_text(encoding="utf-8"))[1]
     questions = [r for r in rows if r.get('experiment_id') == 'E001']
     assert len(questions) == 3
     assert {r['key'].split('/')[0] for r in questions} == {first_run, e2.run_id, 'external'}
@@ -81,12 +81,12 @@ def test_registration_failure_retries_without_running_experiment(make_project, e
     result = e.run()
     assert result['state'] == 'closed'
     assert e.attempt_records()[0]['candidate']
-    report = json.loads((e.artifact_dir() / 'views/report.json').read_text())
+    report = json.loads((e.artifact_dir() / 'views/report.json').read_text(encoding="utf-8"))
     assert report['results_registration_error'] == 'disk full'
     cost = e.ledger.totals(e.run_id)
     monkeypatch.setattr(results, 'write_text', real)
     e.write_views()
-    assert len(split((root / ENTRY).read_text())[1]) == 2
+    assert len(split((root / ENTRY).read_text(encoding="utf-8"))[1]) == 2
     assert e.ledger.totals(e.run_id) == cost
     assert len(seq.contexts) == 2
 
@@ -95,7 +95,7 @@ def test_missing_sources_bounds_and_path_boundary(tmp_path):
     register(tmp_path, ENTRY, [])
     path = tmp_path / ENTRY
     path.write_text('# Current\n[missing](../missing.md)\n[escape](../../../../etc/passwd)\n'
-                    '[secret](../../.env)\n' + 'unknown; ' * 3000)
+                    '[secret](../../.env)\n' + 'unknown; ' * 3000, encoding="utf-8")
     result = snapshot(tmp_path, tmp_path / 'artifacts', ENTRY, budget=120)
     assert sum(len(s['excerpt']) for s in result['sources']) <= 120
     assert result['sources'][0]['truncated']
@@ -123,7 +123,7 @@ def test_review_keeps_consumed_version_and_does_not_remeasure_on_text_change(mak
     old_bytes = old.read_bytes()
     assert 'C1 v1: support' in json.dumps(supplied[0])
     assert not any('older source versions' in i for i in e.results_context()['issues'])
-    (root / 'research/spec.md').write_text('C1 v2: refuted; review pending')
+    (root / 'research/spec.md').write_text('C1 v2: refuted; review pending', encoding="utf-8")
     def no_measurements(*a, **kw):
         raise AssertionError('text revision should reuse unchanged delivery measurements')
     monkeypatch.setattr(e, 'evaluate_commit', no_measurements)
@@ -143,7 +143,7 @@ def test_old_contract_and_new_revision_binding(make_project):
     new = {**original.raw, 'revision': 'r0002', 'results_path': ENTRY}
     p = original.path.parent.parent / 'r0002/task.json'
     p.parent.mkdir()
-    p.write_text(json.dumps(new))
+    p.write_text(json.dumps(new), encoding="utf-8")
     assert TaskSpec.load(root, 't-toy').raw['results_path'] == ENTRY
     assert TaskSpec.load(root, 't-toy', 'r0001').digest == original.digest
 
@@ -155,7 +155,7 @@ def test_external_cli_works_without_engine_run(make_project, capsys):
     assert main(args + ['--initialize']) == 0
     assert main(args + ['--batch', 'b1', '--experiment-id', 'E1', '--status', 'aborted']) == 0
     assert not (root / '.opc/local/ledger.sqlite3').exists()
-    assert split((root / ENTRY).read_text())[1][0]['status'] == 'aborted'
+    assert split((root / ENTRY).read_text(encoding="utf-8"))[1][0]['status'] == 'aborted'
     assert 'aborted' in capsys.readouterr().out
 
 
@@ -173,7 +173,7 @@ def test_observer_reads_results_and_explicit_links_without_writes(make_project):
     assert any(a['title'] == '任务成果' for a in detail['artifacts'])
     assert any(a['meta']['availability'] == 'missing' for a in detail['artifacts'])
     spec = root / 'research/spec.md'
-    resolved = adapter._markdown_links(spec, spec.read_text())
+    resolved = adapter._markdown_links(spec, spec.read_text(encoding="utf-8"))
     assert 'raw.json' in resolved and '../.env' not in resolved
     after = {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file() and '.git' not in p.parts}
     assert before == after
@@ -184,13 +184,13 @@ def test_interrupted_and_cached_batches_are_not_new_measurements(make_project, e
     e = use_sequence(engine_for(root), Sequence([plan(1, experiment_id='E1')], ['interrupt']))
     result = e.run()
     assert result['state'] == 'paused'
-    rows = split((root / ENTRY).read_text())[1]
+    rows = split((root / ENTRY).read_text(encoding="utf-8"))[1]
     assert rows[0]['run_state'] == 'paused'
     assert not rows[0]['refs'].get('evidence')
     assert e.task.acceptance.objective_metric is None
     external_batch(root, e.bindings.artifact_root, ENTRY, 'old-data', 'E1', 'reuse', 'cached',
                    {'evidence': '../missing-index.json#repeat-2'})
-    text = (root / ENTRY).read_text()
+    text = (root / ENTRY).read_text(encoding="utf-8")
     assert '历史缓存，非新实测' in text
     assert split(text)[1][0]['refs']['evidence'].endswith('#repeat-2')
 
@@ -201,7 +201,7 @@ def test_invalid_worker_plan_cannot_corrupt_results(make_project, engine_for):
     e.run()
     row = e.attempt_records()[0]
     assert row['outcome'] == 'worker_failed'
-    assert split((root / ENTRY).read_text())[1][0]['experiment_id'] is None
+    assert split((root / ENTRY).read_text(encoding="utf-8"))[1][0]['experiment_id'] is None
 
 
 def test_missing_entry_is_visible_and_symlinks_cannot_expose_secrets(make_project):
@@ -222,13 +222,13 @@ def test_missing_entry_is_visible_and_symlinks_cannot_expose_secrets(make_projec
         register(root, ENTRY, [])
     # A file registered earlier is rechecked at read time, even within project root.
     assert not adapter._allowed(entry)
-    assert (root / '.env').read_text() == 'PRIVATE'
+    assert (root / '.env').read_text(encoding="utf-8") == 'PRIVATE'
 
 
 def test_malformed_registration_keeps_existing_text(tmp_path):
     path = tmp_path / ENTRY
     path.parent.mkdir(parents=True)
-    path.write_text('# Conclusion\n<!-- archa-results:start -->\nbroken')
+    path.write_text('# Conclusion\n<!-- archa-results:start -->\nbroken', encoding="utf-8")
     before = path.read_bytes()
     with pytest.raises(OPCError, match='markers'):
         register(tmp_path, ENTRY, [])

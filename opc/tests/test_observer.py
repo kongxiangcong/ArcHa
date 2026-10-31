@@ -391,10 +391,12 @@ def test_unknown_run_state_preserves_raw_and_never_asserts_success(client,projec
     assert value['raw_value']=='future-state'
 
 
-def test_utf8_content_pagination_reassembles_exact_source(client,project):
+@pytest.mark.parametrize('line_ending', ['\n', '\r\n'], ids=['lf', 'crlf'])
+def test_utf8_content_pagination_reassembles_exact_source(client,project,line_ending):
     patch=project/'.opc/local/artifacts/test/dma/old-run/attempts/a000001/candidate.patch'
-    expected='中文边界\nASCII\n最后一行'
-    patch.write_text(expected,encoding='utf-8')
+    expected=line_ending.join(['中文边界', 'ASCII', '最后一行'])
+    # Exact source bytes: text-mode writes translate LF on Windows.
+    patch.write_bytes(expected.encode('utf-8'))
     artifact=next(a for a in run(client)['artifacts'] if 'candidate.patch' in a['label'])
     offset=0
     result=''
@@ -740,7 +742,7 @@ def test_map_task_and_brief_are_one_stable_task(project, entry):
     map_path = project / '.opc/research/research-map.md'
     before = ObserverAdapter(project).overview()['data']
     task_id = next(t['id'] for t in before['tasks'] if t['research_task_id'] == 'R01')
-    map_path.write_text(map_path.read_text().replace('tasks/r01/task.md', 'tasks/r01/' + entry))
+    map_path.write_text(map_path.read_text(encoding="utf-8").replace('tasks/r01/task.md', 'tasks/r01/' + entry), encoding="utf-8")
     adapter = ObserverAdapter(project)
     after = adapter.overview()['data']
     assert len(after['tasks']) == len(before['tasks']) == 3
@@ -752,7 +754,7 @@ def historical_binding(project, form, revision='r0001', path='.opc/research/task
     sha = hashlib.sha256((project / path).read_bytes()).hexdigest()
     contract_path = project / f'.opc/tasks/dma/revisions/{revision}/task.json'
     if form == 'source':
-        raw = json.loads(contract_path.read_text())
+        raw = json.loads(contract_path.read_text(encoding="utf-8"))
         raw['_source'] = dict(brief=path, sha256=sha)
         put(contract_path, raw)
     else:
@@ -763,7 +765,7 @@ def historical_binding(project, form, revision='r0001', path='.opc/research/task
         else:
             identity = f'dma/dma/{revision}' if form == 'task' else f'.opc/tasks/dma/revisions/{revision}/task.json'
             text = f'- Brief: `{path}`\n- Brief SHA-256: `{sha}`\n- {form.title()}: `{identity}`\n\n'
-        with target.open('a') as stream:
+        with target.open('a', encoding='utf-8') as stream:
             stream.write(text)
 
 
@@ -773,7 +775,7 @@ def test_revision_ownership_survives_historical_brief_change(project, form):
     for rev in ('r0001', 'r0002'):
         historical_binding(project, form, rev)
     brief = project / '.opc/research/tasks/r01/task-brief.md'
-    brief.write_text(brief.read_text() + '\n更新后的目标。\n')
+    brief.write_text(brief.read_text(encoding="utf-8") + '\n更新后的目标。\n', encoding="utf-8")
     adapter = ObserverAdapter(project)
     task = next(t for t in adapter.overview()['data']['tasks'] if t['research_task_id'] == 'R01')
     detail = adapter.research_task(task['id'])['data']
@@ -804,7 +806,7 @@ def test_conflicting_contract_source_and_handoff_do_not_choose_owner(project):
     from opc.observer.adapter import ObserverAdapter
     historical_binding(project, 'source')
     other = project / '.opc/research/tasks/r02/task-brief.md'
-    other.write_text((project / '.opc/research/tasks/r01/task-brief.md').read_text())
+    other.write_text((project / '.opc/research/tasks/r01/task-brief.md').read_text(encoding="utf-8"), encoding="utf-8")
     historical_binding(project, 'single', path='.opc/research/tasks/r02/task-brief.md')
     revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
     assert revision['ownership_state'] == 'ambiguous'
@@ -816,7 +818,7 @@ def test_brief_only_and_direct_task_remain_accessible(project):
     from opc.observer.adapter import ObserverAdapter
     path = project / '.opc/research/tasks/only/task-brief.md'
     path.parent.mkdir()
-    path.write_text('Goal: 只有简报\n')
+    path.write_text('Goal: 只有简报\n', encoding="utf-8")
     adapter = ObserverAdapter(project)
     tasks = adapter.overview()['data']['tasks']
     assert len(tasks) == 4
@@ -830,7 +832,7 @@ def test_same_owner_conflicting_historical_hashes_keep_content_ambiguous(project
     historical_binding(project, 'source')
     historical_binding(project, 'single')
     decisions = project / '.opc/context/DECISIONS.md'
-    decisions.write_text(decisions.read_text().split('sha256=')[0] + 'sha256=' + '0' * 64 + '\n')
+    decisions.write_text(decisions.read_text(encoding="utf-8").split('sha256=')[0] + 'sha256=' + '0' * 64 + '\n', encoding="utf-8")
     revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
     assert revision['ownership_state'] == 'verified'
     assert revision['link_state'] == 'ambiguous'
@@ -843,23 +845,23 @@ def test_multiline_boundaries_and_conflicting_identities(project, boundary):
     target = project / '.opc/context/DECISIONS.md'
     target.parent.mkdir(exist_ok=True)
     brief = '.opc/research/tasks/r01/task-brief.md'
-    target.write_text(f'- Brief: {brief}\n{boundary}\n- Task: dma/r0001\n')
+    target.write_text(f'- Brief: {brief}\n{boundary}\n- Task: dma/r0001\n', encoding="utf-8")
     revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
     assert revision['ownership_state'] == 'unresolved'
-    target.write_text(f'- Brief: {brief}\n- Task: dma/r0001\n- Contract: dma/r0002\n')
+    target.write_text(f'- Brief: {brief}\n- Task: dma/r0001\n- Contract: dma/r0002\n', encoding="utf-8")
     adapter = ObserverAdapter(project)
     assert all(r['ownership_state'] == 'ambiguous' for r in adapter.revisions.values())
-    target.write_text(f'- Brief: {brief}\n- Task: dma/r0001\n')
+    target.write_text(f'- Brief: {brief}\n- Task: dma/r0001\n', encoding="utf-8")
     revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
     assert revision['ownership_state'] == 'verified'
     assert revision['link_state'] == 'unverified'
     assert revision['brief_bindings'] == [dict(path=brief, sha256=None)]
-    target.write_text(f'task=dma revision=r0001 brief={brief}\n')
+    target.write_text(f'task=dma revision=r0001 brief={brief}\n', encoding="utf-8")
     revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
     assert revision['ownership_state'] == 'verified'
     assert revision['link_state'] == 'unverified'
     # Duplicate keys end a record; they must not overwrite earlier identities.
-    target.write_text(f'- Brief: {brief}\n- Task: dma/r0001\n- Task: dma/r0002\n')
+    target.write_text(f'- Brief: {brief}\n- Task: dma/r0001\n- Task: dma/r0002\n', encoding="utf-8")
     revisions = {r['revision']: r for r in ObserverAdapter(project).revisions.values()}
     assert revisions['r0001']['ownership_state'] == 'verified'
     assert revisions['r0002']['ownership_state'] == 'unresolved'
@@ -868,7 +870,7 @@ def test_multiline_boundaries_and_conflicting_identities(project, boundary):
 def test_two_map_identities_in_one_directory_remain_ambiguous(project):
     from opc.observer.adapter import ObserverAdapter
     path = project / '.opc/research/research-map.md'
-    path.write_text(path.read_text() + '- [ ] R03 | [第二身份](tasks/r01/task-brief.md) | status=todo | depends=none\n')
+    path.write_text(path.read_text(encoding="utf-8") + '- [ ] R03 | [第二身份](tasks/r01/task-brief.md) | status=todo | depends=none\n', encoding="utf-8")
     historical_binding(project, 'single')
     adapter = ObserverAdapter(project)
     assert len(adapter.tasks) == 4
@@ -890,7 +892,7 @@ def test_digest_match_does_not_hide_ambiguous_brief_source(project):
     from opc.observer.adapter import ObserverAdapter
     # The brief explicitly names a different task while residing beside R01.
     brief = project / '.opc/research/tasks/r01/task-brief.md'
-    brief.write_text(brief.read_text().replace('Map: .opc/research/research-map.md', 'Task: .opc/research/tasks/r02/task.md'))
+    brief.write_text(brief.read_text(encoding="utf-8").replace('Map: .opc/research/research-map.md', 'Task: .opc/research/tasks/r02/task.md'), encoding="utf-8")
     historical_binding(project, 'source')
     revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
     assert revision['ownership_state'] == 'verified'

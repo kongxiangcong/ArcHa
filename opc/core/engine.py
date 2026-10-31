@@ -113,8 +113,13 @@ class Engine:
                 problems.append("preparation not ready: " + receipt.get("reason", "unmetered draft"))
             else:
                 for rel, digest in receipt.get("files", {}).items():
-                    data = git("show", base + ":" + rel, cwd=self.root, binary=True)
-                    if hashlib.sha256(data).hexdigest() != digest:
+                    if digest.startswith("git-blob:"):
+                        actual = "git-blob:" + str(git("rev-parse", base + ":" + rel, cwd=self.root)).strip()
+                    else:
+                        # Receipts created before Git-normalized preparation hashes.
+                        data = git("show", base + ":" + rel, cwd=self.root, binary=True)
+                        actual = hashlib.sha256(data).hexdigest()
+                    if actual != digest:
                         problems.append("prepared acceptance changed since review: " + rel)
         dirty = dirty_paths(self.root)
         from .config import denied

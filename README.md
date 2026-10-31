@@ -133,12 +133,13 @@ docs/
   reviews/               历史独立审核记录
   reports/               已完成验证的可提交报告
   evidence/              审核与验证的原始证据
-tools/tests/fixtures/dma_backpressure/  工程验收素材（独立于框架回归）
-  cases/ adapters/ profiles/   固定任务、冻结评价器、实验配置
-  scripts/               历史实验的执行与报告辅助脚本
-  tests/                 评测工具测试（不进入默认引擎测试）
-  reports/               已审阅的历史准备与验证摘要
-  cache/ projects/ experiments/  本地依赖、独立 Git 工程与原件（不提交）
+benchmarks/              ArcHa 测试项目集合，入口见 benchmarks/README.md
+  dma-backpressure/      无数值优化目标的闭环冒烟任务
+    TASK.md starter/     worker 可见需求与初始工程
+    examiner/            外置验收与材料自检
+    reports/             已发生实验的可提交摘要与证据
+    runs/                独立工程、工作树、验收和日志（不提交）
+  deepstack/             主线固定版本登记，任务待定
 .tmp/                    本地临时脚本、测试夹具和可丢弃产物（不提交）
 pyproject.toml           包元数据（archa-opc 0.3.0，无运行时依赖）
 ```
