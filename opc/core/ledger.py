@@ -338,7 +338,16 @@ class Ledger:
                          if row.get("base_version") != current.get(row["claim_id"], {}).get("version")]
             if conflicts:
                 raise ClaimConflict(conflicts)
+            review = output.get("basis_review")
+            if review:
+                for change in review["changes"]:
+                    latest = self.claims(change["task_id"], change["claim_id"])[0]
+                    if latest["version"] != change["current_version"]:
+                        raise ClaimConflict([dict(change, current_version=latest["version"])])
             self._event(db, run_id, "expert_decision", None, dict(call_id=call_id, output=output))
+            if review and review["action"] in ("continue", "adjust"):
+                self._event(db, run_id, "work_reconsidered", review["attempt"],
+                            dict(review, reviewed_by_call=call_id))
             for row in output.get("claims", []):
                 self._event(db, run_id, "claim_registered", None,
                             dict(row, task_id=task_id, run_id=run_id,

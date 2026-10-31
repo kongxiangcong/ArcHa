@@ -94,6 +94,19 @@ PLAN_SCHEMA["properties"]["claims"] = {"type": "array", "items": {
         "related_claims": {"type": "array", "items": {"type": "string"}},
     }}}
 PLAN_SCHEMA["required"].append("claims")
+_BASIS_CHANGE_SCHEMA = {"type": "object", "additionalProperties": False,
+    "required": ["task_id", "claim_id", "version", "current_version", "current_status", "reason"],
+    "properties": {"task_id": {"type": "string"}, "claim_id": {"type": "string"},
+                   "version": {"type": "integer"}, "current_version": {"type": "integer"},
+                   "current_status": {"type": "string"}, "reason": {"type": "string"}}}
+PLAN_SCHEMA["properties"]["basis_review"] = {"type": ["object", "null"], "additionalProperties": False,
+    "required": ["attempt", "action", "scope", "reason", "changes"],
+    "properties": {"attempt": {"type": "integer"},
+                   "action": {"type": "string", "enum": ["continue", "adjust", "supplement"]},
+                   "scope": {"type": "string"}, "reason": {"type": "string"},
+                   "changes": {"type": "array", "items": _BASIS_CHANGE_SCHEMA}}}
+PLAN_SCHEMA["required"].append("basis_review")
+
 
 
 def designer_output(text: str) -> dict:
