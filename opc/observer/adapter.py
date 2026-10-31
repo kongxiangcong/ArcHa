@@ -820,6 +820,7 @@ class ObserverAdapter:
                                             if a.get('outcome') and not any(e['kind'] == 'conclusion' and e.get('attempt_no') == a['attempt_no'] for e in events)],
                           historical_pending_feedback=[p for p in pending if p['run_id'] != row['run_id']],
                           decisions=[e['body'] for e in events if e['kind'] == 'expert_decision'],
+                          closure=next((e['body'] for e in reversed(events) if e['kind'] == 'expert_stop'), None),
                           max_concurrency=mapping(frozen_baseline.get('execution')).get('max_concurrency'),
                           attempts=attempts, calls=call_refs, artifacts=[ref(a) for a in {a['id']: a for a in artifacts}.values()], report_refs=report_refs,
                           meta=run_meta)

@@ -60,12 +60,13 @@ def cmd_run(a) -> int:
                   base_ref=a.base, switch_backend=a.switch_backend)
     if a.deliver:
         s["complete"] = False
-        if getattr(e, "_returned_closed", False):
-            reports = e.ledger.events(e.run_id, "promotion_report")
-            if reports:
-                s["delivery"] = reports[-1]["body"]
-                s["complete"] = s["delivery"].get("complete", False)
-        elif s["state"] == "closed" and e.ledger.control(e.run_id) not in ("pause", "stop") and "by user" not in (s["stop_reason"] or ""):
+        reports = e.ledger.events(e.run_id, "promotion_report")
+        if getattr(e, "_returned_closed", False) and reports:
+            s["delivery"] = reports[-1]["body"]
+            s["complete"] = s["delivery"].get("complete", False)
+        elif (s["state"] == "closed" and (s.get("closure") or {}).get("finish") == "request_acceptance"
+              and (s["stop_reason"] or "").startswith("acceptance_requested:")
+              and e.ledger.control(e.run_id) not in ("pause", "stop")):
             from .core.promote import promote
             review = a.review
             if review is None and any(r.get("verification", "automated") != "automated" and r.get("required", True) for r in e.task.requirements):
@@ -122,6 +123,7 @@ def cmd_status(a) -> int:
         attempts = ledger.attempts(r["run_id"])
         work = ledger.events(r["run_id"], "working_version")
         selected = ledger.events(r["run_id"], "selected_version")
+        closure = ledger.events(r["run_id"], "expert_stop")
         default_commit = champ[0] if champ else work[-1]["body"]["commit"] if work else r["base_commit"]
         preparation = [x["body"] for x in ledger.events(r["run_id"], "preparation")][-1:]
         if preparation and not a.details:
@@ -129,6 +131,7 @@ def cmd_status(a) -> int:
                            {"source": ".opc/local/ledger.sqlite3", "details": "opc status --details"}]
         rows.append({**source, "run_id": r["run_id"], "task": r["task_id"], "revision": r["revision"],
                      "state": r["state"], "stop_reason": r["stop_reason"],
+                     "closure": closure[-1]["body"] if closure else None,
                      "preparation": preparation,
                      "control": ledger.control(r["run_id"]), "attempts": len(attempts),
                      "inflight_calls": [c["call_id"] for c in ledger.calls(r["run_id"]) if c["result"] is None],

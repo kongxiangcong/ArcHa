@@ -957,11 +957,11 @@ class Engine:
                 left[metric] = min(left[metric], available) if left.get(metric) is not None else available
         return left
 
-    def admit(self) -> None:
+    def admit(self, *, check_attempts: bool = True) -> None:
         """Ask before spending. The estimate is the mean decided attempt so far."""
         b, s = self.effective_budget(), self.spent()
         self.hard_check()
-        if b.max_attempts is not None and s["search_attempts"] >= b.max_attempts:
+        if check_attempts and b.max_attempts is not None and s["search_attempts"] >= b.max_attempts:
             raise BudgetExhausted("max_attempts", "%d search attempts used" % s["search_attempts"])
         done = [a for a in self.ledger.attempts(self.run_id) if a["cost"]]
         est_wall = sum(a["cost"]["wall_seconds"] for a in done) / len(done) if done else 0.0
@@ -1559,9 +1559,15 @@ class Engine:
                               blocked_by=missing, state=attempt["state"], outcome=attempt["outcome"], parent=attempt["parent"]))
         return nodes
 
-    def choose_work(self, ws: Workspaces, basis_attempt: int | None = None) -> tuple[int | None, StopDecision | None]:
+    def choose_work(self, ws: Workspaces, basis_attempt: int | None = None,
+                    *, final_feedback_only: bool = False) -> tuple[int | None, StopDecision | None]:
         """Run-level decisions select work; receipt/decision replay never calls the expert twice."""
         while True:
+            stops = self.ledger.events(self.run_id, "expert_stop")
+            if stops:
+                closure = stops[-1]["body"]
+                prefix = "acceptance_requested" if closure.get("finish") == "request_acceptance" else "expert_exhausted"
+                return None, StopDecision("closed", prefix + ": " + closure["reason"])
             champ = self.ledger.champion(self.run_id) or (self.working_commit(), Measurements())
             decisions = self.ledger.events(self.run_id, "expert_decision")
             consumed = {e["body"]["decision_call"] for e in self.ledger.events(self.run_id, "work_selected")}
@@ -1580,6 +1586,8 @@ class Engine:
                     affected = next(a for a in records if a["attempt_no"] == basis_attempt)
                     ctx["basis_review"] = dict(attempt=basis_attempt, plan=affected["plan"],
                                                changes=self.pending_basis_review(affected, records))
+                if final_feedback_only:
+                    ctx["final_feedback_only"] = True
                 ctx["source_root"] = str(loader)
                 tree = self.artifact_dir() / "materials"
                 tree.mkdir(parents=True, exist_ok=True)
@@ -1625,11 +1633,22 @@ class Engine:
                 why = self.validate_conclusions(output) if isinstance(output, dict) else "expert reply is not an object"
                 if why is None:
                     why = self.validate_claims(output)
+                if why is None and output.get("finish") is not None:
+                    if output["finish"] not in ("request_acceptance", "close_incomplete"):
+                        why = "finish must be request_acceptance or close_incomplete"
+                    elif not isinstance(output.get("stop_reason"), str) or not output["stop_reason"].strip():
+                        why = "finish requires a stop_reason"
+                    elif any(not isinstance(output.get(key, []), list) or
+                             any(not isinstance(item, str) or not item.strip() for item in output.get(key, []))
+                             for key in ("gaps", "reopen_conditions")):
+                        why = "finish gaps and reopen_conditions must be lists of nonempty text"
+                    elif output["finish"] == "close_incomplete" and not output.get("gaps"):
+                        why = "incomplete closeout requires remaining gaps"
                 review = output.get("basis_review") if isinstance(output, dict) else None
                 adjusting = basis_attempt is not None and isinstance(review, dict) and review.get("action") == "adjust"
                 if adjusting:
                     output["work_id"] = ctx["basis_review"]["plan"]["work_id"]
-                if why is None and not (call.exhausted or output.get("exhausted") or output.get("select_work") is False):
+                if why is None and not (final_feedback_only or call.exhausted or output.get("exhausted") or output.get("finish") or output.get("select_work") is False):
                     works = output.get("works") if output.get("works") is not None else [output]
                     if not isinstance(works, list) or not works:
                         why = "works must be a nonempty list of selected work"
@@ -1692,7 +1711,7 @@ class Engine:
             if review and review["action"] in ("continue", "adjust"):
                 self.ledger.event(self.run_id, "decision_applied", call_id=call_id)
                 return review["attempt"], None
-            if output.get("exhausted"):
+            if output.get("finish") or output.get("exhausted"):
                 pending = [a["attempt_no"] for a in self.attempt_records()
                            if a["outcome"] and a["conclusion"] is None]
                 if pending:
@@ -1702,10 +1721,15 @@ class Engine:
                 reason = output.get("stop_reason") or "expert has no further worthwhile work"
                 if not isinstance(reason, str):
                     return None, StopDecision("blocked", "expert stop_reason must be text")
-                self.ledger.event(self.run_id, "selected_version", commit=selected)
-                self.ledger.event(self.run_id, "expert_stop", call_id=call_id, reason=reason)
+                finish = output.get("finish") or "close_incomplete"
+                closure = dict(finish=finish, reason=reason, gaps=output.get("gaps", []),
+                               reopen_conditions=output.get("reopen_conditions", []))
+                self.ledger.finish_decision(self.run_id, call_id, selected, closure)
+                prefix = "acceptance_requested" if finish == "request_acceptance" else "expert_exhausted"
+                return None, StopDecision("closed", prefix + ": " + reason)
+            if final_feedback_only:
                 self.ledger.event(self.run_id, "decision_applied", call_id=call_id)
-                return None, StopDecision("closed", "expert_exhausted: " + reason)
+                return None, StopDecision("closed", "budget_exhausted: max_attempts; final decision saved")
             if output.get("select_work") is False:
                 self.ledger.event(self.run_id, "decision_applied", call_id=call_id)
                 self.hard_check()
@@ -1908,7 +1932,8 @@ class Engine:
             # Snapshot only authorized edits, before gates can create outputs.
             # Keep a ref even for NO_GAIN/BROKEN; selecting it never moves champion.
             candidate = self.save_candidate(ws, n, parent, patch, plan["title"])
-            if not self.task.acceptance.objective_metric:
+            selection = next(e for e in self.ledger.events(self.run_id, "work_selected") if e["attempt"] == n)
+            if not self.task.acceptance.objective_metric and selection["body"].get("batch_size", 1) == 1:
                 self.ledger.event(self.run_id, "working_version", n, commit=candidate)
             self.hard_check()
 
@@ -2178,6 +2203,7 @@ class Engine:
             *, switch_backend: bool = False) -> dict[str, Any]:
         with self.ledger.writer():
             self._abort_execution.clear()
+            self._returned_closed = False
             self.open_run(new_run, direction, base_ref, switch_backend=switch_backend)
             if self.ledger.run(self.run_id)["state"] == "closed":
                 self._returned_closed = True
@@ -2210,9 +2236,19 @@ class Engine:
                         stop = StopDecision("paused", "session attempt limit reached")
                         break
                     try:
-                        self.admit()
-                        if not self.ledger.open_attempts(self.run_id):
-                            _, stop = self.choose_work(ws)
+                        cap = self.effective_budget().max_attempts
+                        final_feedback = (cap is not None and self.spent()["search_attempts"] >= cap
+                                          and not self.ledger.open_attempts(self.run_id)
+                                          and any(a["outcome"] and a["conclusion"] is None for a in self.attempt_records()))
+                        if final_feedback:
+                            self.admit(check_attempts=False)
+                            _, stop = self.choose_work(ws, final_feedback_only=True)
+                            if stop and stop.state == "closed":
+                                stop = StopDecision("closed", "budget_exhausted: max_attempts; final decision saved")
+                        else:
+                            self.admit()
+                            if not self.ledger.open_attempts(self.run_id):
+                                _, stop = self.choose_work(ws)
                         if not stop:
                             started, stop = self.run_selected_work(ws,
                                 None if max_attempts_now is None else max_attempts_now - done_now, resuming)
@@ -2286,6 +2322,7 @@ class Engine:
                     'results_registration_error': getattr(self, '_results_error', None)}
                    if self.task.raw.get('results_path') else {}),
                 "state": run["state"], "stop_reason": run["stop_reason"], "result": business,
+                "closure": next((e["body"] for e in reversed(self.ledger.events(self.run_id, "expert_stop"))), None),
                 "champion_ref": self.ref, "champion": best["commit_sha"] if best else None,
                 "selected_version": self.selected_commit(),
                 "working_version": self.working_commit() if not m else None,
@@ -2335,6 +2372,7 @@ class Engine:
                  "Projection of the ledger; not an authority.", "",
                  "- state: **%s** (%s)" % (s["state"], s["stop_reason"] or ""),
                  "- result: %s" % (s["result"] or "running"),
+                 "- closeout: %s" % json.dumps(s["closure"], ensure_ascii=False),
                  "- champion: `%s` (ref `%s`)" % ((s["champion"] or "")[:12], self.ref),
                  "- objective `%s`: baseline %s -> champion %s (%s)" % (
                      s["objective"], (s["baseline_metrics"] or {}).get(s["objective"]),
