@@ -134,18 +134,20 @@ class ObserverAdapter:
             self.issues.append(dict(code='source_unreadable', message='更新失败，数据可能滞后；最后成功读取 ' + str(cached_at or '未知') + '：' + self._display(path), entity_id=None, cached_at=cached_at))
             return self.last_files.get(key, (default, None))[0]
 
-    def _register(self, path=None, *, title=None, phase='other', owners=None, record=None, locator=None):
+    def _register(self, path=None, *, title=None, phase='other', owners=None, record=None, locator=None,
+                  check_availability=True):
         if path is not None:
             # Stable identity uses the lexical path; access checks always resolve again.
             p = Path(path).absolute()
             call_owner = next((o['id'] for o in (owners or []) if ':call:' in o.get('id', '')), None)
             ident = self._id('artifact', str(p) + (':' + call_owner if call_owner else ''))
-            allowed = self._allowed(p)
+            allowed = self._allowed(p) if check_availability else None
             try:
                 stat = p.stat() if allowed and p.is_file() else None
             except OSError:
                 stat = None
-            availability = 'available' if stat else ('missing' if allowed else 'unreadable')
+            availability = ('not_expanded' if not check_availability else
+                            'available' if stat else ('missing' if allowed else 'unreadable'))
             mime = mimetypes.guess_type(str(p))[0] or ('text/plain' if p.suffix in ('.patch', '.jsonl', '.log') else 'application/octet-stream')
             text = mime.startswith('text/') or p.suffix in ('.json', '.jsonl', '.md', '.patch', '.svg', '.log')
             obj = dict(id=ident, kind=p.suffix.lstrip('.') or 'file', title=title or p.name,
@@ -788,14 +790,19 @@ class ObserverAdapter:
             claim_history = [parsed(e['body']) for e in sorted(knowledge['events'], key=lambda e: e['seq'])
                              if e['run_id'] in task_runs and e['kind'] == 'claim_registered']
             from ..core.results import claim_sources
-            claim_sources(claim_history, self.artifact_root, self.project.get('source_project_id'))
+            claim_sources(claim_history, self.artifact_root, self.project.get('source_project_id'),
+                          check_availability=False)
+            claims = current_claims(claim_history)
+            claim_sources(claims, self.artifact_root, self.project.get('source_project_id'))
+            current_versions = {c['claim_id']: c['version'] for c in claims}
             for claim in claim_history:
                 for source in claim.get('evidence', []) + claim.get('counterevidence', []):
                     if source['availability'] != 'access_denied':
-                        artifact = self._register(source['source'], phase='loop', title=claim['claim_id'] + ' · source')
+                        artifact = self._register(source['source'], phase='loop', title=claim['claim_id'] + ' · source',
+                                                  check_availability=claim['version'] == current_versions[claim['claim_id']])
+                        self.artifact_registry[artifact['id']]['storage'] = source['storage']
                         source['artifact_id'] = artifact['id']
                         artifacts.append(artifact)
-            claims = current_claims(claim_history)
             for claim in claims:
                 claim['pending_feedback'] = pending
             result = dict(id=ident, claims=claims, claim_history=claim_history, compatibility=compatibility, control_request=control_events[-1]['kind'].removeprefix('control_') if control_events else 'run', source_run_id=row['run_id'], kind='preparation' if row.get('revision') == 'preparation' else 'execution',
@@ -1152,6 +1159,9 @@ class ObserverAdapter:
             if ident not in self.artifact_registry:
                 raise ObserverError(404, 'not_found', '未知产物 ID')
             item = self.artifact_registry[ident]
+            storage = item.get('storage')
+            if storage and not item['path'].resolve().is_relative_to(Path(storage).resolve()):
+                raise ObserverError(404, 'path_denied', '主张来源超出授权原件目录')
             if item.get('call_owner'):
                 self._ensure_call(item['call_owner'])
                 if self.call_sources[item['call_owner']]['availability'] != 'available':
@@ -1159,6 +1169,8 @@ class ObserverAdapter:
             if item.get('path'):
                 old = item['dto']
                 obj = self._register(item['path'], title=old['title'], phase=old['phase'], owners=old['owner_refs'])
+                if storage:
+                    self.artifact_registry[ident]['storage'] = storage
             else:
                 obj = item['dto']
             if obj['can_preview']:

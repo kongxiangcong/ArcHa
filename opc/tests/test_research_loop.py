@@ -1632,6 +1632,39 @@ def test_inflight_call_keeps_input_and_expert_receives_changed_basis(make_projec
     assert len([c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer']) == 1
 
 
+def test_inflight_designer_adoption_reports_revised_actual_basis(make_project, engine_for):
+    from opc.core.ledger import Ledger
+    claim = dict(claim_id='designer-basis', statement='Reduced copying helps', scope='fixed fields',
+                 status='supported', reason='Initial observations', evidence=[])
+    ref = dict(task_id='t-toy', claim_id='designer-basis', version=1)
+    class Adopting(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            assert p['adopted_claims'] == [] and ctx['handoff']['adopted_claims'] == []
+            original = json.dumps(ctx, sort_keys=True)
+            ledger = Ledger(engine.ledger.path)
+            try:
+                ledger.record_decision(engine.run_id, 'fixture-designer-adoption-change', dict(
+                    select_work=False, claims=[dict(claim, base_version=1, status='unresolved',
+                                                   reason='New evidence questions the adopted claim')]))
+                ledger.event(engine.run_id, 'decision_applied', call_id='fixture-designer-adoption-change')
+            finally:
+                ledger.close()
+            call = super().implement(p, ctx, tree, log_dir)
+            call.output['adopted_claims'] = [ref]
+            assert json.dumps(ctx, sort_keys=True) == original
+            return call
+    expected = [dict(attempt=1, changes=[dict(ref, current_version=2,
+                current_status='unresolved', reason='New evidence questions the adopted claim')])]
+    def analyze(ctx):
+        assert ctx['basis_changes'] == expected
+        return stop(ctx)
+    engine = use_sequence(engine_for(make_project()), Adopting([dict(plan(1, adopted_claims=[]), claims=[claim]), analyze]))
+    result = engine.run()
+    assert result['state'] == 'closed' and result['basis_changes'] == expected
+    assert engine.attempt_records()[0]['plan']['adopted_claims'] == []
+    assert engine.attempt_records()[0]['execution']['adopted_claims'] == [ref]
+
+
 def test_basis_supplement_runs_fresh_work_without_freezing_unrelated_jobs(make_project, engine_for):
     claim = dict(claim_id='basis', statement='Reduced copying helps', scope='fixed fields',
                  status='supported', reason='Initial observations', evidence=[])
@@ -1703,16 +1736,20 @@ def test_committed_basis_review_recovers_without_repeating_expert_or_dispatch(ma
 
 
 @pytest.mark.parametrize("action", ["continue", "adjust"])
-def test_new_call_after_infrastructure_failure_reconsiders_changed_basis(make_project, engine_for, action):
+@pytest.mark.parametrize('adoption_owner', ['expert', 'designer'])
+def test_new_call_after_infrastructure_failure_reconsiders_changed_basis(make_project, engine_for, action, adoption_owner):
     claim = dict(claim_id='basis', statement='Reduced copying helps', scope='fixed fields',
                  status='supported', reason='Initial observations', evidence=[])
     ref = dict(task_id='t-toy', claim_id='basis', version=1)
     class Unavailable(Sequence):
         def implement(self, p, ctx, tree, log_dir):
             (tree / 'params.json').write_text('{"x":0}')
-            return WorkerCall('designer', False, Cost(), error='Temporary worker failure', extra={'infra': True})
-    e = use_sequence(engine_for(make_project()), Unavailable([dict(plan(1, adopted_claims=[ref]), claims=[claim])]))
+            return WorkerCall('designer', False, Cost(), error='Temporary worker failure', extra={'infra': True},
+                              output={'adopted_claims': [ref]} if adoption_owner == 'designer' else None)
+    e = use_sequence(engine_for(make_project()), Unavailable([dict(plan(1,
+        adopted_claims=[ref] if adoption_owner == 'expert' else []), claims=[claim])]))
     assert e.run()['state'] == 'blocked'
+    assert e.attempt_records()[0]['adopted_claims'] == [ref]
     original_context = (e.attempt_dir(1) / 'context.json').read_bytes()
     e.ledger.record_decision(e.run_id, 'fixture-revision', dict(select_work=False,
         claims=[dict(claim, base_version=1, status='unresolved', reason='Need comparison')]))
