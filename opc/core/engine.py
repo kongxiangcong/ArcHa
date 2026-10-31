@@ -91,6 +91,13 @@ class Engine:
     def static_check(self) -> dict[str, Any]:
         """Everything that can be checked without running project code."""
         problems, warnings = [], []
+        from ..scaffold.brief import execution_handoff
+        brief_source = None
+        try:
+            brief_source = execution_handoff(self.root, self.task.task_id, self.task.revision,
+                                             self.task.path, self.preparation_receipt().get("brief_input"))
+        except OPCError as exc:
+            problems.append(str(exc))
         if not self.project.execution_enabled:
             problems.append(".opc/project.json has execution_enabled=false; enable it after "
                             "reviewing the component and task contracts")
@@ -159,6 +166,7 @@ class Engine:
                 problems.append("editable %r covers the whole project" % p)
         return {"ok": not problems, "problems": problems, "warnings": warnings,
                 "base_commit": base, "evaluator_digest": digest, "evaluator_files": files,
+                "brief_source": brief_source,
                 "editable_files": editable_hits,
                 "required_metrics": acceptance.required_metrics(self.task.acceptance)}
 
@@ -359,6 +367,7 @@ class Engine:
                    {"commit": base, "evaluator_digest": rep["evaluator_digest"],
                     "evaluator_files": rep["evaluator_files"], "toolchain_digest": tool_digest,
                     "source_commit": rep["base_commit"], "source_contract_digest": source_digest,
+                    "brief_source": rep.get("brief_source"),
                     "sources": {"contract": self.task.path.relative_to(self.root).as_posix(),
                                 "workers": ".opc/local/workers.json", "bindings": ".opc/local/bindings.json"},
                     "execution": {"task_digest": self.task.digest, "budget": asdict(self.task.budget),

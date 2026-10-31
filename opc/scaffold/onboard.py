@@ -161,7 +161,8 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                 state = "pending"
                 reason = "accounting reconciled; rerun preparation and independent review"
             return finish(state, reason,
-                          files=previous_receipt.get("files", {}), evidence=previous_receipt.get("evidence", []))
+                          files=previous_receipt.get("files", {}), evidence=previous_receipt.get("evidence", []),
+                          brief_input=previous_receipt.get("brief_input"))
         # Reuse the existing onboard worker and its scope checks; it develops .opc
         # tooling, not product code or formal device experiments.
         candidates = [e for e in ledger.events(rid, "preparation_candidate")

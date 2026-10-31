@@ -395,7 +395,7 @@ def test_two_r01_real_onboard_resume_revision_and_history(tmp_path, runtime, mon
     assert research.resolve(root, str(dirs[0]), True)['task_id'] == ids[0]
     revisions[ids[0]] = 'r0002'
     assert onboard(root, 'codex', brief=briefs[0], task_id=ids[0], revision='r0002')['ok']
-    research.record(root, str(dirs[0]), ids[0], 'r0002')
+    research.record(root, str(dirs[0]), ids[0], 'r0002', change='material', authorized=True)
     assert research.resolve(root, str(dirs[0]))['revision'] == 'r0002'
     assert research.resolve(root, str(dirs[1]))['revision'] == 'r0001'
     assert all(p.read_bytes() == content for p, content in old_contracts.items())

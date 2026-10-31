@@ -86,3 +86,44 @@ def load_brief(root: Path, brief: str | Path) -> tuple[dict, str]:
         "task_source": map_rel if not maps else None, "source_sha256": map_digest, "problems": problems,
         "check_scope": "structure and source only; not semantic review or execution readiness",
     }, body
+
+
+def execution_handoff(root: Path, task_id: str, revision: str, contract: Path,
+                      prepared_brief: dict | None = None) -> dict | None:
+    """Verify a Task-authored relation; meaning is decided at the Task entry."""
+    import json
+    from ..core.model import canonical_json
+    decisions = root / '.opc/context/DECISIONS.md'
+    entries = []
+    if decisions.is_file():
+        try:
+            entries = [json.loads(raw) for raw in re.findall(
+                r'<!-- archa-handoff (.*?) -->', decisions.read_text(encoding='utf-8'))]
+        except (ValueError, OSError) as exc:
+            raise OPCError('cannot read Brief handoff in DECISIONS: ' + str(exc)) from exc
+    if any(not isinstance(row, dict) for row in entries):
+        raise OPCError('DECISIONS Brief handoff must contain objects')
+    matching = [row for row in entries if row.get('task_id') == task_id and row.get('revision') == revision]
+    source = matching[-1] if matching else prepared_brief
+    if not source:
+        return None  # Explicit manual/legacy contracts may have no Brief.
+    try:
+        brief = (root / source['brief']).resolve()
+        brief.relative_to(root)
+        if hashlib.sha256(brief.read_bytes()).hexdigest() != source['sha256']:
+            raise OPCError('Brief source changed; Task must classify the change and update its handoff')
+        if matching:
+            expected = contract.relative_to(root).as_posix()
+            if source.get('contract') != expected:
+                raise OPCError('Brief handoff points to a different contract')
+            if (len({row['brief'] for row in matching}) != 1 or
+                    any(row.get('brief') == source['brief'] and row.get('task_id') != task_id for row in entries)):
+                raise OPCError('ambiguous Brief sources for selected contract')
+            if source.get('contract_digest'):
+                raw = json.loads(contract.read_text(encoding='utf-8-sig'))
+                digest = hashlib.sha256(canonical_json(raw).encode()).hexdigest()
+                if digest != source['contract_digest']:
+                    raise OPCError('contract changed since Task handoff; update the authorized relation')
+    except (KeyError, OSError, ValueError) as exc:
+        raise OPCError('Brief source relation is incomplete or unavailable: ' + str(exc)) from exc
+    return dict(source, source='.opc/context/DECISIONS.md' if matching else 'preparation receipt')

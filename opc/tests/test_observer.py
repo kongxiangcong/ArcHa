@@ -918,3 +918,24 @@ def test_task_usage_includes_preparation_and_other_runs(project):
     assert usage['recorded_tokens'] == 15
     assert usage['recorded_wall_seconds'] == 6
     assert usage['source_refs'][0]['kind'] == 'ledger'
+
+
+def test_task_editorial_handoff_uses_latest_attributed_source(project):
+    from opc.observer.adapter import ObserverAdapter
+    brief = '.opc/research/tasks/r01/task-brief.md'
+    row = dict(task_id='dma', revision='r0001', brief=brief,
+               contract='.opc/tasks/dma/revisions/r0001/task.json', sha256='0' * 64)
+    target = project / '.opc/context/DECISIONS.md'
+    target.parent.mkdir(exist_ok=True)
+    target.write_text('<!-- archa-handoff ' + json.dumps(row) + ' -->\n', encoding='utf-8')
+    row.update(sha256=hashlib.sha256((project / brief).read_bytes()).hexdigest(), change='editorial')
+    with target.open('a', encoding='utf-8') as stream:
+        stream.write('<!-- archa-handoff ' + json.dumps(row) + ' -->\n')
+    contract = project / row['contract']
+    original = json.loads(contract.read_text(encoding='utf-8'))
+    original['_source'] = dict(brief=brief, sha256='0' * 64)
+    put(contract, original)
+    revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
+    assert revision['link_state'] == 'verified'
+    assert len(revision['brief_bindings']) == 1
+    assert any(ref['display_path'] == '.opc/context/DECISIONS.md' for ref in revision['meta']['source_refs'])

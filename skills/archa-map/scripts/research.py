@@ -180,7 +180,8 @@ def resolve(root: Path, directory: str | None, prepare: bool = False) -> dict:
                 next=command('archa-task' if prepare else 'archa-loop', task))
 
 
-def record(root: Path, directory: str, task_id: str, revision: str) -> dict:
+def record(root: Path, directory: str, task_id: str, revision: str, *,
+           change: str | None = None, authorized: bool = False) -> dict:
     root = root.resolve()
     task, brief = task_paths(root, directory)
     path, _, entries = records(root)
@@ -189,8 +190,29 @@ def record(root: Path, directory: str, task_id: str, revision: str) -> dict:
     if any((r['brief'] == rel and r['task_id'] != task_id) or
            (r['task_id'] == task_id and r['brief'] != rel) for r in entries):
         raise ValueError('conflicting task identity; preserve history and reconcile handoff')
+    contract_path = contract(root, task_id, revision)
+    value = json.loads((root / contract_path).read_text(encoding='utf-8-sig'))
+    digest = hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
     row = {'brief': rel, 'sha256': hashlib.sha256(brief.read_bytes()).hexdigest(),
-           'task_id': task_id, 'revision': revision, 'contract': contract(root, task_id, revision)}
+           'task_id': task_id, 'revision': revision, 'contract': contract_path,
+           'contract_digest': digest}
+    previous = next((r for r in reversed(entries) if r['brief'] == rel and r['revision'] is not None), None)
+    if change not in (None, 'editorial', 'material'):
+        raise ValueError('change must be editorial or material')
+    if previous and (previous['sha256'] != row['sha256'] or
+                     previous['revision'] != revision or
+                     previous.get('contract_digest', digest) != digest):
+        if change is None:
+            raise ValueError('classify Brief change at Task entry: editorial or material; clarify ambiguous execution meaning')
+        if change == 'editorial' and (previous['revision'] != revision or previous.get('contract_digest', digest) != digest):
+            raise ValueError('editorial change must retain the same contract and revision')
+        if change == 'material' and not authorized:
+            raise ValueError('material contract change requires user authorization; reuse authorization already provided')
+        if change == 'material' and previous.get('contract_digest') == digest:
+            raise ValueError('material Brief change needs an updated contract before handoff')
+        row['change'] = change
+        if change == 'material':
+            row['authorized'] = True
     if not entries or entries[-1] != row:
         append(path, row)
     return row
@@ -212,6 +234,8 @@ def main() -> int:
         if action == 'record':
             p.add_argument('--task', required=True)
             p.add_argument('--revision', required=True)
+            p.add_argument('--change', choices=('editorial', 'material'))
+            p.add_argument('--authorized', action='store_true', help='existing user authorization covers this material change')
     args = parser.parse_args()
     try:
         if args.action == 'create':
@@ -219,7 +243,7 @@ def main() -> int:
         elif args.action == 'resolve':
             result = resolve(args.project, args.directory, args.prepare)
         else:
-            result = record(args.project, args.directory, args.task, args.revision)
+            result = record(args.project, args.directory, args.task, args.revision, change=args.change, authorized=args.authorized)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (ValueError, OSError) as exc:
