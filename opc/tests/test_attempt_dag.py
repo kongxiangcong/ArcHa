@@ -213,15 +213,16 @@ def test_parallel_wall_allowance_cancels_on_sum_of_active_execution(make_project
     assert not result['pending_conclusions']  # cancelled work is still unfinished, not fake success.
 
 
-@pytest.mark.parametrize('failure', ['designer', 'evaluation'])
+@pytest.mark.parametrize('failure', ['designer', 'designer_infra', 'evaluation'])
 def test_branch_failure_does_not_starve_independent_work_beyond_cap(make_project, engine_for, monkeypatch, failure):
     from opc.domains.command import CommandDomain
     from opc.domain import Evaluation
     from opc.core.model import Outcome
     class Fails(Branches):
         def implement(self, work, ctx, tree, log_dir):
-            if failure == 'designer' and work['work_id'] == 'bad':
-                return WorkerCall('designer', False, Cost(.01, 0, 0), error='local check failed')
+            if failure in ('designer', 'designer_infra') and work['work_id'] == 'bad':
+                return WorkerCall('designer', False, Cost(.01, 0, 0), error='local check failed',
+                                  extra={'infra': failure == 'designer_infra'})
             return super().implement(work, ctx, tree, log_dir)
     worker = Fails([plan(0, work_id='bad', evaluate=failure == 'evaluation')] +
                    [plan(i, work_id=f'independent-{i}', evaluate=False) for i in range(4)])
@@ -238,7 +239,7 @@ def test_branch_failure_does_not_starve_independent_work_beyond_cap(make_project
     result = e.run()
     assert all(a['outcome'] == 'work' for a in e.attempt_records()[1:])
     assert len(e.attempt_records()) == 5
-    if failure == 'evaluation':
+    if failure in ('evaluation', 'designer_infra'):
         assert result['state'] == 'blocked' and e.attempt_records()[0]['outcome'] is None
     else:
         assert result['state'] == 'closed' and e.attempt_records()[0]['outcome'] == 'worker_failed'

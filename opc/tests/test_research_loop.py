@@ -1000,3 +1000,40 @@ def test_delivery_completed_evaluation_releases_its_workspace(make_project, engi
              if c['role'] == 'evaluator' and c['input'].get('delivery')]
     assert len(calls) == 1 and calls[0]['state'] == 'completed'
     assert not Path(calls[0]['input']['tree']).exists()
+
+
+@pytest.mark.parametrize('not_started', [True, False])
+def test_known_designer_infrastructure_failure_retries_original_attempt_in_new_call(make_project, engine_for, not_started):
+    class RetryDesigner(Sequence):
+        def __init__(self):
+            super().__init__([plan(1)], [4])
+            self.design_calls = 0
+        def implement(self, p, ctx, tree, log_dir):
+            self.design_calls += 1
+            if self.design_calls == 1:
+                return WorkerCall('designer', False, Cost(1, 0 if not_started else 3), error='configured tool unavailable',
+                                  extra={'infra': True, 'not_started': not_started, 'usage_complete': True})
+            call = super().implement(p, ctx, tree, log_dir)
+            call.cost = Cost(2, 5)
+            return call
+    root = make_project()
+    worker = RetryDesigner()
+    first = use_sequence(engine_for(root), worker)
+    summary = first.run()
+    assert summary['state'] == 'blocked' and worker.design_calls == 1
+    original = first.ledger.attempts(first.run_id)[0]
+    assert original['outcome'] is None and original['state'] == 'planned'
+    calls = [c for c in first.ledger.calls(first.run_id) if c['role'] == 'designer']
+    assert len(calls) == 1 and calls[0]['state'] == ('not_started' if not_started else 'completed')
+    resumed = use_sequence(engine_for(root), worker)
+    resumed.run(max_attempts_now=0)
+    attempts = resumed.ledger.attempts(resumed.run_id)
+    assert len(attempts) == 1 and attempts[0]['plan'] == original['plan']
+    assert attempts[0]['outcome'] == Outcome.IMPROVEMENT.value
+    assert worker.design_calls == 2 and len(worker.contexts) == 1
+    designers = [c for c in resumed.ledger.calls(resumed.run_id) if c['role'] == 'designer']
+    assert len(designers) == 2 and designers[0]['call_id'] != designers[1]['call_id']
+    assert designers[0]['receipt_path'] != designers[1]['receipt_path']
+    assert attempts[0]['cost']['tokens'] == (5 if not_started else 8)
+    assert attempts[0]['cost']['wall_seconds'] == sum(c['result']['cost']['wall_seconds']
+            for c in resumed.ledger.calls(resumed.run_id) if c['attempt_no'] == 1)

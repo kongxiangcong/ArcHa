@@ -1123,6 +1123,31 @@ class Engine:
                 a["conclusion"] = body["text"]
         return rows
 
+    def prior_run_materials(self) -> list[dict[str, Any]]:
+        """References for an explicit backend change, separate from this Run's feedback."""
+        source = self._budget_origin.get("source_run")
+        materials = []
+        while source:
+            run = self.ledger.run(source)
+            root = self.artifact_dir().parent / source
+            attempts = self.ledger.attempts(source)
+            concluded = {e["attempt"] for e in self.ledger.events(source, "conclusion")}
+            decisions = {e["body"]["call_id"] for e in self.ledger.events(source, "expert_decision")}
+            calls = [c for c in self.ledger.calls(source) if c["call_id"] in decisions]
+            materials.append({"run_id": source, "revision": run["revision"], "state": run["state"],
+                              "evidence_root": str(root),
+                              "results": [{"attempt": a["attempt_no"], "outcome": a["outcome"],
+                                           "path": str(root / "attempts" / ("a%06d" % a["attempt_no"]) / "decision.json")}
+                                          for a in attempts[-HISTORY_WINDOW:] if a["outcome"]],
+                              "decisions": [{"call_id": c["call_id"], "path": str(root / Path(c["receipt_path"]).relative_to(
+                                                Path(c["input"]["tree"]).parent))}
+                                            for c in calls[-HISTORY_WINDOW:]],
+                              "pending_feedback": [a["attempt_no"] for a in attempts
+                                                   if a["outcome"] and a["attempt_no"] not in concluded]})
+            origins = self.ledger.events(source, "budget_origin")
+            source = origins[-1]["body"].get("source_run") if origins else None
+        return materials
+
     def context(self, n: int, champ: tuple[str, Measurements], focus: str | None,
                 tree: Path) -> dict[str, Any]:
         self.sync_results()
@@ -1223,6 +1248,7 @@ class Engine:
             "pending_feedback": [{"attempt": a["attempt_no"], "evidence": str(self.attempt_dir(a["attempt_no"]))}
                                  for a in decided if a["conclusion"] is None],
             "evidence_root": str(self.artifact_dir()),
+            "prior_runs": self.prior_run_materials(),
             "progress": {"target_met": acceptance.target_met(acc, champ[1].values),
                          "no_gain_streak": streak, "stagnation_hint": self.task.budget.max_stagnation},
             "candidates": [{"attempt": a["attempt_no"], "commit": a["candidate"],
@@ -1498,7 +1524,7 @@ class Engine:
 
     # ---------------------------------------------------------------- attempt
     def _worker_outcome(self, call: WorkerCall) -> Outcome:
-        return Outcome.INFRA if call.extra.get("infra") else Outcome.WORKER_FAILED
+        return Outcome.INFRA if call.extra.get("infra") or call.extra.get("not_started") else Outcome.WORKER_FAILED
 
     def attempt_steps(self, ws: Workspaces, n: int):
         champ = self.ledger.champion(self.run_id)
@@ -1508,19 +1534,17 @@ class Engine:
         plan = selected["plan"]
         focus = selected["focus"]
         adir = self.attempt_dir(n)
-        total = Cost(0.0, 0, 0.0)
         trees: list[Path] = []
 
-        def charge(role: str, cost: Cost, call: WorkerCall | None = None) -> None:
-            nonlocal total
-            total = total.add(cost)
-
-        def finish(outcome: Outcome, reason: str, gain: float = 0.0, **kw: Any):
-            nonlocal total
+        def attempt_cost() -> Cost:
             total = Cost(0, 0, 0.0)
             for record in self.ledger.calls(self.run_id):
                 if record["attempt_no"] == n and record["result"] is not None:
                     total = total.add(Cost(**record["result"]["cost"]))
+            return total
+
+        def finish(outcome: Outcome, reason: str, gain: float = 0.0, **kw: Any):
+            total = attempt_cost()
             self.ledger.finish_attempt(self.run_id, n, outcome.value, reason, gain, total, **kw)
             write_json(adir / "decision.json", {"attempt": n, "outcome": outcome.value,
                                                 "reason": reason, "gain": gain,
@@ -1569,21 +1593,25 @@ class Engine:
                 design_tree = ws.checkout("a%06d/designer" % n, parent)
             trees.append(design_tree)
             if plan.get("designer") is not False:
+                failed_designs = [c for c in self.ledger.calls(self.run_id)
+                                 if c["attempt_no"] == n and c["role"] == "designer" and c["result"]
+                                 and not c["result"]["ok"] and (c["state"] == "not_started" or c["result"].get("extra", {}).get("infra"))]
+                designer_log = adir / ("designer-%d" % (len(failed_designs) + 1) if failed_designs else "designer")
                 call = yield CallExecution("designer", n, {"plan": plan, "context": ctx, "parent": parent},
-                                           design_tree, adir / "designer",
-                                           lambda: designer.implement(plan, ctx, design_tree, adir / "designer"))
-                charge("designer", call.cost, call)
+                                           design_tree, designer_log,
+                                           lambda: designer.implement(plan, ctx, design_tree, designer_log))
                 self.ledger.event(self.run_id, "execution", n,
                                   **{**(call.output or {}), "completed": call.ok, "error": call.error})
-                missing = self.collect_deliverables(n, design_tree, plan)
-                if call.ok and missing:
-                    return finish(Outcome.WORKER_FAILED, missing)
                 if not call.ok:
                     out = self._worker_outcome(call)
-                    finish(out, "designer: %s" % call.error)
                     if out is Outcome.INFRA:
-                        return out, StopDecision("blocked", "designer worker unavailable: %s" % call.error[:200])
-                    return out, None
+                        self.ledger.update_attempt(self.run_id, n, "planned", reason=call.error,
+                                                   cost=attempt_cost().as_dict())
+                        return out, StopDecision("blocked", "designer execution incomplete: %s" % call.error[:200])
+                    return finish(out, "designer: %s" % call.error)
+                missing = self.collect_deliverables(n, design_tree, plan)
+                if missing:
+                    return finish(Outcome.WORKER_FAILED, missing)
             rep = sandbox(self.comp, design_tree, parent)
             write_json(adir / "sandbox.json", rep.as_dict())
             if not rep.ok:
@@ -1611,14 +1639,13 @@ class Engine:
             ev, meas, eval_tree = yield EvaluationExecution(lambda: self.evaluate_commit(
                 ws, candidate, "", eval_out, "a%06d/eval" % n, fresh=not patch.strip(), attempt=n))
             trees.append(eval_tree)
-            charge("evaluator", Cost(ev.seconds, 0, 0.0))
             self.ledger.event(self.run_id, "experiment", n,
                               status="failed" if ev.failure else "completed", data=ev.data,
                               cached=ev.cached, repeats=ev.repeats, values=ev.values)
             gates = [g.as_dict() for g in ev.gates]
             if ev.failure is Outcome.INFRA:
                 self.ledger.update_attempt(self.run_id, n, "designed", gates=gates,
-                                           reason=ev.reason, cost=total.as_dict())
+                                           reason=ev.reason, cost=attempt_cost().as_dict())
                 return Outcome.INFRA, StopDecision("blocked", "evaluation incomplete: " + ev.reason)
             if ev.failure is not None:
                 return finish(ev.failure, ev.reason, gates=gates)
