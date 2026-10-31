@@ -1037,3 +1037,78 @@ def test_known_designer_infrastructure_failure_retries_original_attempt_in_new_c
     assert attempts[0]['cost']['tokens'] == (5 if not_started else 8)
     assert attempts[0]['cost']['wall_seconds'] == sum(c['result']['cost']['wall_seconds']
             for c in resumed.ledger.calls(resumed.run_id) if c['attempt_no'] == 1)
+
+
+def test_claim_registration_is_separate_from_pending_feedback(make_project, engine_for):
+    def interpret(ctx):
+        return dict(select_work=False,
+                    conclusions=[dict(attempt=1, conclusion='Inconclusive: further comparable evidence needed')],
+                    claims=[dict(claim_id='copy-speed', statement='Reducing copying always improves speed',
+                                 scope='Comparable short and long fields', status='unresolved',
+                                 reason='One observation is insufficient',
+                                 evidence=[dict(run_id=e.run_id, attempt=1, artifact='eval/evaluation.json')],
+                                 counterevidence=[], unresolved=['Short fields not measured'])])
+    root = make_project()
+    seq = Sequence([plan(1), interpret, plan(2)], [0, 1])
+    e = use_sequence(engine_for(root), seq)
+    e.run(max_attempts_now=2)
+    claim = seq.contexts[2]['claims'][0]
+    assert claim['claim_id'] == 'copy-speed' and claim['version'] == 1
+    assert claim['status'] == 'unresolved'
+    assert claim['scope'] == 'Comparable short and long fields'
+    assert claim['evidence'][0]['artifact'] == 'eval/evaluation.json'
+    assert e.summary()['claims'][0]['status'] == 'unresolved'
+    assert e.summary()['pending_conclusions'] == [2]
+    seq2 = Sequence([stop])
+    restored = use_sequence(engine_for(root), seq2)
+    restored.run()
+    assert seq2.contexts[0]['claims'][0]['claim_id'] == 'copy-speed'
+    assert seq2.contexts[0]['pending_feedback'][0]['attempt'] == 2
+    report = json.loads((restored.artifact_dir() / 'views/report.json').read_text())
+    assert report['claims'][0]['status'] == 'unresolved'
+    assert 'copy-speed' in (restored.artifact_dir() / 'views/STATE.md').read_text()
+
+
+@pytest.mark.parametrize('change,reason', [
+    ({'related_claims': ['unknown']}, 'unknown related claim'),
+    ({'status': 'verified'}, 'status'),
+    ({'claim_id': '../escape'}, 'claim_id'),
+    ({'task_id': 'other-task'}, 'outside current task'),
+    ({'evidence': [{'run_id': 'absent', 'attempt': 1, 'artifact': 'eval/evaluation.json'}]}, 'unknown'),
+    ({'evidence': [{'run_id': 'absent', 'attempt': 1, 'artifact': '../private'}]}, 'relative artifact'),
+])
+def test_invalid_claim_rejects_feedback_and_next_work(make_project, engine_for, change, reason):
+    claim = dict(claim_id='claim', statement='Copying affects speed', scope='fixed inputs',
+                 status='unresolved', reason='More evidence needed', evidence=[])
+    seq = Sequence([plan(1), dict(plan(2), claims=[dict(claim, **change)],
+                       conclusions=[dict(attempt=1, conclusion='More comparable measurements needed')])], [0])
+    e = use_sequence(engine_for(make_project()), seq)
+    result = e.run()
+    assert result['state'] == 'blocked' and reason in result['stop_reason']
+    assert result['claims'] == [] and result['pending_conclusions'] == [1]
+    assert len(e.attempt_records()) == 1
+
+
+def test_multiple_claims_share_observation_and_observer_is_read_only(make_project, engine_for):
+    from opc.observer.adapter import ObserverAdapter
+    def interpret(ctx):
+        reference = dict(run_id=e.run_id, attempt=1, artifact='eval/evaluation.json')
+        return dict(stop(ctx), claims=[
+            dict(claim_id='general', statement='Copying affects speed', scope='fixed inputs',
+                 status='unresolved', reason='Need short field measurement', evidence=[reference],
+                 unresolved=['Short fields unknown']),
+            dict(claim_id='long', statement='Reducing copying helps long fields', scope='long fields only',
+                 status='supported', reason='Long fields improved', evidence=[reference],
+                 counterevidence=[reference], unresolved=['Independent repeats needed'])])
+    root = make_project()
+    e = use_sequence(engine_for(root), Sequence([plan(1), interpret], [4]))
+    result = e.run()
+    assert [c['claim_id'] for c in result['claims']] == ['general', 'long']
+    ledger_path = e.ledger.path
+    before = ledger_path.read_bytes()
+    observer = ObserverAdapter(root)
+    observed = observer.run(observer._id('run', e.run_id))['data']
+    assert [(c['claim_id'], c['status']) for c in observed['claims']] == [
+        ('general', 'unresolved'), ('long', 'supported')]
+    assert observed['claims'][1]['counterevidence'][0]['attempt'] == 1
+    assert ledger_path.read_bytes() == before

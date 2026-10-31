@@ -68,6 +68,26 @@ PLAN_SCHEMA["properties"]["works"] = {"type": ["array", "null"], "items": {
 PLAN_SCHEMA["required"].append("works")
 
 
+_SOURCE_SCHEMA = {"type": "object", "additionalProperties": False,
+                  "required": ["run_id", "attempt", "artifact"], "properties": {
+                      "run_id": {"type": "string"}, "attempt": {"type": "integer"},
+                      "artifact": {"type": "string"}}}
+PLAN_SCHEMA["properties"]["claims"] = {"type": "array", "items": {
+    "type": "object", "additionalProperties": False,
+    "required": ["claim_id", "statement", "scope", "status", "reason", "evidence",
+                 "counterevidence", "unresolved", "related_claims"],
+    "properties": {
+        "claim_id": {"type": "string"}, "statement": {"type": "string"},
+        "scope": {"type": "string"}, "reason": {"type": "string"},
+        "status": {"type": "string", "enum": ["unresolved", "supported", "refuted"]},
+        "evidence": {"type": "array", "items": _SOURCE_SCHEMA},
+        "counterevidence": {"type": "array", "items": _SOURCE_SCHEMA},
+        "unresolved": {"type": "array", "items": {"type": "string"}},
+        "related_claims": {"type": "array", "items": {"type": "string"}},
+    }}}
+PLAN_SCHEMA["required"].append("claims")
+
+
 def request_rejected(message: str, executed: bool) -> bool:
     """Known provider request rejection, not a failure after useful execution."""
     markers = ("context_length_exceeded", "context window", "input too long", "prompt is too long",

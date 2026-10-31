@@ -1244,7 +1244,7 @@ class Engine:
                              if a["candidate"] == champ[0] and a["plan"] and a["plan"].get("params")), None)
                          if self.worker_spec("expert").kind == "scripted" else None} if acc.objective_metric else None,
             "baseline": {"commit": base["commit_sha"], "values": metric_view(base["metrics"]["values"])},
-            "history": history, "background": background, "budget_left": self.budget_left(),
+            "history": history, "claims": self.claims(), "background": background, "budget_left": self.budget_left(),
             "pending_feedback": [{"attempt": a["attempt_no"], "evidence": str(self.attempt_dir(a["attempt_no"]))}
                                  for a in decided if a["conclusion"] is None],
             "evidence_root": str(self.artifact_dir()),
@@ -1276,6 +1276,67 @@ class Engine:
             self.log('results registration pending: ' + str(exc))
             return str(exc)
         self._results_error = None
+        return None
+
+    def claims(self, claim_id: str | None = None) -> list[dict]:
+        """Task claim entry, with explicit pending feedback and source availability."""
+        claims = self.ledger.claims(self.task.task_id, claim_id)
+        pending = [{"run_id": self.run_id, "attempt": a["attempt_no"]}
+                   for a in self.attempt_records()
+                   if a["outcome"] and a["conclusion"] is None]
+        for claim in claims:
+            claim["pending_feedback"] = pending
+            for key in ("evidence", "counterevidence"):
+                for ref in claim.get(key, []):
+                    path = (self.bindings.artifact_root / self.project.project_id /
+                            self.task.task_id / ref["run_id"] / "attempts" /
+                            ("a%06d" % ref["attempt"]) / ref["artifact"])
+                    ref["source"] = str(path)
+                    ref["availability"] = "not_expanded" if path.is_file() else "missing"
+        return claims
+
+    def validate_claims(self, output: dict) -> str | None:
+        claims = output.get("claims", [])
+        if not isinstance(claims, list):
+            return "claims must be a list"
+        seen = {c["claim_id"] for c in self.ledger.claims(self.task.task_id)}
+        for claim in claims:
+            if not isinstance(claim, dict):
+                return "claim must be an object"
+            ident = claim.get("claim_id")
+            if not isinstance(ident, str) or not ident.strip() or not portable_path(ident) or "/" in ident:
+                return "claim_id must be a stable identifier"
+            if ident in seen:
+                return "claim already exists: " + ident
+            seen.add(ident)
+            if claim.get("task_id", self.task.task_id) != self.task.task_id:
+                return "claim write outside current task is forbidden"
+            if claim.get("status") not in ("unresolved", "supported", "refuted"):
+                return "claim status must be unresolved, supported or refuted"
+            for field in ("statement", "scope", "reason"):
+                if not isinstance(claim.get(field), str) or not claim[field].strip():
+                    return "claim requires nonempty " + field
+            for field in ("unresolved", "related_claims"):
+                if not isinstance(claim.get(field, []), list) or any(
+                        not isinstance(v, str) or not v.strip() for v in claim.get(field, [])):
+                    return "claim " + field + " must contain nonempty strings"
+            for field in ("evidence", "counterevidence"):
+                if not isinstance(claim.get(field, []), list):
+                    return "claim " + field + " must be a list of source references"
+                for ref in claim.get(field, []):
+                    if (not isinstance(ref, dict) or not isinstance(ref.get("run_id"), str)
+                            or type(ref.get("attempt")) is not int
+                            or not isinstance(ref.get("artifact"), str) or not portable_path(ref["artifact"])):
+                        return "claim source requires run_id, attempt and relative artifact"
+                    owner = next((r for r in self.ledger.runs() if r["run_id"] == ref["run_id"]), None)
+                    if owner is None or owner["task_id"] != self.task.task_id:
+                        return "claim source is unknown or outside authorized task"
+                    if not any(a["attempt_no"] == ref["attempt"] and a["outcome"]
+                               for a in self.ledger.attempts(ref["run_id"])):
+                        return "claim source must identify a saved work result"
+        for claim in claims:
+            if any(related not in seen for related in claim.get("related_claims", [])):
+                return "unknown related claim identity"
         return None
 
     def validate_conclusions(self, output: dict[str, Any]) -> str | None:
@@ -1423,6 +1484,8 @@ class Engine:
                 ws.drop(loader)
                 output = call.output or {} if call.exhausted else call.output
                 why = self.validate_conclusions(output) if isinstance(output, dict) else "expert reply is not an object"
+                if why is None:
+                    why = self.validate_claims(output)
                 if why is None and not (call.exhausted or output.get("exhausted") or output.get("select_work") is False):
                     works = output.get("works") if output.get("works") is not None else [output]
                     if not isinstance(works, list) or not works:
@@ -1997,6 +2060,7 @@ class Engine:
                                         if a["plan"] and a["outcome"] and a["conclusion"] is None],
                 "control": self.ledger.control(self.run_id),
                 "inflight_calls": [c["call_id"] for c in self.ledger.calls(self.run_id) if c["result"] is None],
+                "claims": self.claims(),
                 "decisions": self.ledger.events(self.run_id, "expert_decision"),
                 "materials": str(self.artifact_dir() / "materials"),
 
@@ -2042,6 +2106,13 @@ class Engine:
             if a["plan"]:
                 lessons.append("- a%d expert conclusion: %s" %
                                (a["attempt_no"], a["conclusion"] or "pending review"))
+        if s["claims"]:
+            lines += ["", "## Claims", "", "Pending feedback: " + str(s["pending_conclusions"])]
+            for claim in s["claims"]:
+                lines += ["", "### %s v%d — %s" % (claim["claim_id"], claim["version"], claim["status"]),
+                          claim["statement"], "Scope: " + claim["scope"], "Reason: " + claim["reason"],
+                          "Evidence / counterevidence / unresolved: " + json.dumps(
+                              {key: claim.get(key, []) for key in ("evidence", "counterevidence", "unresolved")}, ensure_ascii=False)]
         write_text(views / "STATE.md", "\n".join(lines) + "\n")
         write_text(views / "LESSONS.md", "\n".join(lessons) + "\n")
         return results_error

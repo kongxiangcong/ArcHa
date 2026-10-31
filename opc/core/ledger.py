@@ -56,6 +56,14 @@ def now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def current_claims(bodies) -> list[dict]:
+    """Project current revisions from ordered claim registration bodies."""
+    current = {}
+    for claim in bodies:
+        current[claim["claim_id"]] = claim
+    return list(current.values())
+
+
 class Ledger:
     def __init__(self, path: Path):
         self.path = path
@@ -300,10 +308,23 @@ class Ledger:
                             dict(call_id=call_id, reason="usage unavailable", charged=cost,
                                  log_dir=result.get("log_dir", ""), error=result.get("error", "")))
 
+    def claims(self, task_id: str, claim_id: str | None = None) -> list[dict]:
+        """Current claim revisions; the event journal remains the authority."""
+        rows = self.db.execute(
+            "SELECT e.body FROM events e JOIN runs r ON r.run_id=e.run_id "
+            "WHERE r.task_id=? AND e.kind='claim_registered' ORDER BY e.seq", (task_id,))
+        return [c for c in current_claims(json.loads(row[0]) for row in rows)
+                if claim_id is None or c["claim_id"] == claim_id]
+
     def record_decision(self, run_id: str, call_id: str, output: dict) -> None:
         """A decision and its feedback acknowledgments are one durable handoff."""
         with self.tx() as db:
             self._event(db, run_id, "expert_decision", None, dict(call_id=call_id, output=output))
+            task_id = self.run(run_id)["task_id"]
+            for row in output.get("claims", []):
+                self._event(db, run_id, "claim_registered", None,
+                            dict(row, task_id=task_id, run_id=run_id, version=1,
+                                 registered_by_call=call_id))
             for row in output.get("conclusions", []):
                 self._event(db, run_id, "conclusion", row["attempt"],
                             dict(text=row["conclusion"], reviewed_by_call=call_id))
