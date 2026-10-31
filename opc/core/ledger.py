@@ -292,6 +292,7 @@ class Ledger:
             self._event(db, row["run_id"], "worker_call" if row["role"] != "evaluator" else "evaluation_call",
                         row["attempt_no"], dict(role=row["role"], call_id=call_id,
                         session_id=result.get("session_id"), state=state, ok=result.get("ok"),
+                        usage_complete=result.get("usage_complete", True),
                         tokens=cost["tokens"], seconds=cost["wall_seconds"],
                         error=result.get("error", ""), log_dir=result.get("log_dir", "")))
             if not result.get("usage_complete", True):

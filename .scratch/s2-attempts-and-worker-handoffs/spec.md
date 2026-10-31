@@ -131,3 +131,5 @@
 - 04：调用边界暂停、受控进程有限取消及预算退出已实现；未知终止保留工作区并阻塞，可靠完成与取消竞争保留可核对结果。已合入 01/03 并完成必要公共/Codex 回归，状态与具体检查见 [04 交付](issues/04-pause-stop-inflight.md#answer)。DSH 仅复用实现，未新增专用或真实验证。
 
 - 03 集成回归修订：六项旧空 Attempt 断言已改为核对 Run 失败 Call/计量及真实成果关联；无效计划保持既有成果与原始拒绝依据。完整结果模块及既有 DSH 假 CLI 回归 **39 passed**，无新增 DSH 测试或真实 DSH 运行；见 [03 交付](issues/03-run-expert-feedback.md#answer)。
+
+- 05：显式原生 Expert 会话续接及有原因的新 Call 材料重建、当前调用终态、CLI 切换额度起点已交付；普通恢复/新 Run 不重置，迟到旧用量不占新额度，项目生命周期硬限制保留。公共目标回归 77 通过，补充后最终目标回归 42 通过、Observer 新字段 2 通过。真实 Codex `0.165.0` 两独立进程以同一 session 续接成功（17811 / 35655 token），真实工具启动后取消 5.89 秒收住、无未知终止；[原件](../../work/s2-smoke/codex-05/)与 [05 明细](issues/05-cli-sessions-and-switch-budget.md#answer)。DSH 已实现、未运行验证；完整真实 Engine/并行/工具隔离留在 07，不以适配器探针替代。

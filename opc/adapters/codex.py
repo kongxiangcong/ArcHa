@@ -1,8 +1,8 @@
-"""Codex CLI worker: `codex exec --json`, one fresh session per role call.
+"""Codex CLI worker: `codex exec --json`, explicit Expert session continuation.
 
 The expert runs read-only in a research-material directory with a JSON output schema;
 the designer runs workspace-write inside its own tree. Every call records its
-thread id (the call identity) and token usage from the event stream. Codex does
+native thread id (separate from the Engine Call identity) and token usage from the event stream. Codex does
 not report prices, so usd stays None (unknown) and budgets must cap tokens.
 """
 from __future__ import annotations
@@ -71,6 +71,7 @@ def parse_events(text: str) -> dict[str, Any]:
 
 class CodexWorker:
     def __init__(self, options: dict[str, Any]):
+        self.session_id: str | None = None
         self.binary_unavailable = options.get("binary_unavailable", False)
         self.model = options.get("model")
         self.reasoning_effort = options.get("reasoning_effort")
@@ -101,11 +102,15 @@ class CodexWorker:
         last.unlink(missing_ok=True)
         argv = [*command_prefix(self.binary), "exec", "--json", "--skip-git-repo-check", "-s", sandbox,
                 "-C", str(tree), "-o", str(last)]
+        if self.profile:
+            argv += ["-p", self.profile]
+        if role == "expert" and self.session_id:
+            # cwd/permissions/profile are parent exec options; resume accepts the
+            # explicit native identity and inherits these execution constraints.
+            argv += ["resume"]
         if schema is not None:
             write_json(log_dir / "plan.schema.json", schema)
             argv += ["--output-schema", str(log_dir / "plan.schema.json")]
-        if self.profile:
-            argv += ["-p", self.profile]
         extra = list(self.extra)
         if self.model:
             # Model is a single-valued clap option; duplicate -m is an error.
@@ -119,7 +124,7 @@ class CodexWorker:
                     filtered.append(arg)
                 i += 1
             extra = filtered
-        argv += extra + ["-"]
+        argv += extra + ([self.session_id] if role == "expert" and self.session_id else []) + ["-"]
         if self.reasoning_effort:
             argv[-1:-1] = ["-c", "model_reasoning_effort=" + json.dumps(self.reasoning_effort)]
         # Explicit role settings outrank legacy extra_args overrides.
@@ -151,9 +156,13 @@ class CodexWorker:
         text = last.read_text(errors="replace", encoding="utf-8") if last.exists() else info["last_agent"]
         call = WorkerCall(role, ok=False, cost=cost, call_id=info["thread_id"],
                           log_dir=str(log_dir), extra={"usage_complete": info["usage_complete"],
+                                                    "session_id": info["thread_id"] or (self.session_id if role == "expert" else None),
                                                     "terminal_completed": info["terminal_completed"]})
         if p.cancel_reason and info["terminal_completed"]:
             call.ok = True
+        elif p.cancel_reason:
+            call.error = p.cancel_reason
+            call.extra.update(cancelled=True, infra=True)
         elif timed_out:
             call.error, call.extra["infra"] = "codex timed out after %ss" % self.timeout, True
         elif info["failed"] or p.returncode != 0:
@@ -170,11 +179,21 @@ class CodexWorker:
                         "environment. Inner -s workspace-write cannot grant outer filesystem access.")
             call.error = msg
             call.extra["infra"] = infra or request_rejected(msg, info["executed"])
-        else:
+        elif info["terminal_completed"]:
             call.ok = True
+        else:
+            call.error = "codex exited without a reliable terminal event"
+            call.extra.update(infra=True, execution_unknown=True)
+        if (role == "expert" and self.session_id and not info["executed"]
+                and any(marker in call.error.lower() for marker in
+                        ("no rollout found", "no session found", "session not found", "session does not exist"))):
+            call.extra.update(session_unavailable=True, not_started=True, usage_complete=True)
+        elif not info["terminal_completed"] and not info["failed"] and not call.extra.get("not_started"):
+            call.extra["execution_unknown"] = True
         return call, text
 
     def propose(self, ctx: dict[str, Any], tree: Path, log_dir: Path) -> WorkerCall:
+        self.session_id = ctx.get("session_id")
         call, text = self._run("expert", expert_prompt(ctx), tree, log_dir, "read-only",
                                PLAN_SCHEMA)
         if call.ok:

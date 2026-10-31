@@ -1013,3 +1013,44 @@ def test_run_shows_frozen_role_backends_without_exposing_cli_credentials(client,
     assert data['configuration_sources']['workers.expert.kind'] == '.opc/local/workers.json'
     assert 'hidden' not in json.dumps(data)
     assert snapshot(project) == before
+
+
+def observed_run(adapter, source_run_id):
+    overview = adapter.overview()['data']
+    refs = list(overview['unlinked_runs'])
+    for revision in overview['unlinked_revisions']:
+        refs += adapter.task_revision(revision['id'])['data']['runs']
+    return next(adapter.run(item['id'])['data'] for item in refs
+                if adapter.run(item['id'])['data']['source_run_id'] == source_run_id)
+
+
+def test_unknown_call_keeps_partial_usage_and_unknown_terminal(project):
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        event(db, 'new-run', 'worker_call', role='expert', call_id='archa-unknown', session_id='native',
+              state='unknown', ok=False, tokens=0, seconds=2, usage_complete=False)
+    from opc.observer.adapter import ObserverAdapter
+    adapter = ObserverAdapter(project)
+    current = observed_run(adapter, 'new-run')
+    call = adapter.call(current['calls'][-1]['id'])['data']
+    assert call['state']['value'] == 'unknown'
+    assert call['usage']['recorded_tokens'] is None
+    assert call['usage']['recorded_wall_seconds'] == 2
+    assert call['usage']['completeness'] == 'unknown'
+
+
+def test_observer_distinguishes_switched_execution_allowance_from_history(project):
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        cutoff = db.execute('SELECT MAX(seq) FROM events').fetchone()[0]
+        event(db, 'new-run', 'run_created')
+        event(db, 'new-run', 'budget_origin', source_run='old-run', after_event=cutoff, tokens=10, wall_seconds=3)
+        for owner, tokens in [('old-run', 10), ('new-run', 2)]:
+            db.execute('INSERT INTO charges(run_id,role,wall_seconds,tokens,usd,usd_known,at) VALUES(?,?,?,?,?,?,?)',
+                       (owner, 'expert', 1, tokens, None, 0, AT))
+    put(project / '.opc/local/artifacts/test/dma/new-run/frozen/baseline.json',
+        {'execution': {'budget_origin': {'source_run':'old-run', 'after_event':cutoff, 'tokens':10, 'wall_seconds':3}}})
+    from opc.observer.adapter import ObserverAdapter
+    adapter = ObserverAdapter(project)
+    current = observed_run(adapter, 'new-run')
+    assert current['task_usage']['recorded_tokens'] == 12
+    assert current['execution_usage']['recorded_tokens'] == 2
+    assert current['budget_origin']['source_run'] == 'old-run'

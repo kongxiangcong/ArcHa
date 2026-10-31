@@ -344,3 +344,26 @@ def test_codex_reliable_completion_survives_cancel_race(tmp_path):
         call = worker.propose({}, tmp_path, tmp_path / 'logs')
     assert call.ok and call.output['title'] == 'saved plan'
     assert call.extra['terminal_completed'] and call.cost.tokens == 5
+
+
+def test_codex_resumes_only_explicit_expert_session(tmp_path):
+    from opc.adapters.codex import CodexWorker
+    script = tmp_path / "worker.py"
+    script.write_text("import json,sys\nfrom pathlib import Path\na=sys.argv\n"
+                      "assert 'resume' in a and 'known-session' in a and '--last' not in a\n"
+                      "Path(a[a.index('-o')+1]).write_text('{}')\n"
+                      "print(json.dumps({'type':'thread.started','thread_id':'known-session'}))\n"
+                      "print(json.dumps({'type':'turn.completed','usage':{'input_tokens':4,'output_tokens':2}}))\n")
+    worker = CodexWorker({'binary': str(script)})
+    worker.session_id = 'known-session'
+    call, _ = worker._run('expert', 'continue', tmp_path, tmp_path / 'log', 'read-only', None)
+    assert call.ok and call.call_id == 'known-session' and call.cost.tokens == 6
+
+
+def test_codex_exit_without_terminal_is_not_success(tmp_path):
+    from opc.adapters.codex import CodexWorker
+    script = tmp_path / "worker.py"
+    script.write_text("print('{\"type\":\"thread.started\",\"thread_id\":\"session\"}')\n")
+    call, _ = CodexWorker({'binary': str(script)})._run('expert', 'test', tmp_path,
+                            tmp_path / 'log', 'read-only', None)
+    assert not call.ok and not call.extra['terminal_completed']

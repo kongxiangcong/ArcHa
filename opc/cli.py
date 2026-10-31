@@ -57,7 +57,7 @@ def cmd_run(a) -> int:
         s = e.repair_delivery(a.repair_promotion)
     else:
         s = e.run(new_run=a.new_run, direction=a.direction, max_attempts_now=a.max_now,
-                  base_ref=a.base)
+                  base_ref=a.base, switch_backend=a.switch_backend)
     if a.deliver:
         s["complete"] = False
         if getattr(e, "_returned_closed", False):
@@ -293,6 +293,8 @@ def main(argv=None) -> int:
     p = add("run", cmd_run)
     p.add_argument("--direction", default=None)
     p.add_argument("--new-run", action="store_true")
+    p.add_argument("--switch-backend", action="store_true",
+                   help="acknowledge a Codex/DSH change for a new Run; start a fresh execution allowance")
     p.add_argument("--base", default=None, help="start a new run from this ref")
     p.add_argument("--deliver", action="store_true", help="terminal delivery check; never apply")
     p.add_argument("--repair-promotion", help="registered failed report to continue from selected candidate")

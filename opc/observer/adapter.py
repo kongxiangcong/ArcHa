@@ -572,10 +572,13 @@ class ObserverAdapter:
                     budget_tokens=budget.get('max_tokens'), budget_wall_seconds=budget.get('max_wall_seconds'),
                     note='仅账本 charges 已记录用量；未把 host_usage 累计再次相加', source_refs=[])
 
-    def _task_usage(self, row, contract):
+    def _task_usage(self, row, contract, origin=None):
         data = self._db(tables_to_read=('runs', 'charges', 'events'))
         owners = {r['run_id'] for r in data['runs'] if r['task_id'] == row['task_id']}
         owners.add('preparation:' + row['task_id'])
+        if origin:
+            owners &= {event['run_id'] for event in data['events']
+                       if event['kind'] == 'run_created' and event['seq'] > origin['after_event']}
         charges = [c for c in data['charges'] if c['run_id'] in owners]
         events = [e for e in data['events'] if e['run_id'] in owners]
         budget = dict(mapping(contract.get('budget')))
@@ -583,7 +586,7 @@ class ObserverAdapter:
             if event['kind'] == 'task_budget_authorized':
                 budget.update(mapping(parsed(event['body'])))
         usage = self._usage(row, charges, events, {'budget': budget})
-        usage.update(scope='task', scope_id=row['task_id'], includes_preparation=True,
+        usage.update(scope='execution_allowance' if origin else 'task', scope_id=row['task_id'], includes_preparation=not bool(origin),
                      source_refs=[dict(kind='ledger', display_path='.opc/local/ledger.sqlite3',
                                        locator='charges:task_id=' + row['task_id'])])
         return usage
@@ -786,6 +789,9 @@ class ObserverAdapter:
                           phase='onboard' if row.get('revision') == 'preparation' else 'loop', last_activity_at=self.source_at,
                           versions=versions, requirements=requirements, metrics=metrics, usage=self._usage(row, data['charges'], events, contract),
                           task_usage=self._task_usage(row, contract),
+                          budget_origin=worker_execution.get('budget_origin', {}),
+                          execution_usage=self._task_usage(row, contract, worker_execution.get('budget_origin')),
+                          backend_validation={'dsh': 'implemented; not runtime verified'},
                           pending_feedback=[a['attempt_no'] for a in data['attempts']
                                             if a.get('outcome') and not any(e['kind'] == 'conclusion' and e.get('attempt_no') == a['attempt_no'] for e in events)],
                           decisions=[e['body'] for e in events if e['kind'] == 'expert_decision'],
@@ -916,9 +922,14 @@ class ObserverAdapter:
         obj = dict(id=ident, run_id=self._id('run', row['run_id']), attempt_id=self._id('attempt', row['run_id'] + ':' + str(event['attempt_no'])) if event.get('attempt_no') is not None else None,
                    phase='onboard' if row.get('revision') == 'preparation' else 'loop', role=role, provider=provider,
                    provider_call_id=provider_id, parent_call_id=body.get('parent_call_id'),
-                   state=state('cancelled' if body.get('state') == 'cancelled' else 'running' if body.get('state') == 'dispatched' else 'finished' if body.get('ok') is True else 'failed' if body.get('ok') is False else 'unknown', str(body.get('state', body.get('ok'))), event.get('at'), 'recorded', '派发已记录，终态尚未确认' if body.get('state') == 'dispatched' else None),
+                   state=state('unknown' if body.get('state') == 'unknown' else 'cancelled' if body.get('state') == 'cancelled' else 'running' if body.get('state') == 'dispatched' else 'finished' if body.get('ok') is True else 'failed' if body.get('ok') is False else 'unknown', str(body.get('state', body.get('ok'))), event.get('at'), 'recorded', '派发已记录，终态尚未确认' if body.get('state') == 'dispatched' else None),
                    started_at=dispatch.get('at') if dispatch else None, ended_at=None if body.get('state') == 'dispatched' else event.get('at'), last_activity_at=None,
-                   transcript_availability=availability, artifacts=art_refs, usage=None,
+                   transcript_availability=availability, artifacts=art_refs,
+                   usage=dict(scope='call', scope_id=ident, recorded_tokens=body.get('tokens') if body.get('usage_complete') or body.get('tokens', 0) > 0 else None,
+                              recorded_wall_seconds=body.get('seconds'), recorded_usd=None,
+                              completeness='partial' if body.get('usage_complete') or body.get('tokens', 0) > 0 else 'unknown',
+                              tokens_complete=body.get('usage_complete'), source_refs=[self._source(event_art)],
+                              note='实际已报告用量；缺失计量保持未知，价格未报告'),
                    meta=meta([self._source(event_art)], [issue('call_start_unrecorded', '未记录调用开始时间', ident)] + log_issue, 'partial'))
         self.calls[ident] = obj
         self.call_sources[ident] = dict(path=log_path, provider_id=provider_id, availability=availability, event=event)
