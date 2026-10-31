@@ -278,12 +278,15 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
 
     # 6. optional independent reviewer: a fresh read-only model session
     reviewer = None
-    task_results = engine.results_context() if engine.task.raw.get('results_path') else None
-    if task_results is None:
-        claims = engine.claims()
-        if claims:
-            task_results = {'claims': claims}
-    if review:
+    from .results import delivery_material
+    candidate = engine.delivery_candidate()
+    task_results = delivery_material(engine, candidate)
+    changes = task_results["basis_changes"]
+    review_basis = candidate.get("basis_review") or {}
+    unreviewed_changes = changes and review_basis.get("changes") != changes
+    if unreviewed_changes:
+        finding("candidate", "block", "selected claim basis changed; Expert must reconsider before acceptance")
+    if review and not unreviewed_changes:
         engine.hard_check()
         reviewer = run_reviewer(engine, review, out, patch, base, best, coverage, task_results)
         # Fail closed on every path that is not a positive verdict. A reviewer
@@ -313,6 +316,7 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
               "acceptance_revision": task.revision, "acceptance_task_digest": task.digest,
               "standards_confirmation": confirmation, "reassessed": revised,
               "baseline": base["commit_sha"], "selected_version": selected,
+              "candidate": candidate,
               "champion": champs[-1]["commit_sha"] if champs else None, "files": files,
               "evidence_key": key, "evaluation": evidence, "evidence_source": evidence_source,
               "stop_reason": run["stop_reason"], "complete": not blocked,
@@ -421,7 +425,9 @@ The working directory is a read-only checkout of the champion."""
         ws.checkout(name, best["commit_sha"])
         options = dict(spec.options)
 
-        options["tool_policy"] = {"read": [str(tree.resolve()), str(engine.artifact_dir().resolve())],
+        source_paths = [s["source"] for s in (task_results or {}).get("sources", [])
+                        if s.get("availability") == "read"]
+        options["tool_policy"] = {"read": [str(tree.resolve()), *source_paths],
                                   "write": [], "network": False, "limitations": []}
         worker = make_worker(WorkerSpec(spec.kind, options), tree)
         call, text = worker._run("reviewer", prompt, tree, log_dir, "read-only", schema)
@@ -430,6 +436,7 @@ The working directory is a read-only checkout of the champion."""
     try:
         call = engine.dispatch_call("reviewer", None,
                     {"purpose": "delivery review", "selected_commit": best["commit_sha"],
+                     "candidate": (task_results or {}).get("candidate"), "task_results": task_results,
                      "baseline_commit": engine.ledger.run(engine.run_id)["base_commit"],
                      "prompt_path": str(log_dir / "reviewer-prompt.md")},
                     tree, log_dir, invoke)
@@ -460,7 +467,8 @@ The working directory is a read-only checkout of the champion."""
 def render(r: dict[str, Any]) -> str:
     lines = ["# Promotion report %s" % r["promotion_id"], "",
              "- run: `%s`, task `%s`" % (r["run_id"], r["task"]),
-             "- baseline `%s` -> champion `%s`" % (r["baseline"][:12], r["selected_version"][:12]),
+             "- baseline `%s` -> selected `%s`" % (r["baseline"][:12], r["selected_version"][:12]),
+             "- delivery candidate: %s" % json.dumps(r.get("candidate"), ensure_ascii=False),
              "- objective `%s`: claimed gain %+.2f%%" % (r["objective"], 100 * (r["claimed_gain"] or 0)),
              "- files: %s" % ", ".join(r["files"]),
              "- target met: %s (policy: %s)" % (r.get("target_met", False), r.get("target_policy", "advisory")),

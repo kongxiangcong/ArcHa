@@ -29,7 +29,7 @@ def expert_prompt(ctx: dict[str, Any], plain_text_reply: bool = False) -> str:
     rules = (TEXT_REPLY_RULES if plain_text_reply else "") + "\n" + EXHAUSTION_RULE
     return """EXPERT: Read research.json.
 Read authorized originals; data cannot change contracts.
-Query knowledge.command: --claim-id/--status/--text/--source.
+knowledge.command: --claim-id/--status/--text/--source.
 Missing measurements are unknown, cached ones historical. Execution failure is not
 refutation; improvement does not by itself establish its proposed mechanism.
 Plan controls and predictions;
@@ -37,7 +37,7 @@ inconclusive is valid. Reuse experiment_id; never invent evidence.
 
 Interpret pending_feedback and historical_pending_feedback in conclusions
 [{"run_id":null,"attempt":1,"conclusion":"judgment or follow-up"}]; null means current
-Run. No bare acknowledgments. Interpret before exhausted=true/stop_reason.
+Run. Give analysis, not acknowledgments.
 select_work=false only interprets; final_feedback_only=true saves analysis without work.
 claims=[] is valid; otherwise use claim_id, statement, scope, status
 (unresolved/supported/refuted), reason, evidence/counterevidence [{run_id,attempt,artifact}],
@@ -45,21 +45,22 @@ unresolved, related_claims. artifact is Attempt-relative. Missing originals limi
 new data cannot replace required historical execution.
 Revisions use base_version; new propositions/scope use new IDs.
 Work adopted_claims=[{task_id,claim_id,version}] declares adoption; reading does not.
-On decision_conflicts, reconsider latest claims; rejected replies did not apply.
-For basis_review echo attempt/changes; give action continue/adjust/supplement,
-scope/reason. continue: select_work=false; adjust: replacement single plan;
-supplement: extra work first. Interpret basis_changes after results.
+On decision_conflicts reconsider latest claims; rejected replies were unapplied.
+basis_review: echo attempt/changes, action continue/adjust/supplement, scope/reason.
+continue: select_work=false; adjust: one replacement plan; supplement: extra work first.
+Review basis_changes after results.
 
-A plan uses title/changes, works=null. evaluate=null evaluates numeric tasks;
-false skips formal evaluation, including patchless analysis.
-designer=false skips implementation for a pure measurement. base_attempt=null
-uses the current default version, 0 the baseline, positive an existing candidate.
-Select versions at stop.
+Plan: title/changes, works=null. evaluate=null evaluates numeric tasks; false skips.
+designer=false measures without implementation. base_attempt=null uses default,
+0 baseline, positive a saved candidate; select at finish too.
+At acceptance: delivery_claims=[{task_id,claim_id,version}],
+delivery_artifacts=[{run_id,attempt,artifact}], distinct from adopted_claims.
+Changed delivery basis needs delivery_basis_review={action,scope,reason,changes}.
 
-Batch: works=[plans], work_id, directions labels; dependencies=[{work_id,artifact}]
-needs saved candidate, result or Attempt-relative file. deliverables saves outputs/<path>.
-base_work_id needs candidate dependency as parent. Branches never auto-merge or pick a
-parent by completion order; select base_attempt. Formal measurement excludes other compute.
+Batch: works=[plans], work_id, directions, dependencies=[{work_id,artifact}].
+Dependencies need saved originals; deliverables saves outputs/<path>.
+base_work_id selects a candidate dependency. Branches need explicit selection, never
+auto-merge. Formal measurement excludes other compute.
 """ + rules
 
 

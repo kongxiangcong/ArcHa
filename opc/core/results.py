@@ -378,6 +378,38 @@ def claim_sources(claims: list[dict], artifact_root: Path, project_id: str, *,
     return claims
 
 
+def delivery_material(engine, candidate: dict) -> dict:
+    """Expand only a delivery's named versions and their direct changed basis."""
+    claims, basis, updates = [], [], []
+    changes = engine.basis_changes(candidate.get('claims', []) + candidate.get('basis', []))
+    for name, target in (('claims', claims), ('basis', basis)):
+        for ref in candidate.get(name, []):
+            rows = engine.authorized_claims(ref['task_id'], ref['claim_id'], version=ref['version'])
+            target.extend(claim_sources(rows, engine.bindings.artifact_root, engine.project.project_id))
+    for change in changes:
+        updates.extend(claim_sources(engine.authorized_claims(change['task_id'], change['claim_id']),
+                                     engine.bindings.artifact_root, engine.project.project_id))
+    artifacts = claim_sources([dict(task_id=engine.task.task_id, evidence=[dict(ref) for ref in candidate.get('artifacts', [])])],
+                              engine.bindings.artifact_root, engine.project.project_id)[0]['evidence']
+    material = dict(candidate=candidate, claims=claims, basis=basis, claim_updates=updates,
+                    basis_changes=changes, artifacts=artifacts, sources=[], issues=[])
+    remaining = 24000
+    seen = set()
+    for row in [*claims, *basis, *updates, dict(task_id=engine.task.task_id, evidence=artifacts)]:
+        refs = row.get('evidence', []) + row.get('counterevidence', [])
+        context = dict(knowledge=dict(task_ids=[row['task_id']]), claims=[row])
+        for index, ref in enumerate(refs):
+            if ref['source'] in seen:
+                continue
+            seen.add(ref['source'])
+            expanded = query_claims(context, source=index, budget=min(8000, remaining))['source']
+            remaining -= len(expanded.get('content', ''))
+            material['sources'].append(expanded)
+            if expanded.get('availability') != 'read' or expanded.get('omitted'):
+                material['issues'].append(expanded.get('issue') or 'delivery source truncated: ' + ref['source'])
+    return material
+
+
 def query_claims(context: dict, *, task_id: str | None = None, claim_id: str | None = None,
                  status: str | None = None, text: str = '', version: int | None = None,
                  source: int | None = None, budget: int = 12000) -> dict:
