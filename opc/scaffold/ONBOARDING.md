@@ -118,8 +118,8 @@
   "budget": {"max_attempts": null, "max_wall_seconds": 7200, "max_tokens": null,
              "max_stagnation": 8, "max_consecutive_infra": 3},
   "workers": {
-    "expert": {"kind": "codex", "timeout_s": null},
-    "designer": {"kind": "codex", "timeout_s": null}
+    "expert": {"timeout_s": null},
+    "designer": {"timeout_s": null}
   },
   "base_ref": "HEAD"
 }
@@ -168,6 +168,7 @@ Run 将实际解析配置及逐项来源保存在既有 `frozen/baseline.json` �
 ```
 
 以上是新项目生成的 Codex 默认配置；已有本机配置不会被自动覆盖。
+每个角色还可指定 `kind`（codex/dsh）、`binary`（可执行文件或显式 argv 数组）、`profile`、`codex_home` 或 `dsh_home`。合同省略 kind 时环境可在同一 revision 的新 Run 选择后端；合同显式 kind 是限制，与环境冲突会报错。换后端不继承原后端的模型/provider/额外参数。Run 冻结实际角色配置、安装定位和来源；恢复不用新环境默认值，缺工具如实失败。Reviewer 默认共用安装定位，模型及推理参数独立配置。
 模型需当前账号和后端支持；推理强度也是后端和模型决定的，ArcHa 不把它固定成某个枚举。
 角色字段的 null 表示继承。预算默认 max_tokens=null、max_wall_seconds=7200，max_attempts 缺失或 null 表示无轮数限制；已有明确上限保留，null 不能撤销。预算按 Task 汇总准备及所有 revision、Run 的原始 charges；准备使用 ledger 内的 Task scope，不创建执行 Run。onboard 的显式预算参数记录授权变更，追加总额度不清零消耗。历史 Run 的执行配置保持冻结。仅启用 token 或金额上限时要求相应用量完整；缺省 token 无上限时保留 unknown，不阻塞。默认模型调用 timeout_s=null，评价器 gate 工具超时独立保留。
 文件缺失时保持兼容，JSON 格式、角色或字段拼写错误会报错，不会静默忽略。
@@ -183,7 +184,7 @@ expert、designer 的 `kind`、超时、binary、profile 等仍由任务合同�
 reviewer 仅在 `promote --review codex` 或 `--review dsh` 时运行，配置文件不会自动开启审核；
 它使用独立的 reviewer 配置和后端默认值，**不再复用 expert 的任何选项**。
 自定义 reviewer 程序入口请使用 `OPC_CODEX_BIN` / `OPC_DSH_BIN`；DSH 还支持 `OPC_DSH_HOME`。
-onboard 的后端仍由 `--agent codex|dsh` 选择，模型与强度读取 onboard 项。
+onboard 的 `--agent codex|dsh` 提供默认后端，环境配置的 onboard.kind 可显式选择；模型与强度只读取 onboard 项。
 环境配置在执行 worker 的命令开始时读取，运行中的进程不热更新；修改后可在下一次命令（含恢复运行）生效，
 不改变任务摘要，也不要求为模型切换创建新 revision。每次实际调用的 `*-request.json`
 保留启动 argv；未显式配置时后端采用的默认模型和强度仍需查后端日志。

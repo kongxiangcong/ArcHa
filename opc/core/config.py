@@ -523,7 +523,7 @@ class TaskSpec:
                 return None
             _no_inline_credentials(spec, where + " workers." + role)
             _no_inline_credentials(spec.get("env", {}), where + " workers." + role + " env")
-            kind = _need(spec, "kind", "%s workers.%s" % (where, role), str)
+            kind = spec.get("kind", "codex")
             if kind not in ("codex", "dsh", "scripted"):
                 raise OPCError("%s workers.%s.kind must be codex, dsh or scripted"
                                % (where, role))

@@ -29,7 +29,7 @@ from ..domain import DomainAdapter, Evaluation, bounded_data, experimental_data,
 from . import accept as acceptance
 from .config import Bindings, Budget, ComponentConfig, ProjectConfig, TaskSpec, WorkerSpec
 from .ledger import Ledger
-from .worker_config import load_worker_config, worker_options
+from .worker_config import load_worker_config, resolve_worker
 from .model import (BudgetExhausted, Cost, GateResult, Measurements, OPCError, Outcome, Verdict,
                     canonical_json, write_json, write_text)
 from .workspace import (Workspaces, apply_patch, cas_update_ref, commit_tree, dirty_paths, git,
@@ -96,9 +96,7 @@ class Engine:
         self.task = TaskSpec.load(self.root, task_id, revision, source=source,
                                   resolve_local=source is None)
         self.worker_config = load_worker_config(self.root) if source is None else {}
-        for role, values in self.worker_config.items():
-            for key in values:
-                self.task.configuration_sources["workers.%s.%s" % (role, key)] = ".opc/local/workers.json"
+        self.resolved_workers = {} if source is not None else self.resolve_workers()
         component_source = None
         if selected is not None:
             try:
@@ -190,7 +188,7 @@ class Engine:
         call.call_id = call_id
         if session_id:
             call.extra["session_id"] = session_id
-        kind = self.task.expert.kind if role == "expert" else (self.task.designer or self.task.expert).kind
+        kind = self.worker_spec(role if role in self.resolved_workers else "expert").kind
         usage_complete = call.extra.get("usage_complete", kind == "scripted" or role == "evaluator")
         result = dict(role=role, ok=call.ok, cost=call.cost.as_dict(), session_id=session_id,
                       output=call.output, error=call.error, exhausted=call.exhausted,
@@ -308,14 +306,37 @@ class Engine:
             self._rule = acceptance.load_rule(self.task.acceptance, tree, self.evaluator_patterns())
         return self._domain
 
+    def resolve_workers(self) -> dict[str, dict]:
+        specs = {"expert": self.task.expert, "designer": self.task.designer}
+        result = {}
+        for role in ("expert", "designer", "reviewer", "onboard"):
+            base = specs.get(role)
+            if role == "designer" and base is None:
+                continue
+            default_kind = result.get("expert", {}).get("kind", self.task.expert.kind)
+            if default_kind == "scripted":
+                default_kind = "codex"
+            if role in ("reviewer", "onboard"):
+                # Share the selected installation, never another role's model or flags.
+                base = WorkerSpec(default_kind, {key: value for key, value in result["expert"].items()
+                                                if key in ("binary", "codex_home", "dsh_home")})
+            spec = resolve_worker(self.worker_config, role, base,
+                                  restricted=self.task.configuration_sources.get("workers.%s.kind" % role) == "task",
+                                  default_kind=default_kind, sources=self.task.configuration_sources)
+            result[role] = {"kind": spec.kind, **spec.options}
+        return result
+
+    def worker_spec(self, role: str) -> WorkerSpec:
+        try:
+            values = self.resolved_workers[role]
+        except KeyError as exc:
+            raise OPCError("Run remains readable but cannot dispatch %s: frozen role configuration unavailable" % role) from exc
+        return WorkerSpec(values["kind"], {k: v for k, v in values.items() if k != "kind"})
+
     def workers(self, tree: Path) -> tuple[Worker, Worker]:
         if self._workers is None:
-            expert = make_worker(WorkerSpec(self.task.expert.kind, worker_options(
-                self.worker_config, "expert", self.task.expert.options)), tree)
-            designer = expert
-            if self.task.designer:
-                designer = make_worker(WorkerSpec(self.task.designer.kind, worker_options(
-                    self.worker_config, "designer", self.task.designer.options)), tree)
+            expert = make_worker(self.worker_spec("expert"), tree)
+            designer = make_worker(self.worker_spec("designer"), tree) if "designer" in self.resolved_workers else expert
             self._workers = (expert, designer)
         return self._workers
 
@@ -464,9 +485,8 @@ class Engine:
         if new_run:
             self.task = TaskSpec.load(self.root, self.task.task_id, self.requested_revision)
             self.worker_config = load_worker_config(self.root)
-            self.task.configuration_sources.update({
-                "workers.%s.%s" % (role, key): ".opc/local/workers.json"
-                for role, values in self.worker_config.items() for key in values})
+            self.resolved_workers = self.resolve_workers()
+            self._workers = None
             self.comp = ComponentConfig.load(self.root, self.task.component)
         last = None if new_run else self.ledger.select_run(
             self.task.task_id, self.requested_revision, self.requested_run_id)
@@ -522,8 +542,7 @@ class Engine:
                                 "workers": ".opc/local/workers.json", "bindings": ".opc/local/bindings.json"},
                     "execution": {"task_digest": self.task.digest, "budget": asdict(self.task.budget),
                                   "configuration_sources": self.task.configuration_sources,
-                                  "workers": {"expert": {"kind": self.task.expert.kind, **worker_options(self.worker_config, "expert", self.task.expert.options)},
-                                              **({"designer": {"kind": self.task.designer.kind, **worker_options(self.worker_config, "designer", self.task.designer.options)}} if self.task.designer else {})},
+                                  "workers": self.resolved_workers,
                                   "worker_config": self.worker_config,
                                   "bindings": {"artifact_root": str(self.bindings.artifact_root),
                                                "workspace_root": str(self.bindings.workspace_root)}},
@@ -558,6 +577,10 @@ class Engine:
             self.task.budget = Budget(**execution["budget"])
             self.task.digest = execution["task_digest"]
             self.worker_config = execution["worker_config"]
+            self.resolved_workers = execution["workers"]
+            if any(v["kind"] != "scripted" and not v.get("frozen_config") for v in self.resolved_workers.values()) and run["state"] != "closed":
+                raise OPCError("legacy Run remains readable but cannot resume: CLI installation was not frozen")
+            self._workers = None
             current_bindings = {key: str(value) for key, value in vars(self.bindings).items()}
             if current_bindings != execution["bindings"]:
                 self._binding_repair = {"previous": execution["bindings"], "current": current_bindings}
@@ -972,7 +995,7 @@ class Engine:
             "champion": {"commit": champ[0], "values": metric_view(champ[1].values),
                          "params": next((a["plan"].get("params") for a in reversed(attempts)
                              if a["candidate"] == champ[0] and a["plan"] and a["plan"].get("params")), None)
-                         if self.task.expert.kind == "scripted" else None} if acc.objective_metric else None,
+                         if self.worker_spec("expert").kind == "scripted" else None} if acc.objective_metric else None,
             "baseline": {"commit": base["commit_sha"], "values": metric_view(base["metrics"]["values"])},
             "history": history, "background": background, "budget_left": self.budget_left(),
             "progress": {"target_met": acceptance.target_met(acc, champ[1].values),
@@ -1411,6 +1434,8 @@ class Engine:
                 "selected_version": self.selected_commit(),
                 "working_version": self.working_commit() if not m else None,
                 "baseline": run["base_commit"], "startpoint": self.startpoint(),
+                "workers": self.resolved_workers,
+                "configuration_sources": self.task.configuration_sources,
                 "compatibility": compatibility,
                 "baseline_metrics": base["metrics"]["values"] if base else None,
                 "champion_metrics": best["metrics"]["values"] if best else None,

@@ -68,12 +68,13 @@ def parse_events(text: str) -> dict[str, Any]:
 
 class CodexWorker:
     def __init__(self, options: dict[str, Any]):
+        self.binary_unavailable = options.get("binary_unavailable", False)
         self.model = options.get("model")
         self.reasoning_effort = options.get("reasoning_effort")
         if options.get("provider"):
             raise OPCError("codex uses its CLI provider configuration; provider is only for dsh")
         self.profile = options.get("profile")
-        self.codex_home = options.get("codex_home") or os.environ.get("OPC_CODEX_HOME")
+        self.codex_home = options.get("codex_home") if options.get("frozen_config") else options.get("codex_home") or os.environ.get("OPC_CODEX_HOME")
         self.timeout = options.get("timeout_s")
         if self.timeout is not None:
             self.timeout = float(self.timeout)
@@ -128,6 +129,8 @@ class CodexWorker:
         with open(log_dir / ("%s-events.jsonl" % role), "wb") as out, \
                 open(log_dir / ("%s-stderr.txt" % role), "wb") as err:
             try:
+                if self.binary_unavailable:
+                    raise FileNotFoundError("configured executable was unavailable when this Run was frozen: %s" % self.binary)
                 p = Process(argv, cwd=str(tree), env=env, stdin=subprocess.PIPE, stdout=out, stderr=err)
             except OSError as exc:
                 return WorkerCall(role, False, Cost(time.time() - t0, 0, None),

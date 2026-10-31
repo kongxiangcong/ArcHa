@@ -1,6 +1,7 @@
 """Verify role isolation and the options reaching real subprocess argv."""
 import json
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -160,3 +161,63 @@ def test_first_onboard_uses_newly_generated_defaults(tmp_path, monkeypatch):
     result = onboard(tmp_path, "codex")
     assert result["preparation"] == "pending"
     assert "not structured evidence" in result["reason"]
+
+
+@pytest.mark.parametrize("binary_form", ["path", "argv", "json"])
+def test_environment_backend_and_installation_are_frozen_on_resume(make_project, engine_for, fake_codex, monkeypatch, binary_form):
+    t = task(workers={"expert": {}, "designer": {}})
+    root = make_project(tsk=t)
+    settings(root, {"expert": {"kind": "codex", "model": "frozen-expert"},
+                    "designer": {"kind": "codex", "model": "frozen-designer"},
+                    "reviewer": {"kind": "codex", "model": "frozen-reviewer"}})
+    import sys
+    prefix = [sys.executable, fake_codex]
+    selected = fake_codex if binary_form == "path" else [str(Path(sys.executable).resolve()), fake_codex]
+    if binary_form == "argv":
+        config = json.loads((root / CONFIG_PATH).read_text())
+        config["expert"]["binary"] = config["designer"]["binary"] = prefix
+        settings(root, config)
+    else:
+        monkeypatch.setenv("OPC_CODEX_BIN", json.dumps(prefix) if binary_form == "json" else fake_codex)
+    first = engine_for(root)
+    result = first.run(max_attempts_now=0)
+    expected = result["workers"]
+    assert expected["expert"]["kind"] == "codex"
+    assert expected["expert"]["binary"] == selected
+    assert expected["expert"]["model"] == "frozen-expert"
+    assert expected["reviewer"]["model"] == "frozen-reviewer"
+    settings(root, {"expert": {"model": "changed"}})
+    monkeypatch.setenv("OPC_CODEX_BIN", "/no-longer-selected/codex")
+    resumed = engine_for(root)
+    resumed.open_run()
+    assert resumed.summary()["workers"] == expected
+    expert, designer = resumed.workers(root)
+    assert expert.binary == selected and expert.model == "frozen-expert"
+    assert designer.model == "frozen-designer"
+
+
+def test_explicit_contract_backend_conflict_prevents_start(make_project, engine_for):
+    root = make_project()
+    settings(root, {"expert": {"kind": "codex"}})
+    with pytest.raises(OPCError, match="backend.*conflict"):
+        engine_for(root).open_run()
+
+
+def test_new_run_may_select_backend_without_inheriting_profile_parameters(make_project, engine_for, fake_codex):
+    t = task(profile={"name": "development", "version": 2}, workers={})
+    profile = {"name": "development", "version": 2, "workers": {
+        "expert": {"kind": "scripted", "strategy": ".opc/strategy.py:Step", "model": "other-backend-model"},
+        "designer": {"kind": "scripted", "strategy": ".opc/strategy.py:Step"}}}
+    root = make_project(tsk=t, extra={".opc/profiles/development/v2.json": json.dumps(profile)})
+    first = engine_for(root)
+    first.run(max_attempts_now=0)
+    settings(root, {"expert": {"kind": "codex", "binary": fake_codex},
+                    "designer": {"kind": "codex", "binary": fake_codex}})
+    second = engine_for(root)
+    second.open_run(new_run=True)
+    result = second.summary()
+    assert result["revision"] == "r0001" and result["run_id"] != first.run_id
+    assert result["workers"]["expert"]["kind"] == "codex"
+    assert "model" not in result["workers"]["expert"]
+    assert "strategy" not in result["workers"]["expert"]
+    assert result["configuration_sources"]["workers.expert.kind"] == CONFIG_PATH
