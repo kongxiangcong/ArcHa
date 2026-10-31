@@ -29,7 +29,7 @@ python3 <project>/.opc/archa.py brief-check -p <project> --brief <brief>
 
 用户要求启动本技能即授权在已确定的合同范围、预算内准备和运行，无需重复询问是否启动。先核对 `.opc/README.md` 的 Open items、交接记录及实际合同；未设置预算时按 token 无上限、Task 时间额度两小时继续；必要评价器接入、关键验证或设备能力未知属于范围内准备待办，先用下述 prepare 路径自主建立与验证，不直接转交用户。不得编造指标或扩大范围。
 
-读取 `status -p <project> --task <task-id>`。已有控制器运行时只跟踪状态，不启动第二个控制器。相同 revision 的 paused/blocked run 在原因解决后可用普通 run 恢复；closed run 默认报告已有结果，不自动用 `--new-run` 重置预算；已登记失败终验的范围内修复使用下文 --repair-promotion，属于同一授权任务。用户明确要求新一轮时才使用 `--new-run`；合同变更也需要新 run，只有明确从上次冠军继续时才传 `--base <冠军提交>`。
+读取 `status -p <project> --task <task-id>`。已有控制器运行时只跟踪状态，不启动第二个控制器。继续执行使用 `run --run-id <run-id>`，按原 Run 的冻结 revision/配置恢复。只存在一个可续接 Run 时可自动选择；多个候选须指定 ID，不能按最新 revision 或时间猜测。status 只读取状态，保留 pause/stop。closed Run 返回原结果，不原地重开，也不自动用 `--new-run` 重置预算；已登记失败终验的范围内修复使用下文 --repair-promotion，属于同一授权任务。用户明确要求新一轮时才使用 `--new-run`；合同变更也需要新 run，只有明确从上次冠军继续时才传 `--base <冠军提交>`。
 
 首次执行准备时打开 `.opc/project.json` 的 `execution_enabled`，然后按顺序完成：
 

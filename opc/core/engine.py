@@ -27,7 +27,7 @@ from typing import Any, Callable
 from ..adapters.worker import Worker, WorkerCall, make_worker, validate_plan
 from ..domain import DomainAdapter, Evaluation, bounded_data, experimental_data, load_domain
 from . import accept as acceptance
-from .config import Bindings, ComponentConfig, ProjectConfig, TaskSpec, WorkerSpec
+from .config import Bindings, Budget, ComponentConfig, ProjectConfig, TaskSpec, WorkerSpec
 from .ledger import Ledger
 from .worker_config import load_worker_config, worker_options
 from .model import (BudgetExhausted, Cost, GateResult, Measurements, OPCError, Outcome, Verdict,
@@ -46,14 +46,40 @@ class StopDecision:
 
 class Engine:
     def __init__(self, project_root: Path, task_id: str, revision: str | None = None,
-                 log: Callable[[str], None] = print):
+                 log: Callable[[str], None] = print, *, run_id: str | None = None):
         self.project = ProjectConfig.load(project_root)
         self.root = self.project.root
-        self.task = TaskSpec.load(self.root, task_id, revision)
-        self.worker_config = load_worker_config(self.root)
-        self.comp = ComponentConfig.load(self.root, self.task.component)
+        self.requested_revision = revision
+        self.requested_run_id = run_id
         self.bindings = Bindings.load(self.project)
-        self.ledger = Ledger(self.root / ".opc" / "local" / "ledger.sqlite3")
+        self.ledger = Ledger(self.root / ".opc/local/ledger.sqlite3")
+        selected = None
+        if run_id is not None:
+            selected = self.ledger.select_run(task_id, revision, run_id)
+        elif revision is None:
+            resumable = [r for r in self.ledger.runs() if r["task_id"] == task_id
+                         and r["revision"] != "preparation" and r["state"] != "closed"]
+            if len(resumable) == 1:
+                selected = resumable[0]
+        source = None
+        if selected is not None:
+            revision = selected["revision"]
+            path = (self.bindings.artifact_root / self.project.project_id / task_id /
+                    selected["run_id"] / "frozen/task.json")
+            try:
+                source = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise OPCError("Run remains readable but frozen execution source is unavailable: %s" % exc) from exc
+        self.task = TaskSpec.load(self.root, task_id, revision, source=source,
+                                  resolve_local=source is None)
+        self.worker_config = load_worker_config(self.root) if source is None else {}
+        component_source = None
+        if selected is not None:
+            try:
+                component_source = json.loads((path.parent / "component.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise OPCError("Run remains readable but frozen component source is unavailable: %s" % exc) from exc
+        self.comp = ComponentConfig.load(self.root, self.task.component, source=component_source)
         self.ref = "refs/heads/opc/%s" % task_id
         self.preparation = self.ledger.preparation_scope(task_id, create=False)
         self.log = log
@@ -305,24 +331,25 @@ class Engine:
     # ------------------------------------------------------------------- runs
     def open_run(self, new_run: bool = False, direction: str | None = None,
                  base_ref: str | None = None) -> str:
-        last = self.ledger.latest_run(self.task.task_id)
-        if last is not None and last["revision"] != self.task.revision:
-            last = None
-        if last is not None and not new_run and last["state"] == "closed":
-            raise OPCError("run %s is closed (%s). Start another with --new-run; add --base %s "
-                           "to continue from its champion instead of the task base"
-                           % (last["run_id"], last["stop_reason"], self.ref))
-        if last is not None and not new_run:
-            if last["revision"] != self.task.revision or last["task_digest"] != self.task.digest:
-                raise OPCError("task %s changed since run %s started (%s -> %s); an evaluator or "
-                               "contract change is a new run: pass --new-run"
-                               % (self.task.task_id, last["run_id"], last["revision"],
-                                  self.task.revision))
-            self.run_id = last["run_id"]
-            if self.delivery_accounting():
-                self.enable_delivery()
-            if direction:
-                self.ledger.event(self.run_id, "direction", None, text=direction)
+        if new_run and self.requested_run_id:
+            raise OPCError("--run-id selects an existing Run; it cannot create a new Run")
+        if new_run:
+            self.task = TaskSpec.load(self.root, self.task.task_id, self.requested_revision)
+            self.worker_config = load_worker_config(self.root)
+            self.comp = ComponentConfig.load(self.root, self.task.component)
+        last = None if new_run else self.ledger.select_run(
+            self.task.task_id, self.requested_revision, self.requested_run_id)
+        if last is not None:
+            self.restore_run(last["run_id"])
+            if last["state"] != "closed":
+                if not self.project.execution_enabled:
+                    raise OPCError("execution_enabled=false; cannot resume execution")
+                if self.evaluator_digest(last["base_commit"])[0] != last["evaluator_digest"]:
+                    raise OPCError("frozen evaluator source is unavailable or changed; cannot resume")
+                if self.delivery_accounting():
+                    self.enable_delivery()
+                if direction:
+                    self.ledger.event(self.run_id, "direction", None, text=direction)
             return self.run_id
         source_digest = hashlib.sha256(canonical_json(json.loads(self.task.path.read_text(encoding="utf-8-sig"))).encode()).hexdigest()
         frozen_digest = TaskSpec.frozen_digest(self.root, self.task.task_id, self.task.revision)
@@ -369,6 +396,37 @@ class Engine:
                                    "ref": base_ref or self.task.base_ref, "commit": base}})
         self.log("run %s created on %s" % (self.run_id, base[:12]))
         return self.run_id
+
+    def restore_run(self, run_id: str) -> None:
+        """Load the execution snapshot without reapplying mutable defaults."""
+        run = self.ledger.select_run(self.task.task_id, None, run_id)
+        self.run_id = run_id
+        latest = self.ledger.latest_run(run["task_id"])
+        self.ref = (run["champion_ref"] if latest["run_id"] == run_id else
+                    "refs/opc/%s/%s" % (run["task_id"], run_id))
+        frozen = self.artifact_dir() / "frozen"
+        try:
+            baseline = json.loads((frozen / "baseline.json").read_text(encoding="utf-8"))
+            task = json.loads((frozen / "task.json").read_text(encoding="utf-8"))
+            component = json.loads((frozen / "component.json").read_text(encoding="utf-8"))
+            execution = baseline.get("execution")
+            if execution is None and run["state"] != "closed":
+                raise KeyError("execution")
+        except (OSError, ValueError, KeyError) as exc:
+            raise OPCError("run %s remains readable but cannot resume: missing frozen execution source (%s)"
+                           % (run_id, exc)) from exc
+        self.task = TaskSpec.load(self.root, run["task_id"], run["revision"],
+                                  source=task, resolve_local=False)
+        if execution:
+            self.task.budget = Budget(**execution["budget"])
+            self.task.digest = execution["task_digest"]
+            self.worker_config = execution["worker_config"]
+            self.bindings = Bindings(**{key: Path(value) for key, value in execution["bindings"].items()})
+            if hasattr(self.task, "configuration_sources"):
+                self.task.configuration_sources = execution.get("configuration_sources", {})
+        self.comp = ComponentConfig.load(self.root, run["component"], source=component)
+        self._domain = self._rule = None
+        self._eval_tree = None
 
     def toolchain_digest(self, commit: str) -> str:
         if self._domain is not None:
@@ -526,7 +584,7 @@ class Engine:
                 raise OPCError("user paused/stopped delivery")
             if b.max_usd is not None and (not s["usd_known"] or s["usd"] >= b.max_usd):
                 raise BudgetExhausted("max_usd", "delivery budget unavailable")
-        if self.preparation:
+        if self.preparation and not self.run_id:
             if self.preparation_receipt().get("state") != "ready":
                 raise OPCError("preparation is not ready; no formal dispatch")
         if self.preparation and self.accounting_required() and self.ledger.unresolved_accounting(self.preparation):
@@ -1048,6 +1106,8 @@ class Engine:
             max_attempts_now: int | None = None, base_ref: str | None = None) -> dict[str, Any]:
         with self.ledger.writer():
             self.open_run(new_run, direction, base_ref)
+            if self.ledger.run(self.run_id)["state"] == "closed":
+                return self.summary()
             if self.ledger.control(self.run_id) != "run":
                 self.ledger.set_control(self.run_id, "run")
             self.ledger.set_run_state(self.run_id, "active")

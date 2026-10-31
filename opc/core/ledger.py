@@ -140,6 +140,24 @@ class Ledger:
         return self.db.execute("SELECT * FROM runs WHERE task_id=? AND revision != 'preparation' ORDER BY created_at DESC, "
                                "rowid DESC LIMIT 1", (task_id,)).fetchone()
 
+    def select_run(self, task_id: str, revision: str | None = None,
+                   run_id: str | None = None) -> sqlite3.Row | None:
+        """Resolve an execution identity; recency never breaks an ambiguity."""
+        if run_id is not None:
+            row = self.run(run_id)
+            if row["task_id"] != task_id or row["revision"] == "preparation" or (
+                    revision is not None and row["revision"] != revision):
+                raise OPCError("run %s does not match selected Task/revision" % run_id)
+            return row
+        rows = [r for r in self.runs() if r["task_id"] == task_id and r["revision"] != "preparation"
+                and (revision is None or r["revision"] == revision)]
+        resumable = [r for r in rows if r["state"] != "closed"]
+        candidates = resumable or rows
+        if len(candidates) > 1:
+            raise OPCError("multiple Runs require an explicit --run-id: " +
+                           ", ".join(r["run_id"] for r in candidates))
+        return candidates[0] if candidates else None
+
     def runs(self) -> list[sqlite3.Row]:
         return self.db.execute("SELECT * FROM runs ORDER BY created_at, rowid").fetchall()
 

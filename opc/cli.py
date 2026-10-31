@@ -26,7 +26,7 @@ def _print(obj) -> None:
 
 def _engine(a, log=print):
     from .core.engine import Engine
-    return Engine(Path(a.project), a.task, a.revision, log=log)
+    return Engine(Path(a.project), a.task, a.revision, log=log, run_id=getattr(a, "run_id", None))
 
 
 def cmd_init(a) -> int:
@@ -75,14 +75,31 @@ def cmd_run(a) -> int:
 
 
 def cmd_status(a) -> int:
-    from .core.config import ProjectConfig
+    from .core.config import Bindings, ProjectConfig
     from .core.ledger import Ledger
     project = ProjectConfig.load(Path(a.project))
+    bindings = Bindings.load(project)
     ledger = Ledger(project.root / ".opc" / "local" / "ledger.sqlite3")
     rows = []
     for r in ledger.runs():
-        if a.task and r["task_id"] != a.task:
+        if ((a.task and r["task_id"] != a.task) or
+                (a.revision and r["revision"] != a.revision) or
+                (a.run_id and r["run_id"] != a.run_id)):
             continue
+        snapshot_path = (bindings.artifact_root / project.project_id / r["task_id"] /
+                         r["run_id"] / "frozen/baseline.json")
+        source = {"configuration_source": str(snapshot_path)}
+        if a.details:
+            try:
+                snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+                source.update({"execution": snapshot.get("execution"), "sources": snapshot.get("sources"),
+                               "startpoint": snapshot.get("startpoint")})
+            except (OSError, ValueError) as exc:
+                source["source_unavailable"] = str(exc)
+        candidates = [x["run_id"] for x in ledger.runs() if x["task_id"] == r["task_id"]
+                      and x["revision"] != "preparation" and x["state"] != "closed"]
+        source["resume_selection"] = {"requires_run_id": len(candidates) > 1,
+                                      "candidates": candidates}
         champ = ledger.champion(r["run_id"])
         attempts = ledger.attempts(r["run_id"])
         work = ledger.events(r["run_id"], "working_version")
@@ -92,7 +109,7 @@ def cmd_status(a) -> int:
         if preparation and not a.details:
             preparation = [{k: preparation[0].get(k) for k in ("task_id", "revision", "state", "reason")} |
                            {"source": ".opc/local/ledger.sqlite3", "details": "opc status --details"}]
-        rows.append({"run_id": r["run_id"], "task": r["task_id"], "revision": r["revision"],
+        rows.append({**source, "run_id": r["run_id"], "task": r["task_id"], "revision": r["revision"],
                      "state": r["state"], "stop_reason": r["stop_reason"],
                      "preparation": preparation,
                      "control": ledger.control(r["run_id"]), "attempts": len(attempts),
@@ -107,7 +124,7 @@ def cmd_status(a) -> int:
     task_ids.update(r[0].removeprefix("preparation:") for r in ledger.db.execute(
         "SELECT DISTINCT run_id FROM events WHERE run_id LIKE 'preparation:%'"))
     for task_id in sorted(task_ids):
-        if a.task and a.task != task_id:
+        if a.run_id or (a.task and a.task != task_id):
             continue
         scope = ledger.preparation_scope(task_id, create=False)
         if not scope or not scope.startswith("preparation:"):
@@ -119,6 +136,8 @@ def cmd_status(a) -> int:
         budget = {"scope": "task", "limits": limits[-1]["body"] if limits else {},
                   "used": ledger.task_totals(task_id)}
         for revision, receipt in receipts.items():
+            if a.revision and revision != a.revision:
+                continue
             summary = receipt if a.details else {k: receipt.get(k) for k in ("task_id", "revision", "state", "reason")}
             rows.append({"task": task_id, "revision": revision, "run_id": None,
                          "state": receipt["state"], "preparation": [summary], "budget": budget,
@@ -128,11 +147,12 @@ def cmd_status(a) -> int:
 
 
 def cmd_control(a) -> int:
-    e = _engine(a)
-    run = e.ledger.latest_run(a.task)
+    from .core.ledger import Ledger
+    ledger = Ledger(Path(a.project).resolve() / ".opc/local/ledger.sqlite3")
+    run = ledger.select_run(a.task, a.revision, a.run_id)
     if run is None:
         raise OPCError("task %s has no run" % a.task)
-    e.ledger.set_control(run["run_id"], a.command)
+    ledger.set_control(run["run_id"], a.command)
     _print({"run_id": run["run_id"], "control": a.command,
             "note": "applies at the next attempt boundary"})
     return 0
@@ -140,10 +160,10 @@ def cmd_control(a) -> int:
 
 def cmd_report(a) -> int:
     e = _engine(a)
-    run = e.ledger.latest_run(a.task)
+    run = e.ledger.select_run(a.task, a.revision, a.run_id)
     if run is None:
         raise OPCError("task %s has no run" % a.task)
-    e.run_id = run["run_id"]
+    e.restore_run(run["run_id"])
     e.write_views()
     s = e.summary()
     s["views"] = str(e.artifact_dir() / "views")
@@ -214,6 +234,8 @@ def main(argv=None) -> int:
         if task:
             p.add_argument("--task", required=task_required)
             p.add_argument("--revision", default=None)
+            if name in ("run", "status", "pause", "stop", "report"):
+                p.add_argument("--run-id", help="explicit existing execution Run")
         p.set_defaults(fn=fn)
         return p
 

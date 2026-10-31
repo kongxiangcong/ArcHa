@@ -174,9 +174,9 @@ class ComponentConfig:
     path: Path
 
     @classmethod
-    def load(cls, root: Path, component_id: str) -> "ComponentConfig":
+    def load(cls, root: Path, component_id: str, *, source: dict | None = None) -> "ComponentConfig":
         path = root / ".opc" / "components" / ("%s.json" % component_id)
-        d = _read(path)
+        d = source if source is not None else _read(path)
         where = str(path)
         _keys(d, COMPONENT_KEYS, where)
         cid = _id(_need(d, "component_id", where, str), where)
@@ -362,7 +362,8 @@ class TaskSpec:
         return hashlib.sha256(canonical_json(source).encode()).hexdigest()
 
     @classmethod
-    def load(cls, root: Path, task_id: str, revision: str | None = None) -> "TaskSpec":
+    def load(cls, root: Path, task_id: str, revision: str | None = None, *,
+             source: dict | None = None, resolve_local: bool = True) -> "TaskSpec":
         tdir = root / ".opc" / "tasks" / task_id / "revisions"
         if revision is None:
             revs = sorted(p.name for p in tdir.glob("r[0-9][0-9][0-9][0-9]") if p.is_dir())
@@ -370,7 +371,7 @@ class TaskSpec:
                 raise OPCError("task %r has no revisions under %s" % (task_id, tdir))
             revision = revs[-1]
         path = tdir / revision / "task.json"
-        d = _read(path)
+        d = source if source is not None else _read(path)
         where = str(path)
         _keys(d, TASK_KEYS, where)
         if d.get("results_path") is not None:
@@ -433,7 +434,7 @@ class TaskSpec:
         bw = where + " budget"
         _keys(b, BUDGET_KEYS, bw)
         from .worker_config import load_budget_config, resolve_budget_limits
-        local_limits = load_budget_config(root)
+        local_limits = load_budget_config(root) if resolve_local else {}
         caps = resolve_budget_limits(b, local_limits)
         budget = Budget(max_attempts=b.get("max_attempts"),
                         max_wall_seconds=caps.get("max_wall_seconds"),

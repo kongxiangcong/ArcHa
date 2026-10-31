@@ -75,14 +75,15 @@ def test_explicit_limit_still_stops_execution(make_project, engine_for, key):
         e.hard_check()
 
 
-def test_local_budget_change_requires_new_run(make_project, engine_for):
+def test_local_budget_change_does_not_change_existing_run(make_project, engine_for):
     root = make_project()
     settings(root, {'max_wall_seconds': None})
     e = engine_for(root)
     e.open_run()
     settings(root, {'max_wall_seconds': 100})
-    with pytest.raises(OPCError, match='changed|digest|new.run'):
-        engine_for(root).open_run()
+    resumed = engine_for(root)
+    assert resumed.open_run() == e.run_id
+    assert resumed.task.budget.max_wall_seconds == 600
 
 
 def test_onboard_without_budget_or_usage_dispatches_and_preserves_unknown(make_project, monkeypatch):

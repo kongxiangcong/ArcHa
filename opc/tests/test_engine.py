@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-from opc.tests.conftest import EVALUATE, STRATEGY, component, git, task
+from opc.tests.conftest import EVALUATE, STRATEGY, component, git, task, write
 
 from opc.core.model import OPCError, Outcome
 from opc.core.workspace import read_ref
@@ -405,3 +405,86 @@ def test_explicit_work_startpoint_is_checked_before_worker_dispatch(make_project
     with pytest.raises(OPCError, match='preflight|baseline fails'):
         engine.run(base_ref=original)
     assert not engine.ledger.runs()
+
+
+def test_resume_keeps_original_run_with_unready_new_revision(make_project, engine_for):
+    from opc.core.engine import Engine
+    root = make_project()
+    first = engine_for(root)
+    paused = first.run(max_attempts_now=1)
+    original_attempts = len(first.ledger.attempts(first.run_id))
+    revised = task(revision='r0002', goal='unready new goal')
+    write(root / '.opc/tasks/t-toy/revisions/r0002/task.json', json.dumps(revised))
+    first.ledger.event(first.ledger.preparation_scope('t-toy'), 'preparation',
+                       task_id='t-toy', revision='r0002', state='pending', reason='not prepared')
+    # Later machine defaults must not alter the original Run.
+    write(root / '.opc/local/workers.json', json.dumps({'budget': {'max_wall_seconds': 1}}))
+    resumed = Engine(root, 't-toy', run_id=first.run_id, log=lambda _: None)
+    result = resumed.run()
+    assert result['run_id'] == paused['run_id'] and result['revision'] == 'r0001'
+    assert result['result'] == 'target_met'
+    assert len(resumed.ledger.attempts(first.run_id)) > original_attempts
+    assert result['spent']['wall_seconds'] >= paused['spent']['wall_seconds']
+
+
+def test_multiple_runs_require_explicit_identity_and_resume_per_run_champion(make_project):
+    from opc.core.engine import Engine
+    root = make_project()
+    first = Engine(root, 't-toy', 'r0001', log=lambda _: None)
+    first.run(max_attempts_now=1)
+    second = Engine(root, 't-toy', 'r0001', log=lambda _: None)
+    second.run(new_run=True, max_attempts_now=2)
+    with pytest.raises(OPCError, match='multiple Runs.*run-id'):
+        Engine(root, 't-toy', 'r0001', log=lambda _: None).run()
+    resumed = Engine(root, 't-toy', run_id=first.run_id, log=lambda _: None)
+    result = resumed.run()
+    assert result['run_id'] == first.run_id and result['result'] == 'target_met'
+    assert len(resumed.ledger.attempts(second.run_id)) == 2
+
+
+def test_closed_run_reports_original_result_without_reopening(make_project, engine_for):
+    root = make_project()
+    first = engine_for(root)
+    original = first.run()
+    first.ledger.set_control(first.run_id, 'stop')
+    event_count = len(first.ledger.events(first.run_id))
+    repeated = engine_for(root).run()
+    assert repeated == original
+    assert len(first.ledger.events(first.run_id)) == event_count
+    assert first.ledger.control(first.run_id) == 'stop'
+
+
+def test_status_read_preserves_pause_and_explicit_control_targets_old_run(make_project, capsys):
+    from opc.cli import main
+    from opc.core.engine import Engine
+    root = make_project()
+    first = Engine(root, 't-toy', 'r0001', log=lambda _: None)
+    first.run(max_attempts_now=1)
+    second = Engine(root, 't-toy', 'r0001', log=lambda _: None)
+    second.run(new_run=True, max_attempts_now=1)
+    assert main(['pause', '-p', str(root), '--task', 't-toy', '--run-id', first.run_id]) == 0
+    capsys.readouterr()
+    assert main(['status', '-p', str(root), '--task', 't-toy', '--run-id', first.run_id]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert [r['run_id'] for r in rows] == [first.run_id]
+    assert first.ledger.control(first.run_id) == 'pause'
+    assert first.ledger.control(second.run_id) == 'run'
+    assert len(first.ledger.attempts(first.run_id)) == 1
+
+
+def test_resume_without_frozen_execution_source_is_blocked_but_status_readable(make_project, engine_for, capsys):
+    from opc.cli import main
+    from opc.core.engine import Engine
+    root = make_project()
+    first = engine_for(root)
+    first.run(max_attempts_now=1)
+    snapshot = first.artifact_dir() / 'frozen/baseline.json'
+    data = json.loads(snapshot.read_text())
+    data.pop('execution')
+    snapshot.write_text(json.dumps(data))
+    with pytest.raises(OPCError, match='readable.*cannot resume.*frozen execution source'):
+        Engine(root, 't-toy', run_id=first.run_id, log=lambda _: None).run()
+    assert first.ledger.run(first.run_id)['state'] == 'paused'
+    assert main(['status', '-p', str(root), '--task', 't-toy', '--run-id', first.run_id]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert rows[0]['state'] == 'paused' and rows[0]['attempts'] == 1

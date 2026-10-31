@@ -49,7 +49,7 @@ def validate_standards_confirmation(engine: Engine, run: dict, confirmation: dic
 
 def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
             apply_to: str | None = None, source_run: str | None = None, standards_confirmation: str | Path | None = None) -> dict[str, Any]:
-    run = engine.ledger.run(source_run) if source_run else engine.ledger.latest_run(engine.task.task_id)
+    run = engine.ledger.run(source_run) if source_run else engine.ledger.select_run(engine.task.task_id, engine.task.revision)
     if run is None:
         raise OPCError("task %s has no run" % engine.task.task_id)
     if run["task_id"] != engine.task.task_id or run["revision"] == "preparation":
