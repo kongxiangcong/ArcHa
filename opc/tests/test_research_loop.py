@@ -139,8 +139,9 @@ def test_interruption_preserves_pending_review_without_extra_call(make_project, 
     e = use_sequence(engine_for(make_project()), seq)
     s = e.run()
     assert s['state'] == 'paused' and len(seq.contexts) == 2
-    assert s['pending_conclusions'] == [1, 2]
-    assert e.attempt_records()[1]['outcome'] == Outcome.ABANDONED.value
+    assert s['pending_conclusions'] == [1]
+    assert e.attempt_records()[1]['outcome'] is None
+    assert e.ledger.calls(e.run_id)[-1]['state'] == 'dispatched'
 
 
 def test_conclusions_cannot_be_attached_to_a_different_attempt(make_project, engine_for):

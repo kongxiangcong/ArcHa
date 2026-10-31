@@ -131,7 +131,6 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
         ws = engine.workspaces("delivery")
         try:
             ev, meas, tree = engine.evaluate_commit(ws, selected, "", out / "eval", "selected", fresh=True, delivery=True)
-            engine.ledger.charge(engine.run_id, None, "evaluator", Cost(ev.seconds, 0, 0.0))
             evidence = {"failure": ev.failure.value if ev.failure else None, "reason": ev.reason,
                         "gates": [g.as_dict() for g in ev.gates], "metrics": meas.as_dict() if meas else None}
         finally:
@@ -171,7 +170,6 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
                     ev, meas, tree = engine.evaluate_commit(ws, commit, "", out / "confirm" /
                                                             ("%s-%d" % (label, i)), label, fresh=True, delivery=True)
                     ws.drop(tree)
-                    engine.ledger.charge(engine.run_id, None, "evaluator", Cost(ev.seconds, 0, 0.0))
                     covered = {g.gate_id for g in ev.gates if g.status.value == "passed"}
                     if ev.failure is not None or expected - covered or meas is None or m not in meas.values:
                         finding("reproduce", "block", "%s failed on repeat %d: %s"
