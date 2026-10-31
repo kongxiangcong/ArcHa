@@ -91,7 +91,7 @@ def test_onboard_consumes_and_records_brief(make_project, monkeypatch):
     result = onboard(root, "codex", "task-brief.md", **kw)
     assert result["ok"] and result["brief_input"]["brief"] == "task-brief.md"
     ledger = Ledger(root / ".opc/local/ledger.sqlite3")
-    receipt = ledger.events(ledger.runs()[0]["run_id"], "preparation")[-1]["body"]
+    receipt = ledger.events(ledger.preparation_scope("t-toy"), "preparation")[-1]["body"]
     assert receipt["brief_input"] == result["brief_input"]
     # The original Brief and ledger association are enough; no copied draft history.
     assert not list((root / ".opc/local/onboard").glob("**/task-brief.md"))

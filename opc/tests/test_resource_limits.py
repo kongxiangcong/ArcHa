@@ -18,17 +18,18 @@ def settings(root, caps):
     write(root / CONFIG_PATH, json.dumps({'budget': caps}))
 
 
-def test_new_project_has_unlimited_resources(tmp_path):
+def test_new_project_has_two_hour_time_budget(tmp_path):
     init(tmp_path, 'demo', 'Demo', 'main', 't-main', True)
     spec = TaskSpec.load(tmp_path, 't-main')
-    assert spec.budget.max_tokens is spec.budget.max_wall_seconds is None
-    assert load_budget_config(tmp_path) == {'max_tokens': None, 'max_wall_seconds': None}
+    assert spec.budget.max_tokens is None
+    assert spec.budget.max_wall_seconds == 7200
+    assert load_budget_config(tmp_path) == {'max_tokens': None, 'max_wall_seconds': 7200}
     assert CodexWorker({}).timeout is None
     assert DshWorker({}).timeout is None
 
 
 @pytest.mark.parametrize('caps,expected', [({}, (None, 600)),
-    ({'max_tokens': 17}, (17, 600)), ({'max_wall_seconds': None}, (None, None)),
+    ({'max_tokens': 17}, (17, 600)), ({'max_wall_seconds': None}, (None, 600)),
     ({'max_tokens': None, 'max_wall_seconds': 12.5}, (None, 12.5))])
 def test_local_limits_override_only_explicit_fields(make_project, caps, expected):
     root = make_project()
@@ -48,7 +49,9 @@ def test_invalid_limits_rejected(make_project, caps):
 
 
 def test_unlimited_engine_keeps_dispatching_with_unknown_usage(make_project, engine_for):
-    root = make_project()
+    t = task()
+    t["budget"]["max_wall_seconds"] = None
+    root = make_project(tsk=t)
     settings(root, {'max_tokens': None, 'max_wall_seconds': None})
     e = engine_for(root)
     e.enable_delivery()
@@ -83,7 +86,9 @@ def test_local_budget_change_requires_new_run(make_project, engine_for):
 
 
 def test_onboard_without_budget_or_usage_dispatches_and_preserves_unknown(make_project, monkeypatch):
-    root = make_project()
+    t = task()
+    t["budget"]["max_wall_seconds"] = None
+    root = make_project(tsk=t)
     settings(root, {'max_tokens': None, 'max_wall_seconds': None})
     calls = []
     def run(self, role, prompt, tree, log, sandbox, schema):
@@ -101,7 +106,7 @@ def test_onboard_without_budget_or_usage_dispatches_and_preserves_unknown(make_p
     assert calls == ['onboard']
     from opc.core.ledger import Ledger
     ledger = Ledger(root / '.opc/local/ledger.sqlite3')
-    rid = ledger.runs()[-1]['run_id']
+    rid = ledger.preparation_scope('t-toy')
     assert ledger.events(rid, 'host_usage_unknown')
     assert ledger.unresolved_accounting(rid)
     # Recording absent host usage must preserve readiness when there is no cap.
@@ -132,11 +137,129 @@ def test_unknown_token_receipt_blocks_only_explicit_token_cap(make_project, engi
             e.admit()
 
 
-def test_explicit_unlimited_config_overrides_previous_preparation_cap(make_project, engine_for):
+def test_null_local_config_keeps_previous_preparation_cap(make_project, engine_for):
     root = make_project()
     onboard(root, 'codex', task_id='t-toy', max_tokens=100, max_wall_seconds=100,
             prior_tokens=5, prior_wall_seconds=1, record_usage_only=True)
     settings(root, {'max_tokens': None, 'max_wall_seconds': None})
     e = engine_for(root)
-    assert e.task.budget.max_tokens is e.task.budget.max_wall_seconds is None
+    assert e.effective_budget().max_tokens == 100
+    assert e.effective_budget().max_wall_seconds == 100
     assert e.ledger.task_totals('t-toy')['tokens'] == 5
+
+
+def test_default_task_budget_is_two_hours_without_attempt_cap(make_project, engine_for):
+    root = make_project(tsk=task(budget={}))
+    e = engine_for(root)
+    e.run(max_attempts_now=0)
+    assert e.task.budget.max_tokens is None
+    assert e.task.budget.max_wall_seconds == 7200
+    assert e.budget_left()['attempts'] is None
+    assert e.summary()['budget']['limits']['wall_seconds'] == 7200
+
+
+def test_task_usage_survives_independent_run_and_new_revision(make_project, engine_for):
+    root = make_project()
+    e = engine_for(root)
+    e.run(max_attempts_now=0)
+    e.ledger.charge(e.run_id, None, 'expert', Cost(601, 37, None))
+    later = engine_for(root)
+    later.open_run(new_run=True)
+    assert later.spent()['wall_seconds'] >= 601
+    assert later.spent()['tokens'] == 37
+    with pytest.raises(BudgetExhausted, match='max_wall_seconds'):
+        later.admit()
+    t = task(revision='r0002')
+    write(root / '.opc/tasks/t-toy/revisions/r0002/task.json', json.dumps(t))
+    from opc.tests.conftest import git
+    git(root, 'add', '.opc/tasks')
+    git(root, 'commit', '-qm', 'new revision')
+    newest = engine_for(root)
+    newest.open_run(new_run=True)
+    assert newest.spent()['tokens'] == 37
+    with pytest.raises(BudgetExhausted, match='max_wall_seconds'):
+        newest.admit()
+
+
+def test_unknown_usage_in_previous_run_blocks_only_enabled_token_budget(make_project, engine_for):
+    root = make_project()
+    e = engine_for(root)
+    e.run(max_attempts_now=0)
+    e.ledger.event(e.run_id, 'accounting_unknown', reason='missing token receipt')
+    later = engine_for(root)
+    later.open_run(new_run=True)
+    later.admit()  # Time is measured independently; tokens are unlimited.
+    later.task.budget.max_tokens = 100
+    with pytest.raises(OPCError, match='accounting incomplete'):
+        later.admit()
+
+
+def test_preparation_charges_task_without_creating_execution_run(make_project):
+    from opc.core.ledger import Ledger
+    root = make_project(tsk=task(budget={}))
+    onboard(root, 'codex', task_id='t-toy', prior_tokens=4, prior_wall_seconds=2,
+            record_usage_only=True)
+    ledger = Ledger(root / '.opc/local/ledger.sqlite3')
+    assert ledger.runs() == []
+    assert ledger.task_totals('t-toy')['tokens'] == 4
+    onboard(root, 'codex', task_id='t-toy', prior_tokens=4, prior_wall_seconds=2,
+            record_usage_only=True)
+    assert ledger.task_totals('t-toy')['wall_seconds'] == 2
+    assert ledger.task_totals('t-toy')['tokens'] == 4
+
+
+def test_authorized_budget_extension_keeps_spent_usage(make_project, engine_for):
+    root = make_project()
+    onboard(root, 'codex', task_id='t-toy', max_tokens=10,
+            prior_tokens=10, prior_wall_seconds=1, record_usage_only=True)
+    e = engine_for(root)
+    assert e.ledger.task_totals('t-toy')['tokens'] == 10
+    # The existing Engine sees the explicit allowance without discarding consumption.
+    onboard(root, 'codex', task_id='t-toy', max_tokens=20,
+            prior_tokens=10, prior_wall_seconds=1, record_usage_only=True)
+    assert e.budget_left()['tokens'] == 10
+
+
+def test_null_local_budget_preserves_explicit_contract_limit(make_project, engine_for):
+    t = task()
+    t['budget']['max_tokens'] = 40
+    root = make_project(tsk=t)
+    settings(root, {'max_tokens': None, 'max_wall_seconds': None})
+    e = engine_for(root)
+    assert e.task.budget.max_tokens == 40
+    assert e.task.budget.max_wall_seconds == 600
+
+
+def test_exhausted_task_does_not_measure_new_baseline(make_project, engine_for):
+    root = make_project()
+    e = engine_for(root)
+    e.run(max_attempts_now=0)
+    e.ledger.charge(e.run_id, None, 'expert', Cost(601, 0, None))
+    later = engine_for(root)
+    result = later.run(new_run=True, max_attempts_now=0)
+    assert result['state'] == 'closed'
+    assert 'budget_exhausted' in result['stop_reason']
+    assert result['champion'] is None
+
+
+def test_preflight_is_charged_to_task_without_execution_run(make_project, engine_for):
+    root = make_project()
+    e = engine_for(root)
+    assert e.preflight()['ok']
+    assert e.ledger.runs() == []
+    assert e.ledger.task_totals('t-toy')['wall_seconds'] > 0
+
+
+def test_status_displays_preparation_budget_without_fake_run(make_project, capsys):
+    from opc.cli import main
+    root = make_project(tsk=task(budget={}))
+    onboard(root, 'codex', task_id='t-toy', prior_tokens=4, prior_wall_seconds=2,
+            record_usage_only=True)
+    assert main(['status', '-p', str(root), '--task', 't-toy']) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert rows[0]['run_id'] is None
+    assert rows[0]['task'] == 't-toy'
+    assert rows[0]['revision'] == 'r0001'
+    assert rows[0]['budget']['used']['tokens'] == 4
+    assert rows[0]['budget']['limits']['wall_seconds'] == 7200
+    assert 'files' not in rows[0]['preparation'][0]

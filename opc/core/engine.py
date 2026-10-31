@@ -20,7 +20,7 @@ import hashlib
 import json
 import math
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -29,7 +29,7 @@ from ..domain import DomainAdapter, Evaluation, bounded_data, experimental_data,
 from . import accept as acceptance
 from .config import Bindings, ComponentConfig, ProjectConfig, TaskSpec, WorkerSpec
 from .ledger import Ledger
-from .worker_config import load_worker_config, worker_options, load_budget_config
+from .worker_config import load_worker_config, worker_options
 from .model import (BudgetExhausted, Cost, GateResult, Measurements, OPCError, Outcome, Verdict,
                     canonical_json, write_json, write_text)
 from .workspace import (Workspaces, apply_patch, cas_update_ref, commit_tree, dirty_paths, git,
@@ -55,19 +55,7 @@ class Engine:
         self.bindings = Bindings.load(self.project)
         self.ledger = Ledger(self.root / ".opc" / "local" / "ledger.sqlite3")
         self.ref = "refs/heads/opc/%s" % task_id
-        preparations = [r for r in self.ledger.runs() if r["task_id"] == task_id and r["revision"] == "preparation"]
-        self.preparation = preparations[-1]["run_id"] if preparations else None
-        if self.preparation:
-            limits = self.ledger.events(self.preparation, "preparation_budget")
-            if limits:
-                local_limits = load_budget_config(self.root)
-                for field, key in (("max_tokens", "tokens"), ("max_wall_seconds", "wall_seconds")):
-                    if field in local_limits:
-                        continue
-                    prior = limits[-1]["body"].get(key)
-                    current = getattr(self.task.budget, field)
-                    if prior is not None:
-                        setattr(self.task.budget, field, min(current, prior) if current is not None else prior)
+        self.preparation = self.ledger.preparation_scope(task_id, create=False)
         self.log = log
         self.run_id: str | None = None
         self._domain: DomainAdapter | None = None
@@ -271,12 +259,18 @@ class Engine:
         rep = self.static_check()
         if not rep["ok"]:
             return rep
+        try:
+            self.hard_check()
+        except (BudgetExhausted, OPCError) as exc:
+            rep["ok"] = False
+            rep["problems"].append(str(exc))
+            return rep
         ws = self.workspaces("preflight")
         out = self.root / ".opc" / "local" / "preflight"
         try:
             ev, meas, tree = self.evaluate_commit(ws, rep["base_commit"], "", out, "baseline")
-            if self.preparation:
-                self.ledger.charge(self.preparation, None, "preflight", Cost(ev.seconds, 0, 0.0))
+            self.ledger.charge(self.ledger.preparation_scope(self.task.task_id),
+                               None, "preflight", Cost(ev.seconds, 0, 0.0))
             rep["toolchain"] = self.domain(tree).toolchain()[1]
             self.workers(tree)
         finally:
@@ -460,21 +454,30 @@ class Engine:
                      for kind in ("delivery", "delivery_repair", "promotion_report"))))
 
     def spent(self) -> dict[str, Any]:
-        t = self.ledger.task_totals(self.task.task_id) if self.preparation or self.delivery_accounting() else self.ledger.totals(self.run_id)
-        attempts = self.ledger.attempts(self.run_id)
-        if self.ledger.events(self.run_id, "delivery_repair"):
-            attempts = [a for r in self.ledger.runs() if r["task_id"] == self.task.task_id for a in self.ledger.attempts(r["run_id"])]
+        t = self.ledger.task_totals(self.task.task_id)
+        attempts = [a for r in self.ledger.runs() if r["task_id"] == self.task.task_id
+                    for a in self.ledger.attempts(r["run_id"])]
         t["search_attempts"] = sum(1 for a in attempts if a["outcome"] and
                                    Outcome(a["outcome"]).counts_as_search)
         t["attempts"] = len(attempts)
         return t
 
+    def effective_budget(self):
+        """Explicit Task allowance changes preserve the frozen execution contract."""
+        caps = {}
+        scope = self.ledger.preparation_scope(self.task.task_id, create=False)
+        if scope:
+            for event in self.ledger.events(scope, "task_budget_authorized"):
+                caps.update(event["body"])
+        return replace(self.task.budget, **caps)
+
     def accounting_required(self) -> bool:
-        return self.task.budget.max_tokens is not None or self.task.budget.max_usd is not None
+        b = self.effective_budget()
+        return b.max_tokens is not None or b.max_usd is not None
 
     def budget_left(self) -> dict[str, Any]:
-        b, s = self.task.budget, self.spent()
-        left = {"attempts": b.max_attempts - s["search_attempts"],
+        b, s = self.effective_budget(), self.spent()
+        left = {"attempts": b.max_attempts - s["search_attempts"] if b.max_attempts is not None else None,
                 "wall_seconds": (round(b.max_wall_seconds - s["wall_seconds"], 1)
                                  if b.max_wall_seconds is not None else None)}
         if b.max_tokens is not None:
@@ -485,10 +488,9 @@ class Engine:
 
     def admit(self) -> None:
         """Ask before spending. The estimate is the mean decided attempt so far."""
-        b, s = self.task.budget, self.spent()
-        if self.preparation or self.delivery_accounting():
-            self.hard_check()
-        if s["search_attempts"] >= b.max_attempts:
+        b, s = self.effective_budget(), self.spent()
+        self.hard_check()
+        if b.max_attempts is not None and s["search_attempts"] >= b.max_attempts:
             raise BudgetExhausted("max_attempts", "%d search attempts used" % s["search_attempts"])
         done = [a for a in self.ledger.attempts(self.run_id) if a["cost"]]
         est_wall = sum(a["cost"]["wall_seconds"] for a in done) / len(done) if done else 0.0
@@ -513,10 +515,11 @@ class Engine:
 
     def hard_check(self) -> None:
         """Between steps of one attempt: stop as soon as a cap is crossed."""
-        b, s = self.task.budget, self.spent()
+        b, s = self.effective_budget(), self.spent()
+        if self.accounting_required() and any(self.ledger.unresolved_accounting(r["run_id"])
+                for r in self.ledger.runs() if r["task_id"] == self.task.task_id):
+            raise OPCError("usage accounting incomplete; no new dispatch")
         if self.delivery_accounting():
-            if self.accounting_required() and any(self.ledger.unresolved_accounting(r["run_id"]) for r in self.ledger.runs() if r["task_id"] == self.task.task_id):
-                raise OPCError("usage accounting incomplete; no delivery dispatch")
             if self.ledger.control(self.run_id) in ("pause", "stop"):
                 raise OPCError("user paused/stopped delivery")
             if b.max_usd is not None and (not s["usd_known"] or s["usd"] >= b.max_usd):
@@ -825,13 +828,13 @@ class Engine:
 
         def charge(role: str, cost: Cost, call: WorkerCall | None = None) -> None:
             nonlocal total
-            if call is not None and (self.preparation or self.delivery_accounting()):
+            if call is not None:
                 kind = self.task.expert.kind if role == "expert" else (self.task.designer or self.task.expert).kind
                 if kind in ("codex", "dsh") and not call.extra.get("usage_complete", False):
                     self.ledger.event(self.preparation or self.run_id, "accounting_unknown", None, reason="usage unavailable")
                     if self.accounting_required():
                         call.ok = False
-                        call.error = "usage unavailable; stop dispatch until actual accounting is reconciled"
+                        call.error = (call.error + "; " if call.error else "") + "usage unavailable; stop dispatch until actual accounting is reconciled"
                         call.extra["infra"] = True
             total = total.add(cost)
             self.ledger.charge(self.run_id, n, role, cost)
@@ -1050,6 +1053,7 @@ class Engine:
             stop: StopDecision | None = None
             done_now = 0
             try:
+                self.hard_check()
                 self.backfill_history()
                 self.reconcile(ws)
                 while True:
@@ -1075,6 +1079,8 @@ class Engine:
                     self.write_views()
                     if stop:
                         break
+            except BudgetExhausted as exc:
+                stop = StopDecision("closed", "budget_exhausted: %s" % exc)
             except KeyboardInterrupt:
                 stop = StopDecision("paused", "interrupted by user")
             except Exception as exc:
@@ -1137,7 +1143,10 @@ class Engine:
                 "objective": m, "objective_gain": gain, "outcomes": outcomes,
                 "pending_conclusions": [a["attempt_no"] for a in self.attempt_records()
                                         if a["plan"] and a["outcome"] and a["conclusion"] is None],
-                "spent": self.spent(), "budget_left": self.budget_left()}
+                "spent": self.spent(), "budget_left": self.budget_left(),
+                "budget": {"scope": "task", "limits": {"wall_seconds": self.effective_budget().max_wall_seconds,
+                           "tokens": self.effective_budget().max_tokens, "attempts": self.effective_budget().max_attempts},
+                           "used": self.spent()}}
 
     def write_views(self) -> str | None:
         if not self.run_id:

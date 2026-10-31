@@ -246,7 +246,7 @@ def test_deployed_cli_records_unknown_usage_without_limits(tmp_path, runtime):
     result = subprocess.run([sys.executable, str(cli), 'onboard', '-p', str(project), '--record-usage'], capture_output=True, text=True)
     assert result.returncode == 1 and json.loads(result.stdout)['preparation'] == 'pending'
     config = json.loads((project / '.opc/local/workers.json').read_text(encoding="utf-8"))
-    assert config['budget'] == {'max_tokens': None, 'max_wall_seconds': None}
+    assert config['budget'] == {'max_tokens': None, 'max_wall_seconds': 7200}
     assert (project / '.opc/project.json').exists()  # initialized without budget confirmation or model dispatch
 
 

@@ -558,6 +558,22 @@ class ObserverAdapter:
                     budget_tokens=budget.get('max_tokens'), budget_wall_seconds=budget.get('max_wall_seconds'),
                     note='仅账本 charges 已记录用量；未把 host_usage 累计再次相加', source_refs=[])
 
+    def _task_usage(self, row, contract):
+        data = self._db(tables_to_read=('runs', 'charges', 'events'))
+        owners = {r['run_id'] for r in data['runs'] if r['task_id'] == row['task_id']}
+        owners.add('preparation:' + row['task_id'])
+        charges = [c for c in data['charges'] if c['run_id'] in owners]
+        events = [e for e in data['events'] if e['run_id'] in owners]
+        budget = dict(mapping(contract.get('budget')))
+        for event in events:
+            if event['kind'] == 'task_budget_authorized':
+                budget.update(mapping(parsed(event['body'])))
+        usage = self._usage(row, charges, events, {'budget': budget})
+        usage.update(scope='task', scope_id=row['task_id'], includes_preparation=True,
+                     source_refs=[dict(kind='ledger', display_path='.opc/local/ledger.sqlite3',
+                                       locator='charges:task_id=' + row['task_id'])])
+        return usage
+
     def run(self, ident):
         with self.lock:
             row = self._find_run(ident)
@@ -731,6 +747,7 @@ class ObserverAdapter:
                           preparation=prep, execution=execution, acceptance=acceptance, stop_reason=row.get('stop_reason'),
                           phase='onboard' if row.get('revision') == 'preparation' else 'loop', last_activity_at=self.source_at,
                           versions=versions, requirements=requirements, metrics=metrics, usage=self._usage(row, data['charges'], events, contract),
+                          task_usage=self._task_usage(row, contract),
                           attempts=attempts, calls=call_refs, artifacts=[ref(a) for a in {a['id']: a for a in artifacts}.values()], report_refs=report_refs,
                           meta=run_meta)
             self._attempt_cache = getattr(self, '_attempt_cache', {})

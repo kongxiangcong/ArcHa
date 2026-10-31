@@ -102,7 +102,27 @@ def cmd_status(a) -> int:
                      "champion_metrics": champ[1].values if champ else None,
                      "working_version": work[-1]["body"]["commit"] if work else None,
                      "selected_version": selected[-1]["body"]["commit"] if selected else default_commit,
-                     "spent": ledger.totals(r["run_id"])})
+                     "spent": ledger.task_totals(r["task_id"]), "accounting_scope": "task"})
+    task_ids = {r["task_id"] for r in ledger.runs()}
+    task_ids.update(r[0].removeprefix("preparation:") for r in ledger.db.execute(
+        "SELECT DISTINCT run_id FROM events WHERE run_id LIKE 'preparation:%'"))
+    for task_id in sorted(task_ids):
+        if a.task and a.task != task_id:
+            continue
+        scope = ledger.preparation_scope(task_id, create=False)
+        if not scope or not scope.startswith("preparation:"):
+            continue  # Legacy preparation rows were included above.
+        receipts = {}
+        for event in ledger.events(scope, "preparation"):
+            receipts[event["body"].get("revision")] = event["body"]
+        limits = ledger.events(scope, "preparation_budget")
+        budget = {"scope": "task", "limits": limits[-1]["body"] if limits else {},
+                  "used": ledger.task_totals(task_id)}
+        for revision, receipt in receipts.items():
+            summary = receipt if a.details else {k: receipt.get(k) for k in ("task_id", "revision", "state", "reason")}
+            rows.append({"task": task_id, "revision": revision, "run_id": None,
+                         "state": receipt["state"], "preparation": [summary], "budget": budget,
+                         "source": ".opc/local/ledger.sqlite3", "details": "opc status --details"})
     _print(rows)
     return 0
 
@@ -212,7 +232,7 @@ def main(argv=None) -> int:
     p.add_argument("--task", default="t-main")
     p.add_argument("--revision", help="candidate revision to prepare (resolved once if omitted)")
     p.add_argument("--max-tokens", type=int, help="explicit token cap, saved in local workers.json; default unlimited")
-    p.add_argument("--max-wall-seconds", type=float, help="explicit time cap, saved in local workers.json; default unlimited")
+    p.add_argument("--max-wall-seconds", type=float, help="authorized Task time cap, saved in local workers.json; default 7200 seconds")
     p.add_argument("--prior-wall-seconds", type=float)
     p.add_argument("--prior-tokens", type=int, help="cumulative host/nested input+output including cached input, excluding metered worker receipts")
     p = add("brief-check", cmd_brief_check, task=False)

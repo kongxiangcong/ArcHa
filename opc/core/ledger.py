@@ -124,6 +124,18 @@ class Ledger:
             raise OPCError("unknown run %s" % run_id)
         return row
 
+    def preparation_scope(self, task_id: str, create: bool = True) -> str | None:
+        """Preparation owns ledger events/charges, never an execution Run.
+
+        Reuse an existing legacy preparation row without rewriting its history.
+        """
+        legacy = self.db.execute("SELECT run_id FROM runs WHERE task_id=? AND revision='preparation' "
+                                 "ORDER BY rowid DESC LIMIT 1", (task_id,)).fetchone()
+        if legacy:
+            return legacy["run_id"]
+        scope = "preparation:" + task_id
+        return scope if create or self.events(scope) else None
+
     def latest_run(self, task_id: str) -> sqlite3.Row | None:
         return self.db.execute("SELECT * FROM runs WHERE task_id=? AND revision != 'preparation' ORDER BY created_at DESC, "
                                "rowid DESC LIMIT 1", (task_id,)).fetchone()
@@ -174,7 +186,7 @@ class Ledger:
         import math
         if self._lock_fd is None:
             raise OPCError("accounting reconciliation requires the project writer lock")
-        if self.run(run_id)["revision"] != "preparation":
+        if not run_id.startswith("preparation:") and self.run(run_id)["revision"] != "preparation":
             raise OPCError("accounting reconciliation requires a preparation run")
         unknown = {e["seq"] for e in self.events(run_id, "accounting_unknown")}
         resolved = {e["body"]["event_seq"]: e["body"]
@@ -313,6 +325,7 @@ class Ledger:
 
     def task_totals(self, task_id: str) -> dict[str, Any]:
         records = [self.totals(r["run_id"]) for r in self.runs() if r["task_id"] == task_id]
+        records.append(self.totals("preparation:" + task_id))
         return {"wall_seconds": sum(r["wall_seconds"] for r in records),
                 "tokens": sum(r["tokens"] for r in records),
                 "usd": sum(r["usd"] for r in records),

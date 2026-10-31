@@ -69,7 +69,7 @@ $archa-loop /absolute/project/.opc/research/topics/dma-scheduling/tasks/r01-base
 
 1. 第一阶段先初始化当前项目 `.opc/`，保存 `.opc/runtime/` 和本地入口 `.opc/archa.py`，再共同形成研究地图。地图正文自由组织，末尾包含 task to-do、每个方向的占位目录以及第二阶段提示词。此时只部署框架，不生成任务合同和评价器；已有项目合同和执行状态保留。
 2. 第二阶段读取用户指定的具体任务目录，核对依赖证据，派 sub-agent 调查源码或外部原始来源，证据保存在任务 `evidence/`。主 agent 调研后记录 brief 大纲，覆盖用途、一句话目标与完成状态、范围、交付物、验收条件、有无数值指标和留给 onboard 的未决项，依据用户任务与证据直接生成简报，记录合理假设，无需停下来等待额外确认。
-3. 形成大纲后直接生成 `task-brief.md`，结构检查通过才勾选该 task；勾选仅表示简报就绪。技能随后自动调用 onboard，核对合同并处理未决项，在 `.opc/context/DECISIONS.md` 记录简报路径、摘要与对应 task/revision。起草阶段保持执行关闭；token/时间默认无上限；必要评价器由 agent 自主准备。底层调用：
+3. 形成大纲后直接生成 `task-brief.md`，结构检查通过才勾选该 task；勾选仅表示简报就绪。技能随后自动调用 onboard，核对合同并处理未决项，在 `.opc/context/DECISIONS.md` 记录简报路径、摘要与对应 task/revision。起草阶段保持执行关闭；默认 token 无上限、Task 时间额度两小时；必要评价器由 agent 自主准备。底层调用：
 
 ```bash
 python3 /absolute/project/.opc/archa.py brief-check -p /absolute/project --brief .opc/research/topics/<topic>/tasks/<task>/task-brief.md
@@ -228,7 +228,7 @@ base_attempt 同样适用于停止回复；run 停止、预算用尽、数值 ta
 
 ```json
 {
-  "budget": {"max_tokens": null, "max_wall_seconds": null},
+  "budget": {"max_tokens": null, "max_wall_seconds": 7200},
   "expert": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
   "designer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
   "reviewer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
@@ -236,7 +236,7 @@ base_attempt 同样适用于停止回复；run 停止、预算用尽、数值 ta
 }
 ```
 
-`null` 表示无上限。只有用户明确指定相应上限时写入数值，可分别设置；技能不会主动索要预算或等待大纲确认。角色设置与 budget 独立；本地 budget 显式字段覆盖旧合同同名限制，缺失则兼容旧合同，二者都缺失时无上限。预算变更纳入运行冻结摘要，需新 run，累计用量保留。模型单次调用默认也无超时；既有显式 worker 超时、评价器工具超时、轮数限制与用户 pause/stop 继续生效。
+预算按 Task 累计，包含准备及所有 revision、Run；默认 token 无上限、活动时间额度 7200 秒，无隐含轮数上限。显式限制继续生效，null 不撤销已有明确上限。通过 onboard 的预算参数追加授权时提高总额度，已用量保留；暂停和重启不清零。仅启用的约束要求相应可靠计量。模型单次调用默认无超时，评价器工具超时与用户 pause/stop 独立保留。配置来源与冻结规则见 [接入说明](opc/scaffold/ONBOARDING.md#独立的-worker-环境配置)。
 
 ## 自主准备
 

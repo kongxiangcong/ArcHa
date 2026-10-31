@@ -70,5 +70,15 @@ def validate_limits(values: dict) -> dict:
 
 
 def load_budget_config(root: Path) -> dict:
-    """Explicit local limits override legacy contract fields, including null."""
+    """Read explicit local resource configuration."""
     return _load_config(root).get("budget", {})
+
+
+def resolve_budget_limits(contract: dict, local: dict) -> dict:
+    """Null cannot discard an existing explicit cap; missing time defaults to two hours."""
+    values = {"max_tokens": None, "max_wall_seconds": 7200}
+    values.update({k: contract[k] for k in LIMIT_FIELDS if k in contract})
+    for key, value in local.items():
+        if value is not None or contract.get(key) is None:
+            values[key] = value
+    return validate_limits(values)

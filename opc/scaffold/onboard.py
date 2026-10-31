@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.model import OPCError
-from ..core.worker_config import CONFIG_PATH, load_worker_config, worker_options, load_budget_config, validate_limits
+from ..core.worker_config import CONFIG_PATH, load_worker_config, worker_options, load_budget_config, resolve_budget_limits
 from ..core.workspace import dirty_paths
 
 HERE = Path(__file__).resolve().parent
@@ -47,7 +47,6 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
     """
     from ..core.ledger import Ledger
     from ..core.model import Cost, write_json
-    from ..core.workspace import git
     import json
     import time
     root = project_root.resolve()
@@ -76,15 +75,11 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
     contract_path = task_dir / revision / "task.json"
     explicit = {key: value for key, value in (("max_tokens", max_tokens), ("max_wall_seconds", max_wall_seconds)) if value is not None}
     legacy = json.loads(contract_path.read_text(encoding="utf-8-sig")).get("budget", {}) if contract_path.exists() else {}
-    caps = validate_limits({k: legacy.get(k) for k in ("max_tokens", "max_wall_seconds")} | load_budget_config(root) | explicit)
+    caps = resolve_budget_limits(legacy, load_budget_config(root) | explicit)
     max_tokens, max_wall_seconds = caps.get("max_tokens"), caps.get("max_wall_seconds")
     ledger = Ledger(root / ".opc/local/ledger.sqlite3")
     with ledger.writer():
-        rows = [r for r in ledger.runs() if r["task_id"] == task_id and r["revision"] == "preparation"]
-        rid = rows[-1]["run_id"] if rows else ledger.create_run(
-            task_id=task_id, revision="preparation", task_digest="preparation", component="preparation",
-            base_commit=str(git("rev-parse", "--verify", "HEAD", cwd=root, check=False)).strip(), evaluator_digest="", toolchain_digest="",
-            champion_ref="", direction="authorized preparation only")
+        rid = ledger.preparation_scope(task_id)
         def finish(state, reason, **fields):
             owner = "external prerequisite owner" if state == "external_blocked" else "agent"
             if state in ("accounting_unknown", "budget_exhausted"):
@@ -94,15 +89,16 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                          else "continue scoped preparation" if state == "pending" else "reconcile usage/budget before dispatch")
             ledger.event(rid, "preparation", None, state=state, reason=reason,
                          responsibility=owner, next=next_step, task_id=task_id, revision=revision, **fields)
-            ledger.set_run_state(rid, "paused" if state == "ready" else "blocked", reason)
             return {"responsibility": "external prerequisite owner" if state == "external_blocked" else
                     "accounting owner" if state == "accounting_unknown" else
                     "budget owner" if state == "budget_exhausted" else "agent",
-                    "task": task_id, "revision": revision, "ok": state == "ready", "preparation": state, "error": reason if state != "ready" else "", "reason": reason,
+                    "budget": {"scope": "task", "limits": {"tokens": max_tokens, "wall_seconds": max_wall_seconds},
+                               "used": ledger.task_totals(task_id)},
+                    "task": task_id, "revision": revision,
+                    "ok": state == "ready", "preparation": state, "error": reason if state != "ready" else "", "reason": reason,
                     "next": "commit prepared files, check/preflight, then run only if authorized" if state == "ready"
                     else "continue scoped preparation after resolving the stated condition", **fields}
-        if ((max_tokens is not None and prior_tokens is None) or
-                (max_wall_seconds is not None and prior_wall_seconds is None)):
+        if max_tokens is not None and prior_tokens is None:
             return finish("accounting_unknown", "cumulative host usage required for the configured limit")
         for value in (prior_tokens, prior_wall_seconds):
             if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or value < 0):
@@ -114,6 +110,7 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             data = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
             data["budget"] = {**data.get("budget", {}), **explicit}
             write_json(path, data)
+            ledger.event(rid, "task_budget_authorized", **explicit)
         if not limits or limits[-1]["body"] != budget:
             ledger.event(rid, "preparation_budget", None, **budget)
         prior = ledger.events(rid, "host_usage")

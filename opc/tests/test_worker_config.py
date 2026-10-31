@@ -11,7 +11,7 @@ from opc.core.model import Cost, OPCError
 from opc.core.promote import run_reviewer
 from opc.core.worker_config import CONFIG_PATH, load_worker_config
 from opc.scaffold import init
-from opc.scaffold.onboard import _draft as onboard
+from opc.scaffold.onboard import onboard
 from opc.tests.conftest import task, write
 from opc.tests.test_codex_and_config import fake_codex  # noqa: F401
 from opc.tests.test_dsh_worker import fake_dsh  # noqa: F401
@@ -63,7 +63,7 @@ def test_codex_explicit_fields_reach_argv(tmp_path, fake_codex, monkeypatch):
     (tmp_path / ".opc").mkdir()
     worker = CodexWorker({"binary": fake_codex, "model": "role-model", "reasoning_effort": "high",
                           "extra_args": ["--model=old", "-c", 'model_reasoning_effort="low"']})
-    call, _ = worker._run("onboard", "onboarding", tmp_path, tmp_path / "logs", "workspace-write", None)
+    call, _ = worker._run("onboard", "PREPARATION", tmp_path, tmp_path / "logs", "workspace-write", None)
     assert call.ok
     argv = json.loads((tmp_path / "logs/onboard-request.json").read_text())["argv"]
     assert argv[-5:] == ["-c", 'model_reasoning_effort="high"', "-m", "role-model", "-"]
@@ -93,11 +93,11 @@ def test_onboard_uses_own_configuration_and_protects_it(tmp_path, monkeypatch):
     def run(self, *args):
         assert (self.model, self.reasoning_effort) == ("drafter", "high")
         settings(tmp_path, {})
-        return SimpleNamespace(ok=True, call_id="fake", cost=Cost(0, 0, None), error=""), "drafted"
+        return SimpleNamespace(ok=True, call_id="fake", cost=Cost(0, 0, None), error="", extra={"usage_complete": True}), "drafted"
 
     monkeypatch.setattr(CodexWorker, "_run", run)
     result = onboard(tmp_path, "codex")
-    assert not result["ok"] and CONFIG_PATH in result["changed_protected_opc"]
+    assert not result["ok"] and "scope violation" in result["reason"]
 
 
 @pytest.mark.parametrize("configured", [True, False])
@@ -154,7 +154,9 @@ def test_first_onboard_uses_newly_generated_defaults(tmp_path, monkeypatch):
 
     def run(self, *args):
         assert (self.model, self.reasoning_effort) == ("gpt-6.1-sol", "medium")
-        return SimpleNamespace(ok=True, call_id="fake", cost=Cost(0, 0, None), error=""), "drafted"
+        return SimpleNamespace(ok=True, call_id="fake", cost=Cost(0, 0, None), error="", extra={"usage_complete": True}), "drafted"
 
     monkeypatch.setattr(CodexWorker, "_run", run)
-    assert onboard(tmp_path, "codex")["ok"]
+    result = onboard(tmp_path, "codex")
+    assert result["preparation"] == "pending"
+    assert "not structured evidence" in result["reason"]

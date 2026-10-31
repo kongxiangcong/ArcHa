@@ -31,12 +31,15 @@ if mode in ("input_expert", "input_designer") and ((cwd / "research.json").exist
     print(json.dumps({"type": "turn.failed", "error": {"message": "context_length_exceeded: input too long"}}))
     sys.exit(1)
 if mode.startswith("onboard"):
-    assert "workspace-write" in args and "onboarding" in prompt
+    assert "workspace-write" in args and "PREPARATION" in prompt
     (cwd / ".opc/README.md").write_text("Open items: none\n")
     if mode == "onboard_stray":
         with open(cwd / "params.json", "a") as f:
             f.write("\n")
-    last.write_text("drafted"); sys.exit(0)
+    (cwd / ".opc/check.txt").write_text("focused integration evidence")
+    last.write_text(json.dumps({"state": "ready", "evidence": [".opc/check.txt"]}))
+    print(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}}))
+    sys.exit(0)
 if (cwd / "research.json").exists():
     ctx = json.loads((cwd / "research.json").read_text())
     assert not (cwd / "params.json").exists() and not (cwd / ".git").exists()
@@ -157,15 +160,16 @@ def test_token_budget_stops_before_overspending(make_project, engine_for, fake_c
 
 @pytest.mark.parametrize("mode,ok", [("onboard", True), ("onboard_stray", False)])
 def test_onboard_writes_only_under_opc(make_project, fake_codex, monkeypatch, mode, ok):
-    from opc.scaffold.onboard import _draft as onboard
+    from opc.scaffold.onboard import onboard
     root = make_project()
     with open(root / "params.json", "a") as f:
         f.write(" ")  # already dirty before the agent runs
     monkeypatch.setenv("OPC_CODEX_BIN", fake_codex)
     monkeypatch.setenv("FAKE_CODEX_MODE", mode)
-    r = onboard(root, "codex")
+    r = onboard(root, "codex", task_id="t-toy")
     assert r["ok"] is ok
-    assert r["changed_outside_opc"] == ([] if ok else ["params.json"])
+    if not ok:
+        assert "scope violation" in r["reason"]
 
 
 def test_parse_real_codex_failure_stream():
@@ -287,14 +291,12 @@ def test_codex_expert_can_declare_exhaustion(make_project, engine_for, fake_code
     assert s["state"] == "closed" and s["stop_reason"].startswith("expert_exhausted:")
 
 
-def test_onboard_accepts_dsh_and_rejects_unknown(tmp_path):
-    from opc.scaffold.onboard import _draft as onboard
-    with pytest.raises(OPCError, match="init --apply"):
-        onboard(tmp_path, "dsh")
-    (tmp_path / ".opc").mkdir()
-    (tmp_path / ".opc" / "project.json").write_text("{}", encoding="utf-8")
+def test_onboard_accepts_dsh_and_rejects_unknown(make_project):
+    from opc.scaffold.onboard import onboard
+    root = make_project()
+    assert onboard(root, "dsh", task_id="t-toy", record_usage_only=True)["preparation"] == "pending"
     with pytest.raises(OPCError, match="must be codex or dsh"):
-        onboard(tmp_path, "claude")
+        onboard(root, "claude", task_id="t-toy")
 
 
 @pytest.mark.parametrize("role", ["expert", "designer"])

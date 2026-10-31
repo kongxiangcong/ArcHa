@@ -12,7 +12,7 @@ def test_onboard_reconciles_without_dispatch(make_project, monkeypatch):
               prior_tokens=10, prior_wall_seconds=0, record_usage_only=True)
     onboard(root, 'codex', **kw)
     ledger = Ledger(root / '.opc/local/ledger.sqlite3')
-    rid = ledger.runs()[-1]['run_id']
+    rid = ledger.preparation_scope('t-toy')
     ledger.charge(rid, None, 'onboard', Cost(2, 20, None))
     ledger.event(rid, 'accounting_unknown', reason='worker usage missing')
     seq = ledger.events(rid, 'accounting_unknown')[0]['seq']
@@ -59,7 +59,7 @@ def test_reconciliation_validation_and_budget(make_project, monkeypatch):
               prior_tokens=10, prior_wall_seconds=0, record_usage_only=True)
     onboard(root, 'codex', **kw)
     ledger = Ledger(root / '.opc/local/ledger.sqlite3')
-    rid = ledger.runs()[-1]['run_id']
+    rid = ledger.preparation_scope('t-toy')
     ledger.event(rid, 'accounting_unknown', reason='first')
     ledger.event(rid, 'accounting_unknown', reason='second')
     events = ledger.unresolved_accounting(rid)
@@ -118,7 +118,7 @@ def test_cli_reconcile_and_role_home_config(make_project, capsys):
               prior_tokens=0, prior_wall_seconds=0, record_usage_only=True)
     onboard(root, 'codex', **kw)
     ledger = Ledger(root / '.opc/local/ledger.sqlite3')
-    rid = ledger.runs()[-1]['run_id']
+    rid = ledger.preparation_scope('t-toy')
     ledger.event(rid, 'accounting_unknown', reason='unknown startup')
     seq = ledger.unresolved_accounting(rid)[0]['seq']
     (root / 'evidence.txt').write_text('fixture verifies zero model usage', encoding="utf-8")
@@ -145,7 +145,7 @@ def test_direct_reconciliation_invalidates_stale_ready(make_project, monkeypatch
               prior_tokens=0, prior_wall_seconds=0, record_usage_only=True)
     onboard(root, 'codex', **kw)
     ledger = Ledger(root / '.opc/local/ledger.sqlite3')
-    rid = ledger.runs()[-1]['run_id']
+    rid = ledger.preparation_scope('t-toy')
     ledger.event(rid, 'preparation', state='ready', reason='previous review')
     ledger.event(rid, 'accounting_unknown', reason='subsequent worker receipt missing')
     seq = ledger.unresolved_accounting(rid)[0]['seq']
@@ -168,7 +168,7 @@ def test_reconciliation_requires_preparation_lock_and_immutable_evidence(make_pr
     onboard(root, 'codex', task_id='t-toy', max_tokens=100, max_wall_seconds=600,
             prior_tokens=0, prior_wall_seconds=0, record_usage_only=True)
     ledger = Ledger(root / '.opc/local/ledger.sqlite3')
-    rid = ledger.runs()[-1]['run_id']
+    rid = ledger.preparation_scope('t-toy')
     ledger.event(rid, 'accounting_unknown', reason='missing')
     evidence = root / 'usage.txt'
     evidence.write_text('original evidence', encoding="utf-8")
@@ -183,8 +183,9 @@ def test_reconciliation_requires_preparation_lock_and_immutable_evidence(make_pr
             ledger.reconcile_accounting(rid, [entry], root)
     assert ledger.totals(rid)['tokens'] == 2
     assert len(ledger.events(rid, 'accounting_reconciled')) == 1
-    with ledger.tx() as db:
-        db.execute("UPDATE runs SET revision='r0001' WHERE run_id=?", (rid,))
+    rid = ledger.create_run(task_id="t-toy", revision="r0001", task_digest="x",
+        component="toy", base_commit="x", evaluator_digest="x", toolchain_digest="x",
+        champion_ref="", direction="")
     with ledger.writer():
         with pytest.raises(OPCError, match='preparation run'):
             ledger.reconcile_accounting(rid, [entry], root)
@@ -401,10 +402,10 @@ def test_preparation_targets_revision_and_receipts_do_not_cross_versions(make_pr
     assert not check['ok'] and any('not ready' in p for p in check['problems'])
     # A failure preparing another revision must not revoke the original receipt.
     ledger = Ledger(root / '.opc/local/ledger.sqlite3')
-    rid = ledger.runs()[0]['run_id']
+    rid = ledger.preparation_scope('t-toy')
     ledger.event(rid, 'preparation', task_id='t-toy', revision='r0002', state='pending', reason='tool missing')
     assert Engine(root, 't-toy', 'r0001').static_check()['ok']
-    assert len(ledger.runs()) == 1  # preparation never starts an execution worker/run
+    assert ledger.runs() == []  # preparation never starts an execution worker/run
 
 
 def test_reviewed_candidate_can_be_edited_in_place_and_only_changed_inputs_need_checks(make_project, monkeypatch):

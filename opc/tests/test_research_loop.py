@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from opc.adapters.worker import WorkerCall, validate_plan
-from opc.core.model import Cost, Outcome
+from opc.core.model import Cost, OPCError, Outcome
 from opc.tests.conftest import EVALUATE, component, git, task
 
 
@@ -467,7 +467,7 @@ def test_metered_preparation_to_formal_execution(make_project, engine_for, monke
         if case == 'unknown':
             from opc.core.ledger import Ledger
             ledger = Ledger(root / '.opc/local/ledger.sqlite3')
-            rid = ledger.runs()[-1]['run_id']
+            rid = ledger.preparation_scope('t-toy')
             seq = ledger.unresolved_accounting(rid)[0]['seq']
             evidence = root / '.opc/local/usage-evidence.json'
             evidence.write_text('{"actual_tokens": 80, "already_charged": 80}')
