@@ -161,7 +161,7 @@ def test_direct_reconciliation_invalidates_stale_ready(make_project, monkeypatch
     assert not ledger.unresolved_accounting(rid)
 
 
-def test_reconciliation_requires_preparation_lock_and_immutable_evidence(make_project):
+def test_reconciliation_requires_writer_lock_and_immutable_evidence(make_project):
     import pytest
     from opc.core.model import OPCError
     root = make_project()
@@ -186,9 +186,13 @@ def test_reconciliation_requires_preparation_lock_and_immutable_evidence(make_pr
     rid = ledger.create_run(task_id="t-toy", revision="r0001", task_digest="x",
         component="toy", base_commit="x", evaluator_digest="x", toolchain_digest="x",
         champion_ref="", direction="")
+    ledger.event(rid, 'accounting_unknown', reason='ordinary worker receipt missing')
+    ordinary = {**entry, 'event_seq': ledger.unresolved_accounting(rid)[0]['seq']}
     with ledger.writer():
-        with pytest.raises(OPCError, match='preparation run'):
-            ledger.reconcile_accounting(rid, [entry], root)
+        ledger.reconcile_accounting(rid, [ordinary], root)
+        ledger.reconcile_accounting(rid, [ordinary], root)
+    assert ledger.totals(rid)['tokens'] == 2
+    assert not ledger.unresolved_accounting(rid)
 
 
 def test_codex_home_precedence_and_parent_environment(tmp_path, monkeypatch):
