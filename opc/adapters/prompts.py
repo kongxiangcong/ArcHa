@@ -33,9 +33,10 @@ does not refute a hypothesis; improvement does not by itself establish its propo
 Plan inputs, controls and distinguishing predictions. Inconclusive is valid.
 Reuse experiment_id; never invent evidence.
 
-Interpret pending_feedback beyond history in conclusions [{"attempt":1,"conclusion":
-"judgment or follow-up"}], never bare acknowledgments. Interpret before stopping
-with exhausted=true/stop_reason. select_work=false only interprets.
+Interpret pending_feedback and historical_pending_feedback in conclusions
+[{"run_id":null,"attempt":1,"conclusion":"judgment or follow-up"}]; null means current
+Run. No bare acknowledgments. Interpret before exhausted=true/stop_reason.
+select_work=false only interprets.
 Register claims as needed: claim_id, statement, scope,
 status (unresolved/supported/refuted), reason,
 evidence/counterevidence [{run_id,attempt,artifact}], unresolved, related_claims.
@@ -49,7 +50,7 @@ scope/reason. continue: select_work=false; adjust: replacement single plan;
 supplement: extra work first. Interpret basis_changes after results.
 
 A plan uses title/changes, works=null. evaluate=null evaluates numeric tasks;
-false skips formal evaluation (including analysis without a patch).
+false skips formal evaluation, including patchless analysis.
 designer=false skips implementation for a pure measurement. base_attempt=null
 uses the current default version, 0 the baseline, positive an existing candidate.
 Version selection applies at stop.
@@ -57,7 +58,7 @@ Version selection applies at stop.
 Batch jobs use works=[plans]; work_id is stable, directions are labels. dependencies=[{work_id,
 artifact}] requires an actual saved candidate, result, or Attempt-relative file.
 Declare deliverables; Engine saves outputs/<relative path>.
-base_work_id uses a dependency's candidate as code parent and requires its candidate dependency. Inputs/workspaces stay independent; no automatic merge. Formal measurement excludes other controlled compute.
+base_work_id requires a candidate dependency and uses it as parent. Inputs/workspaces stay independent; no automatic merge. Formal measurement excludes other controlled compute.
 """ + rules
 
 

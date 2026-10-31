@@ -1264,6 +1264,7 @@ class Engine:
             "background": background, "budget_left": self.budget_left(),
             "pending_feedback": [{"attempt": a["attempt_no"], "evidence": str(self.attempt_dir(a["attempt_no"]))}
                                  for a in decided if a["conclusion"] is None],
+            "historical_pending_feedback": self.historical_pending_feedback(),
             "evidence_root": str(self.artifact_dir()),
             "prior_runs": self.prior_run_materials(),
             "progress": {"target_met": acceptance.target_met(acc, champ[1].values),
@@ -1373,13 +1374,16 @@ class Engine:
                version: int | None = None, history: bool = False) -> list[dict]:
         """Task claim entry, with explicit pending feedback and source availability."""
         claims = self.ledger.claims(self.task.task_id, claim_id, version=version, history=history)
-        pending = [{"run_id": self.run_id, "attempt": a["attempt_no"]}
-                   for a in self.attempt_records()
-                   if a["outcome"] and a["conclusion"] is None]
+        pending = self.ledger.pending_feedback(self.task.task_id)
         for claim in claims:
             claim["pending_feedback"] = pending
         from .results import claim_sources
         return claim_sources(claims, self.bindings.artifact_root, self.project.project_id)
+
+    def historical_pending_feedback(self) -> list[dict]:
+        return [dict(row, evidence=str(self.artifact_dir().parent / row['run_id'] /
+                                      'attempts' / ('a%06d' % row['attempt'])))
+                for row in self.ledger.pending_feedback(self.task.task_id) if row['run_id'] != self.run_id]
 
     def validate_claims(self, output: dict) -> str | None:
         claims = output.get("claims", [])
@@ -1438,21 +1442,22 @@ class Engine:
         return None
 
     def validate_conclusions(self, output: dict[str, Any]) -> str | None:
-        pending = {a["attempt_no"] for a in self.attempt_records()
-                   if a["plan"] and a["outcome"] and a["conclusion"] is None}
+        pending = {(a['run_id'], a['attempt']) for a in self.ledger.pending_feedback(self.task.task_id)}
         conclusions = output.get("conclusions", [])
         if not isinstance(conclusions, list):
             return "conclusions must be a list"
         seen = set()
         for row in conclusions:
+            ident = (row.get('run_id') or self.run_id, row.get('attempt')) if isinstance(row, dict) else None
             if (not isinstance(row, dict) or type(row.get("attempt")) is not int
-                    or row["attempt"] not in pending or row["attempt"] in seen
+                    or (row.get('run_id') is not None and not isinstance(row['run_id'], str))
+                    or ident not in pending or ident in seen
                     or not isinstance(row.get("conclusion"), str) or not row["conclusion"].strip()):
                 return "conclusions must identify pending attempts with an interpretation or follow-up"
             if row["conclusion"].strip().rstrip(".!。！").casefold() in {
                     "read", "reviewed", "acknowledged", "noted", "已读", "已阅读", "已阅"}:
                 return "conclusions require an interpretation or follow-up, not a read acknowledgment"
-            seen.add(row["attempt"])
+            seen.add(ident)
         return None
 
     def adopted_claims(self, value, proposed=()) -> list[dict]:
@@ -2291,6 +2296,7 @@ class Engine:
                 "objective": m, "objective_gain": gain, "outcomes": outcomes,
                 "pending_conclusions": [a["attempt_no"] for a in self.attempt_records()
                                         if a["plan"] and a["outcome"] and a["conclusion"] is None],
+                "historical_pending_feedback": self.historical_pending_feedback(),
                 "control": self.ledger.control(self.run_id),
                 "inflight_calls": [c["call_id"] for c in self.ledger.calls(self.run_id) if c["result"] is None],
                 "claims": self.claims(),

@@ -781,9 +781,10 @@ class ObserverAdapter:
             worker_selection = {role: {key: value for key, value in mapping(spec).items()
                                       if key in ('kind', 'model', 'provider', 'reasoning_effort', 'native_model_provider', 'native_profile', 'native_selection_error')}
                                 for role, spec in mapping(worker_execution.get('workers')).items()}
-            from ..core.ledger import current_claims
-            knowledge = self._db(tables_to_read=('runs', 'events'))
+            from ..core.ledger import current_claims, pending_feedback
+            knowledge = self._db(tables_to_read=('runs', 'events', 'attempts'))
             task_runs = {r['run_id'] for r in knowledge['runs'] if r['task_id'] == row['task_id']}
+            pending = pending_feedback([a for a in knowledge['attempts'] if a['run_id'] in task_runs], knowledge['events'])
             claim_history = [parsed(e['body']) for e in sorted(knowledge['events'], key=lambda e: e['seq'])
                              if e['run_id'] in task_runs and e['kind'] == 'claim_registered']
             from ..core.results import claim_sources
@@ -795,6 +796,8 @@ class ObserverAdapter:
                         source['artifact_id'] = artifact['id']
                         artifacts.append(artifact)
             claims = current_claims(claim_history)
+            for claim in claims:
+                claim['pending_feedback'] = pending
             result = dict(id=ident, claims=claims, claim_history=claim_history, compatibility=compatibility, control_request=control_events[-1]['kind'].removeprefix('control_') if control_events else 'run', source_run_id=row['run_id'], kind='preparation' if row.get('revision') == 'preparation' else 'execution',
 
                           task_revision_id=revision['id'] if revision and not revision.get('_contract_mismatch') else None, execution_task_id=row.get('task_id'),
@@ -808,6 +811,7 @@ class ObserverAdapter:
                           backend_validation={'dsh': 'implemented; not runtime verified'},
                           pending_feedback=[a['attempt_no'] for a in data['attempts']
                                             if a.get('outcome') and not any(e['kind'] == 'conclusion' and e.get('attempt_no') == a['attempt_no'] for e in events)],
+                          historical_pending_feedback=[p for p in pending if p['run_id'] != row['run_id']],
                           decisions=[e['body'] for e in events if e['kind'] == 'expert_decision'],
                           max_concurrency=mapping(frozen_baseline.get('execution')).get('max_concurrency'),
                           attempts=attempts, calls=call_refs, artifacts=[ref(a) for a in {a['id']: a for a in artifacts}.values()], report_refs=report_refs,

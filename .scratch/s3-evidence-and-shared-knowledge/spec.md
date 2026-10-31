@@ -1,8 +1,8 @@
 # S3：证据、主张与共享知识
 
-Status: ready-for-agent
+Status: implemented
 
-需求及 Testing Decisions 中的测试边界已获用户确认（2026-10-31），规格已发布至本地事项库。本次仅完成规格发布，未启动实现或正式研究考试。
+需求及 Testing Decisions 中的测试边界已获用户确认（2026-10-31）。七项实现及脚本化闭环验证已完成，验证记录见下方「交付验证」；最终集成审查结果在该节补充。未启动正式研究考试。
 
 ## Problem Statement
 
@@ -105,7 +105,7 @@ Expert 在已有调用中汇合新旧材料；Engine 检查并持久登记，提
 - 自动垃圾回收、自动把经验提升为跨任务通用技能、自动取消依赖旧主张的在途工作。
 - 通用阅读纪律、固定历史条数作为知识入口、固定阅读层数或每轮强制查询次数。
 - 新建观察 UI、重做 S1/S2、为术语统一强制改名现有反馈字段、未触及功能的测试重构。
-- DeepStack 正式建模探索、正式四题考试，以及本次规格整理期间的代码实现或研究实验。
+- DeepStack 正式建模探索及正式四题考试。
 
 ## Further Notes
 
@@ -113,4 +113,17 @@ Expert 在已有调用中汇合新旧材料；Engine 检查并持久登记，提
 - 阶段依赖：[S2 规格及交付记录](../s2-attempts-and-worker-handoffs/spec.md)。本规格编写时仅只读核查现有代码和测试，未重新执行历史交付验证。
 - 本规格是 S3 实现与验收要求的权威入口，专题 README 保留导航、讨论依据和范围状态，通过链接引用规格；后续需求变更优先更新本规格，不维护两份实施要求。
 - 接口名称、参数、数据库布局和迁移细节由实现据既有模块确定，必须满足上方外部行为。无需为这些常规实现选择重新访谈；若出现与已确认行为冲突的真实取舍，应明确指出冲突。
-- 本次只生成一个规格文件，不拆实现事项，不创建重复报告或预设服务。`ready-for-agent` 表示可交给 agent 实现，不代表已实现或验收通过。
+- 实现按 [7 个事项](issues/) 的阻塞依赖交付，实际验证写入各事项的 `Answer`；本规格集中记录整体交付范围，避免另建报告副本。
+
+## 交付验证
+
+2026-10-31，集成分支 `feat/s3-evidence-and-shared-knowledge`：
+
+- [01](issues/01-claim-registration-and-feedback.md#answer)、[02](issues/02-claim-revisions-and-recovery.md#answer)：主张与反馈分析分开保存；三态、历史修订、整体版本冲突拒绝、重新判断与恢复幂等沿既有 SQLite 事件账本实现。
+- [03](issues/03-authorized-claim-query.md#answer)、[04](issues/04-adopted-claim-versions.md#answer)：Worker 从固定 Call 材料按身份、状态、文本和版本查询、展开原件；合同仅为具名跨 Task 主张授权。计划采用与 Designer 新增采用分别保留，读取不推断采用。
+- [05](issues/05-revised-basis-followup.md#answer)、[06](issues/06-evidence-retention-and-replacement.md#answer)：再次派发和成果复用前判断直接依据变化；在途输入及旧收据不变。必要原件沿现有成果收集保存，缺失后补证产生新观测，旧缺口与修订保留。
+- [07](issues/07-cross-run-reuse-and-acceptance.md#answer)：连续案例覆盖宽泛主张未定、限定主张受支持、短字段结果待分析、有效反例修订宽泛主张，以及后续 Run 查询并按范围采用准确版本。干扰测量及无法解释的不一致测量均可分析完成而仍未定。同 Task 的历史待处理反馈独立显示并可读取、分析；`conclusions.run_id` 指定原 Run，省略或 null 表示当前 Run，不把旧执行并入当前历史。
+
+使用现有测试虚拟环境执行框架回归（`opc/tests`、`tools/tests`，排除 HTTP observer 文件及成果 HTTP 用例）：484 passed、5 skipped、1 deselected、12 subtests passed；5 个跳过项为 Windows 专用检查。另行选取不使用 HTTP fixture 的观察测试：23 passed。新增闭环、历史反馈及有效性用例通过，`git diff --check` 和既有提示词长度边界通过。
+
+验证使用临时项目、真实 SQLite/成果目录、脚本化 Worker、假 CLI 以及实际受限子进程读取。HTTP TestClient 在前序事项出现 AnyIO fixture 等待，本轮排除，未计为通过；观察事实和只读性由 ObserverAdapter 验证。没有真实模型/API 或正式研究考试；这些结果证明可观察的交接、登记、查询、恢复和原件保留行为，不证明模型理解或研究判断正确。真实后端能力限制继续以 S2 交付记录为准。

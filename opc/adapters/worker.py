@@ -37,7 +37,8 @@ PLAN_SCHEMA: dict[str, Any] = {
                          "description": "null: champion; 0: initial baseline; positive: saved candidate attempt"},
         "conclusions": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
-            "required": ["attempt", "conclusion"], "properties": {
+            "required": ["attempt", "conclusion", "run_id"], "properties": {
+                "run_id": {"type": ["string", "null"]},
                 "attempt": {"type": "integer"}, "conclusion": {"type": "string"}}}},
         "stop_reason": {"type": "string", "description": "why exploration should end; empty while continuing"},
         "expected": {"type": "string", "description": "distinguishing predictions under stated inputs and controls, not a mandatory result"},

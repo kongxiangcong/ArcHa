@@ -155,6 +155,7 @@ def worker_policy(role: str, tree: Path, log_dir: Path, ctx: dict | None = None)
         if ctx.get('evidence_root'):
             reads.append(ctx['evidence_root'])
         reads += [prior['evidence_root'] for prior in ctx.get('prior_runs', [])]
+        reads += [entry['evidence'] for entry in ctx.get('historical_pending_feedback', [])]
     reads += [entry['path'] for entry in ctx.get('handoff', {}).get('inputs', [])]
     knowledge = ctx.get('knowledge')
     if knowledge:
