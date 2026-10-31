@@ -155,10 +155,12 @@
 - [工具命令事件](../../work/s2-smoke/codex-07/boundary-directory-call/designer-events.jsonl)：`src/**` 的有效读写成功，冻结写入返回 EROFS，宿主确实存在的兄弟文件在工具视图不可见，socket 被拒绝，模拟传输凭据变量不存在。判断依据是实际工具 stdout/退出码，非模型自报。
 - 主 Run `run-c253403a1d8c`：真实 Expert 选定 left/right，两 Designer 使用同一父提交及不同工作区并行执行；pause 收住当前调用且没有新增评价/反馈调用。独立进程继续时复用两份 Designer 回执，最终 Expert 以同一 session `01a1917b-f047-7231-9436-e66bfc17d5f6` 分别解释两结果后停止。四个独立 Call ID、两份未隐式合并的候选内容、只读 Observer 核对见 [checks.stdout](../../work/s2-smoke/codex-07/checks.stdout)、[paused-status.json](../../work/s2-smoke/codex-07/paused-status.json)、[observer.json](../../work/s2-smoke/codex-07/observer.json)。暂停时尚待 Engine 登记节点结果，明确保留两份已完成调用；继续后补交接，不重复实施。
 - 停止 Run `run-7b74c96b3eba`：实际 45 秒工具命令已开始每 0.1 秒追加心跳，观察到三次写入后 stop；CLI 返回和后续等待均保持 84 字节，没有后续派发，Run closed。见 [stop-run-control.json](../../work/s2-smoke/codex-07/stop-run-control.json) 与对应 Call 工具事件；中断 token 未上报时仍保留未知。
-- 恢复 Run `run-32105eb480e3`：在真实 Designer 已写回执、尚未落账处注入宿主失败；新进程补同一 Attempt，重复恢复仍只有原 Expert/Designer 两 Call，已知用量维持 26.889 秒 / 78166 token。原始失败、恢复结果、完整单账本快照及公开核对保存在该证据目录，没有重发模型或补造测量。
+- 恢复 Run `run-32105eb480e3`：在真实 Designer 已写回执、尚未落账处注入宿主失败；新进程补同一 Attempt，重复恢复仍只有原 Expert/Designer 两 Call，已知用量维持 26.889 秒 / 78166 token。原始失败、恢复结果、原有单账本及公开核对保存在该证据目录，没有重发模型或补造测量。
 
 真实准备首轮暴露“工具不能访问宿主 runtime”提示词边界不一致，修正明确职责后沿同一准备流程完成；两次实际用量均保留，共 131.955 秒 / 348570 token（含缓存输入）。主 Run 收尾后的 Task 累计为 212.175 秒 / 555163 token；并行耗时逐次累加，没有重置历史账本。模拟/夹具中的正式测量排他及默认三并发仍由 06 回归证明，此真实案例只验证两个轻量分支，不冒充性能评价或正式考试。
 
 能力限制：当前 Codex 0.165.0 Linux 对直接“可写单个文件”原生权限在 thread/start 前失败，错误为把文件当作目录创建 `.git/.aws` 挂载点；[原始失败](../../work/s2-smoke/codex-07/boundary-call/designer-stderr.txt)保留。适配器如实报告启动前能力失败，不改授父目录；真实有效写入仅验证明确的 `src/**` 子树。保护 glob 与子树权限相交时保守拒绝该目录写入，新 glob 路径和准备根文件可能需要显式可写子目录。公共 runner 当前要求 Linux x86_64 / Landlock ABI≥3，其他平台失败关闭。
 
 公共检查：边界/观察/参数拒绝 **11 passed**；配置/计量/边界 **56 passed**；边界与材料 **20 passed、12 subtests passed**；先前相关引擎回归的旧机制提示词断言已恢复并复验。`node --check` 与本地 `setuptools.build_meta.build_wheel` 的 DSH guard/公共 runner 资产包含检查通过，临时 wheel/build/egg-info 已清理。组合 HTTP Observer 检查在既有 AnyIO 等待处取消，未算通过；真实公开 Observer 核对保持账本次数、用量和控制不变。DSH **已实现、未运行验证**：只静态核查固定官方源码、JS 语法与公共隔离逻辑，没有新增 DSH 专用测试、安装、登录或真实运行。最终全量回归及双轴审查由集成分支收尾。
+
+07 合入原生配置与 Reviewer 公共控制修正后，相关配置/Codex/计量/边界 **95 passed**，Reviewer/交付/边界重点 **17 passed**，未知评价工作区恢复 **1 passed**；无新增真实调用。
