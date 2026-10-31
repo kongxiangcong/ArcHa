@@ -21,7 +21,7 @@ from typing import Any
 
 from ..core.model import Cost, OPCError, write_json, write_text
 from .prompts import designer_prompt, expert_prompt
-from .worker import EXHAUSTED_SENTINEL, PLAN_SCHEMA, WorkerCall, request_rejected
+from .worker import designer_output, EXHAUSTED_SENTINEL, PLAN_SCHEMA, WorkerCall, request_rejected
 
 #: account/host conditions: retrying the attempt cannot help, the run must block
 INFRA_MARKERS = ("usage limit", "rate limit", "429", "unauthorized", "401", "not logged in",
@@ -248,5 +248,9 @@ class CodexWorker:
                   log_dir: Path) -> WorkerCall:
         call, text = self._run("designer", designer_prompt(plan, ctx), tree, log_dir,
                                "workspace-write", None, ctx=ctx)
-        call.output = {"summary": text[-2000:]}
+        try:
+            call.output = designer_output(text)
+        except ValueError as exc:
+            call.output = {"summary": text[-2000:]}
+            call.ok, call.error = False, "; ".join(part for part in (call.error, str(exc)) if part)
         return call

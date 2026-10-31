@@ -78,7 +78,7 @@ else:
     (cwd / "params.json").write_text(json.dumps({"x": x + 1}))
     if mode == "cheat":
         (cwd / ".opc/eval/evaluate.py").write_text("raise SystemExit(0)\n")
-    msg = "set x"
+    msg = json.dumps({"summary": "structured observation", "adopted_claims": [], "evidence_files": []}) if mode == "structured" else "set x"
 print(json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": msg}}))
 print(json.dumps({"type": "turn.completed",
                   "usage": {"input_tokens": 1000, "cached_input_tokens": 0, "output_tokens": 200}}))
@@ -367,3 +367,12 @@ def test_codex_exit_without_terminal_is_not_success(tmp_path):
     call, _ = CodexWorker({'binary': str(script)})._run('expert', 'test', tmp_path,
                             tmp_path / 'log', 'read-only', None)
     assert not call.ok and not call.extra['terminal_completed']
+
+
+def test_codex_designer_preserves_structured_observation(make_project, engine_for, fake_codex, monkeypatch):
+    monkeypatch.setenv('FAKE_CODEX_MODE', 'structured')
+    e = engine_for(make_project(tsk=codex_task(fake_codex, max_attempts=1)))
+    e.run()
+    actual = e.attempt_records()[0]['execution']
+    assert actual['summary'] == 'structured observation'
+    assert actual['adopted_claims'] == [] and actual['evidence_files'] == []

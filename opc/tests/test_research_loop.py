@@ -1239,3 +1239,92 @@ def test_revision_requires_basis_but_allows_expert_editorial_wording(make_projec
     assert e.claims('copy-all')[0]['version'] == 2
     assert e.claims('copy-all', version=1)[0]['statement'] == claim['statement']
     assert result['pending_conclusions'] == [1]
+
+
+def test_explicit_adopted_claim_versions_survive_handoff_and_resume(make_project, engine_for):
+    from opc.core.results import query_claims
+    from opc.observer.adapter import ObserverAdapter
+    claim = dict(statement='Copying affects speed', scope='fixed input', status='unresolved',
+                 reason='More comparable evidence needed', evidence=[])
+    def register(ctx):
+        return dict(plan(2), claims=[dict(claim, claim_id='general'), dict(claim, claim_id='limited')])
+    def adopt(ctx):
+        chosen = query_claims(ctx, claim_id='general')['claims'][0]
+        return plan(3, adopted_claims=[dict(claim_id=chosen['claim_id'], version=chosen['version'])])
+    class AdoptingSequence(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            call = super().implement(p, ctx, tree, log_dir)
+            if p['title'] == 'experiment 2':
+                assert query_claims(ctx, claim_id='limited')['claims'][0]['version'] == 1
+            if p['title'] == 'experiment 3':
+                assert ctx['handoff']['adopted_claims'] == [dict(task_id='t-toy', claim_id='general', version=1)]
+                call.output['adopted_claims'] = [dict(claim_id='limited', version=1)]
+            return call
+    seq = AdoptingSequence([plan(1), register, adopt], [0, 1, 2])
+    e = use_sequence(engine_for(make_project()), seq)
+    e.run(max_attempts_now=3)
+    records = e.attempt_records()
+    assert records[1]['adopted_claims'] == []  # Reading a material is not adoption.
+    assert records[2]['plan']['adopted_claims'] == [dict(task_id='t-toy', claim_id='general', version=1)]
+    assert records[2]['execution']['adopted_claims'] == [dict(task_id='t-toy', claim_id='limited', version=1)]
+    assert records[2]['adopted_claims'] == [dict(task_id='t-toy', claim_id='general', version=1),
+                                          dict(task_id='t-toy', claim_id='limited', version=1)]
+    original_context = (e.attempt_dir(3) / 'context.json').read_bytes()
+    resumed = use_sequence(engine_for(e.root), Sequence([stop]))
+    resumed.run()
+    assert resumed.attempt_records()[2]['adopted_claims'] == records[2]['adopted_claims']
+    assert (resumed.attempt_dir(3) / 'context.json').read_bytes() == original_context
+    observer = ObserverAdapter(e.root)
+    observed = observer.attempt(observer._id('run', e.run_id), 3)['data']
+    assert observed['adopted_claims'] == records[2]['adopted_claims']
+    report = json.loads((e.artifact_dir() / 'views/report.json').read_text())
+    assert report['attempts'][2]['adopted_claims'] == records[2]['adopted_claims']
+
+
+@pytest.mark.parametrize('reference,reason', [
+    ({'claim_id': 'known', 'version': 99}, 'unknown adopted claim'),
+    ({'claim_id': 'absent', 'version': 1}, 'unknown adopted claim'),
+    ({'task_id': 'other', 'claim_id': 'known', 'version': 1}, 'outside authorized'),
+    ({'claim_id': 'known', 'version': True}, 'positive version'),
+])
+def test_invalid_work_adoption_rejects_whole_decision(make_project, engine_for, reference, reason):
+    claim = dict(claim_id='known', statement='Copying affects speed', scope='fixed inputs',
+                 status='unresolved', reason='More evidence needed', evidence=[])
+    seq = Sequence([plan(1), dict(select_work=False, claims=[claim]),
+                    dict(plan(2, adopted_claims=[reference]),
+                         conclusions=[dict(attempt=1, conclusion='Still need comparable evidence')])], [0])
+    e = use_sequence(engine_for(make_project()), seq)
+    result = e.run()
+    assert result['state'] == 'blocked' and reason in result['stop_reason']
+    assert result['pending_conclusions'] == [1]
+    assert len(e.attempt_records()) == 1
+
+
+@pytest.mark.parametrize('call_ok', [True, False])
+def test_designer_invalid_adoption_is_visible_and_not_registered(make_project, engine_for, call_ok):
+    class InvalidAdoption(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            call = super().implement(p, ctx, tree, log_dir)
+            call.output['adopted_claims'] = [dict(claim_id='absent', version=1)]
+            call.ok = call_ok
+            call.error = '' if call_ok else 'Actual Designer execution failed'
+            return call
+    e = use_sequence(engine_for(make_project()), InvalidAdoption([plan(1), stop], [0]))
+    e.run()
+    actual = e.attempt_records()[0]
+    assert actual['outcome'] == 'worker_failed'
+    assert 'unknown adopted claim' in actual['reason']
+    if not call_ok:
+        assert 'Actual Designer execution failed' in actual['execution']['error']
+    assert actual['adopted_claims'] == []
+    receipt = next(c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer')
+    assert receipt['result']['output']['adopted_claims'] == [dict(claim_id='absent', version=1)]
+
+
+def test_work_can_adopt_claim_registered_in_same_decision(make_project, engine_for):
+    claim = dict(claim_id='new', statement='Copying affects speed', scope='fixed inputs',
+                 status='unresolved', reason='More evidence needed', evidence=[])
+    e = use_sequence(engine_for(make_project()), Sequence([
+        dict(plan(1, adopted_claims=[dict(claim_id='new', version=1)]), claims=[claim]), stop], [0]))
+    e.run()
+    assert e.attempt_records()[0]['adopted_claims'] == [dict(task_id='t-toy', claim_id='new', version=1)]
