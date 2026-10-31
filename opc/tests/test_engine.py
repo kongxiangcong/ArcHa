@@ -82,6 +82,7 @@ def test_infra_failures_block_without_consuming_search_budget(make_project, engi
     assert len(attempts) == 1 and attempts[0]['outcome'] is None
     assert attempts[0]['state'] == 'designed'
     assert attempts[0]['gates'][0]['status'] == 'infra'
+
     assert s["spent"]["search_attempts"] == 0
 
 
@@ -108,6 +109,7 @@ def test_skipped_gate_is_rejected_by_default(make_project, engine_for):
     attempts = e.ledger.attempts(e.run_id)
     assert len(attempts) == 1 and attempts[0]['outcome'] is None
     assert any(g['status'] == 'skipped' for g in attempts[0]['gates'])
+
 
 
 def test_degraded_evidence_is_not_compared_with_full_evidence(make_project, engine_for):
@@ -688,7 +690,7 @@ def test_dispatch_without_terminal_receipt_is_not_reissued(make_project, engine_
     def disappeared(*args, **kwargs):
         raise KeyboardInterrupt
     expert, _ = e.workers(e.workspaces().checkout('loader', e.working_commit()))
-    monkeypatch.setattr(expert, 'propose', disappeared)
+    monkeypatch.setattr(type(expert), 'propose', disappeared)
     e.run(max_attempts_now=1)
     calls = e.ledger.calls(e.run_id)
     assert len(calls) == 2  # baseline evaluation plus Expert dispatch
@@ -697,7 +699,7 @@ def test_dispatch_without_terminal_receipt_is_not_reissued(make_project, engine_
     with pytest.raises(OPCError, match='execution unknown'):
         e2.run()
     assert len(e2.ledger.calls(e2.run_id)) == 2
-    assert e2.ledger.attempts(e2.run_id)[0]['outcome'] is None
+    assert e2.ledger.attempts(e2.run_id) == []  # unknown Expert selected no work
 
 
 def test_evaluator_start_failure_retries_same_attempt_with_new_call(make_project, engine_for, monkeypatch):

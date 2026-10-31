@@ -23,8 +23,10 @@ PLAN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": [*PLAN_FIELDS, "hypothesis", "expected", "falsifier", "evaluate",
-                 "exhausted", "base_attempt", "conclusions", "stop_reason", "experiment_id"],
+                 "exhausted", "base_attempt", "conclusions", "stop_reason", "experiment_id", "designer", "select_work"],
     "properties": {
+        "designer": {"type": ["boolean", "null"], "description": "false skips implementation for a pure measurement; null uses a designer"},
+        "select_work": {"type": ["boolean", "null"], "description": "false records only interpretation/planning, without creating work; null selects the plan"},
         "title": {"type": "string", "description": "short name of the experiment"},
         "hypothesis": {"type": "string", "description": "research question and competing explanations, or engineering rationale"},
         "experiment_id": {"type": ["string", "null"], "description": "stable question ID within this task, reused across runs; null for ordinary engineering work"},
@@ -105,6 +107,9 @@ def validate_plan(plan: Any) -> str | None:
     if files is not None and (not isinstance(files, list) or not all(
             isinstance(f, str) and f.strip() for f in files)):
         return "plan.files must be a list of paths when supplied"
+    for key in ("designer", "select_work"):
+        if plan.get(key) is not None and type(plan[key]) is not bool:
+            return "plan.%s must be boolean or null" % key
     if plan.get("evaluate") is not None and type(plan["evaluate"]) is not bool:
         return "plan.evaluate must be boolean or null"
     base = plan.get("base_attempt")
