@@ -1780,7 +1780,7 @@ class Engine:
                                 candidate["basis"].append(dependency)
                 changes = self.basis_changes(candidate["claims"] + candidate["basis"])
                 review = candidate["basis_review"]
-                if ((review is not None and (not isinstance(review, dict)
+                if finish == 'request_acceptance' and ((review is not None and (not isinstance(review, dict)
                         or review.get("action") not in ("continue", "adjust", "supplement")
                         or not isinstance(review.get("changes"), list)
                         or any(not isinstance(review.get(key), str) or not review[key].strip() for key in ("scope", "reason"))))

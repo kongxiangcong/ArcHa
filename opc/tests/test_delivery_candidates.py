@@ -1,5 +1,7 @@
 """Delivery consumes explicitly selected claim and artifact revisions."""
 import json
+
+import pytest
 from pathlib import Path
 
 from opc.tests.conftest import task
@@ -266,3 +268,32 @@ emit(type='final', text=json.dumps(reply))
     assert (e.attempt_dir(1) / 'outputs/raw/proof.bin').read_bytes() == bytes([128, 255, 0]) + b'proof'
     assert (e.attempt_dir(1) / 'outputs/raw/private.bin').read_bytes() == b'private sibling'
     assert len([c for c in e.ledger.calls(e.run_id) if c['role'] == 'reviewer']) == 1
+
+
+@pytest.mark.parametrize('finish', ['close_incomplete', 'request_acceptance'])
+def test_changed_work_basis_can_close_incomplete_but_cannot_request_acceptance(make_project, engine_for, finish):
+    from opc.core.promote import promote
+    old = dict(task_id='t-toy', claim_id='copy', version=1)
+    c = claim()
+    def close(ctx):
+        reply = request(ctx) if finish == 'request_acceptance' else dict(stop(ctx), finish=finish,
+            gaps=['The revised basis leaves the boundary explanation incomplete'], reopen_conditions=[])
+        return dict(reply, base_attempt=1)
+    root = make_project(tsk=task(acceptance={}, requirements=[]))
+    e = use_sequence(engine_for(root), Sequence([
+        dict(select_work=False, claims=[c]), plan(1, adopted_claims=[old]),
+        dict(select_work=False, claims=[dict(c, base_version=1, reason='New counterevidence changes the boundary')]), close], [4]))
+    result = e.run()
+    assert e.attempt_records()[0]['adopted_claims'] == [old]
+    assert not e.ledger.events(e.run_id, 'promotion_report')
+    if finish == 'request_acceptance':
+        assert result['state'] == 'blocked'
+        assert 'review of changed claim basis' in result['stop_reason']
+    else:
+        assert result['state'] == 'closed' and result['closure']['gaps']
+        assert result['delivery_candidate']['basis'] == [old]
+        assert e.basis_changes([old])[0]['current_version'] == 2
+        # Explicit later acceptance still checks the basis instead of inheriting closeout.
+        report = promote(e, source_run=e.run_id)
+        assert report['complete'] is False
+        assert any(row['check'] == 'candidate' and row['severity'] == 'block' for row in report['findings'])
