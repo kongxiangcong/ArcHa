@@ -96,7 +96,7 @@ else:
     (cwd / "params.json").write_text(json.dumps({"x": x + 1}))
     if mode == "cheat":
         (cwd / ".opc/eval/evaluate.py").write_text("raise SystemExit(0)" + chr(10))
-    text = "set x to %d" % (x + 1)
+    text = json.dumps({"summary": "structured observation", "adopted_claims": [], "evidence_files": []}) if mode == "structured" else "set x to %d" % (x + 1)
 
 emit(type="status", phase="step_end", turn=1, step=1,
      usage={"inputTokens": 1000, "outputTokens": 200, "cacheReadTokens": 100})
@@ -375,3 +375,12 @@ def test_dsh_request_rejection_blocks_with_session(make_project, engine_for, fak
     s = e.run()
     assert s['state'] == 'blocked' and len(e.ledger.events(e.run_id, 'worker_call')) == 1
     assert s['spent']['search_attempts'] == 0
+
+
+def test_dsh_designer_preserves_structured_observation(make_project, engine_for, fake_dsh, monkeypatch):
+    monkeypatch.setenv('FAKE_DSH_MODE', 'structured')
+    e = engine_for(make_project(tsk=dsh_task(fake_dsh, max_attempts=1)))
+    e.run()
+    actual = e.attempt_records()[0]['execution']
+    assert actual['summary'] == 'structured observation'
+    assert actual['adopted_claims'] == [] and actual['evidence_files'] == []

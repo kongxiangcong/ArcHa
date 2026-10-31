@@ -6,6 +6,7 @@ a designer locates and edits code. Acceptance and resource limits belong to the 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -61,6 +62,12 @@ PLAN_SCHEMA["properties"].update({
         "properties": {"work_id": {"type": "string"}, "artifact": {"type": "string", "description": "candidate, result, or path relative to that Attempt's artifacts"}}}},
 })
 PLAN_SCHEMA["required"] += ["work_id", "directions", "dependencies", "base_work_id", "deliverables"]
+_ADOPTION_SCHEMA = {"type": "array", "items": {
+    "type": "object", "additionalProperties": False,
+    "required": ["task_id", "claim_id", "version"], "properties": {
+        "task_id": {"type": "string"}, "claim_id": {"type": "string"}, "version": {"type": "integer"}}}}
+PLAN_SCHEMA["properties"]["adopted_claims"] = _ADOPTION_SCHEMA
+PLAN_SCHEMA["required"].append("adopted_claims")
 _work_fields = {k: v for k, v in PLAN_SCHEMA["properties"].items()
                 if k not in {"select_work", "exhausted", "stop_reason", "conclusions"}}
 PLAN_SCHEMA["properties"]["works"] = {"type": ["array", "null"], "items": {
@@ -87,6 +94,22 @@ PLAN_SCHEMA["properties"]["claims"] = {"type": "array", "items": {
         "related_claims": {"type": "array", "items": {"type": "string"}},
     }}}
 PLAN_SCHEMA["required"].append("claims")
+
+
+def designer_output(text: str) -> dict:
+    """Preserve structured observations and optional explicit adoption declarations."""
+    body = text.strip()
+    if body.startswith("```"):
+        body = body.split("\n", 1)[-1].removesuffix("```").strip()
+    if not body.startswith("{"):
+        return {"summary": text[-2000:]}
+    try:
+        output = json.loads(body)
+    except ValueError as exc:
+        raise ValueError("designer reply is invalid JSON: " + str(exc)) from exc
+    if not isinstance(output.get("summary"), str):
+        raise ValueError("designer JSON reply requires a summary string")
+    return output
 
 
 def request_rejected(message: str, executed: bool) -> bool:

@@ -1123,6 +1123,11 @@ class Engine:
                 a["comparison"] = body
             elif event["kind"] == "conclusion":
                 a["conclusion"] = body["text"]
+        for a in rows:
+            a["adopted_claims"] = list((a["plan"] or {}).get("adopted_claims") or [])
+            for ref in (a["execution"] or {}).get("adopted_claims") or []:
+                if ref not in a["adopted_claims"]:
+                    a["adopted_claims"].append(ref)
         return rows
 
     def prior_run_materials(self) -> list[dict[str, Any]]:
@@ -1194,6 +1199,7 @@ class Engine:
                 **{k: plan.get(k) for k in ("title", "hypothesis", "changes", "expected", "falsifier", "experiment_id")},
                 "plan_params": plan.get("params"), "parent": a["parent"],
                 "candidate": a["candidate"], "outcome": a["outcome"],
+                "adopted_claims": a["adopted_claims"],
                 "execution": bounded_data(a["execution"]),
                 "experiment": experiment or {
                     "status": "not_recorded" if a["gates"] else "not_executed", "data": []},
@@ -1406,6 +1412,27 @@ class Engine:
             seen.add(row["attempt"])
         return None
 
+    def adopted_claims(self, value, proposed=()) -> list[dict]:
+        """Validate explicit adoption at the Worker boundary; reading is separate."""
+        if not isinstance(value, list):
+            raise OPCError("adopted_claims must be a list")
+        refs = []
+        for ref in value:
+            if (not isinstance(ref, dict) or not isinstance(ref.get("claim_id"), str)
+                    or type(ref.get("version")) is not int or ref["version"] < 1
+                    or not isinstance(ref.get("task_id", self.task.task_id), str)):
+                raise OPCError("adopted_claims requires task_id, claim_id and positive version")
+            normalized = dict(task_id=ref.get("task_id", self.task.task_id),
+                              claim_id=ref["claim_id"], version=ref["version"])
+            new = any(c["claim_id"] == ref["claim_id"]
+                      and (c.get("base_version") or 0) + 1 == ref["version"] for c in proposed)
+            if not (normalized["task_id"] == self.task.task_id and new):
+                if not self.authorized_claims(normalized["task_id"], ref["claim_id"], version=ref["version"]):
+                    raise OPCError("unknown adopted claim identity or version: " + str(normalized))
+            if normalized not in refs:
+                refs.append(normalized)
+        return refs
+
     def validate_work_batch(self, works: list[dict]) -> str | None:
         existing = self.attempt_records()
         graph = {(a["plan"] or {}).get("work_id") or "a%d" % a["attempt_no"]:
@@ -1547,6 +1574,11 @@ class Engine:
                     else:
                         for work in works:
                             why = validate_plan(work)
+                            if why is None and "adopted_claims" in work:
+                                try:
+                                    work["adopted_claims"] = self.adopted_claims(work["adopted_claims"], output.get("claims", []))
+                                except OPCError as exc:
+                                    why = str(exc)
                             if why is None and any(not self.comp.is_editable(f) for f in work.get("files") or []):
                                 why = "plan names non-editable paths"
                             if why:
@@ -1709,7 +1741,8 @@ class Engine:
                     ctx["claims"] = ctx["knowledge"].pop("claims")
                     ctx["claim_history"] = ctx["knowledge"].pop("claim_history")
                     ctx["handoff"] = {"purpose": plan["changes"], "deliverables": plan.get("deliverables", []),
-                                      "inputs": dependencies, "evidence": str(self.artifact_dir())}
+                                      "inputs": dependencies, "evidence": str(self.artifact_dir()),
+                                      "adopted_claims": plan.get("adopted_claims", [])}
                     write_json(context_path, ctx)
             finally:
                 ws.drop(loader)
@@ -1728,14 +1761,29 @@ class Engine:
                 call = yield CallExecution("designer", n, {"plan": plan, "context": ctx, "parent": parent},
                                            design_tree, designer_log,
                                            lambda: designer.implement(plan, ctx, design_tree, designer_log))
-                self.ledger.event(self.run_id, "execution", n,
-                                  **{**(call.output or {}), "completed": call.ok, "error": call.error})
-                if not call.ok and self._worker_outcome(call) is Outcome.INFRA:
+                execution = dict(call.output or {})
+                adoption_error = None
+                if "adopted_claims" in execution:
+                    try:
+                        execution["adopted_claims"] = self.adopted_claims(execution["adopted_claims"])
+                    except OPCError as exc:
+                        adoption_error = str(exc)
+                        execution.pop("adopted_claims")
+                if not any(e["body"].get("call_id") == call.call_id for e in self.ledger.events(self.run_id, "execution")):
+                    self.ledger.event(self.run_id, "execution", n,
+                                      **{**execution, "completed": call.ok and not adoption_error,
+                                         "error": "; ".join(part for part in (call.error, adoption_error) if part),
+                                         "call_id": call.call_id})
+                if not adoption_error and not call.ok and self._worker_outcome(call) is Outcome.INFRA:
                     self.ledger.update_attempt(self.run_id, n, "planned", reason=call.error,
                                                cost=attempt_cost().as_dict())
                     return Outcome.INFRA, StopDecision("blocked", "designer execution incomplete: %s" % call.error[:200])
                 missing = self.collect_deliverables(n, design_tree, plan,
-                                                    evidence_files=(call.output or {}).get("evidence_files", []))
+                                                    evidence_files=execution.get("evidence_files", []))
+                if adoption_error:
+                    return finish(Outcome.WORKER_FAILED, "designer adoption: " + adoption_error
+                                  + ("; " + call.error if call.error else "")
+                                  + ("; evidence: " + missing if missing else ""))
                 if not call.ok:
                     error = call.error + ("; evidence: " + missing if missing else "")
                     return finish(self._worker_outcome(call), "designer: %s" % error)
