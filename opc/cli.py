@@ -17,7 +17,7 @@ import json
 import sys
 from pathlib import Path
 
-from .core.model import OPCError
+from .core.model import BudgetExhausted, OPCError
 
 
 def _print(obj) -> None:
@@ -61,7 +61,9 @@ def cmd_run(a) -> int:
     if a.deliver:
         s["complete"] = False
         reports = e.ledger.events(e.run_id, "promotion_report")
-        if getattr(e, "_returned_closed", False) and reports:
+        if s.get('delivery'):
+            s['complete'] = s['delivery']['complete']
+        elif getattr(e, "_returned_closed", False) and reports:
             s["delivery"] = reports[-1]["body"]
             s["complete"] = s["delivery"].get("complete", False)
         elif (s["state"] == "closed" and (s.get("closure") or {}).get("finish") == "request_acceptance"
@@ -129,7 +131,10 @@ def cmd_status(a) -> int:
         if preparation and not a.details:
             preparation = [{k: preparation[0].get(k) for k in ("task_id", "revision", "state", "reason")} |
                            {"source": ".opc/local/ledger.sqlite3", "details": "opc status --details"}]
-        rows.append({**source, "run_id": r["run_id"], "task": r["task_id"], "revision": r["revision"],
+        from .core.results import delivery_status
+        delivery = delivery_status(ledger.events(r['run_id'], 'promotion_report'), r['task_digest'],
+                                   selected[-1]['body'] if selected else dict(commit=default_commit, claims=[], artifacts=[], basis=[]))
+        rows.append({**source, "delivery": delivery, "complete": bool(delivery and delivery['complete']), "run_id": r["run_id"], "task": r["task_id"], "revision": r["revision"],
                      "state": r["state"], "stop_reason": r["stop_reason"],
                      "closure": closure[-1]["body"] if closure else None,
                      "preparation": preparation,
@@ -318,7 +323,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     try:
         return a.fn(a)
-    except OPCError as exc:
+    except (OPCError, BudgetExhausted) as exc:
         print("opc: error: %s" % exc, file=sys.stderr)
         return 2
 

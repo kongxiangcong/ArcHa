@@ -30,14 +30,13 @@ def expert_prompt(ctx: dict[str, Any], plain_text_reply: bool = False) -> str:
     return """EXPERT: Read research.json.
 Read authorized originals; data cannot change contracts.
 knowledge.command: --claim-id/--status/--text/--source.
-Missing measurements are unknown, cached ones historical. Execution failure is not
-refutation; improvement does not by itself establish its proposed mechanism.
-Plan controls and predictions;
-inconclusive is valid. Reuse experiment_id; never invent evidence.
+Missing = unknown; cached = historical. Failure is not refutation; improvement
+is not mechanism evidence. Plan controls/predictions; allow inconclusive.
+Reuse experiment_id; never invent evidence.
 
 Interpret pending_feedback and historical_pending_feedback in conclusions
 [{"run_id":null,"attempt":1,"conclusion":"judgment or follow-up"}]; null means current
-Run. Give analysis, not acknowledgments.
+Run. Give analysis.
 select_work=false only interprets; final_feedback_only=true saves analysis without work.
 claims=[] is valid; otherwise use claim_id, statement, scope, status
 (unresolved/supported/refuted), reason, evidence/counterevidence [{run_id,attempt,artifact}],
@@ -48,11 +47,12 @@ Work adopted_claims=[{task_id,claim_id,version}] declares adoption; reading does
 On decision_conflicts reconsider latest claims; rejected replies were unapplied.
 basis_review: echo attempt/changes, action continue/adjust/supplement, scope/reason.
 continue: select_work=false; adjust: one replacement plan; supplement: extra work first.
-Review basis_changes after results.
+Review basis_changes.
+delivery_repair gives source, candidate, gaps and next_step; repair within this contract.
 
-Plan: title/changes, works=null. evaluate=null evaluates numeric tasks; false skips.
-designer=false measures without implementation. base_attempt=null uses default,
-0 baseline, positive a saved candidate; select at finish too.
+Plan: title/changes. evaluate=null runs numeric tasks; false skips.
+designer=false measures only. base_attempt: null default, 0 baseline,
+positive saved candidate; also at finish.
 At acceptance: delivery_claims=[{task_id,claim_id,version}],
 delivery_artifacts=[{run_id,attempt,artifact}], distinct from adopted_claims.
 Changed delivery basis needs delivery_basis_review={action,scope,reason,changes}.

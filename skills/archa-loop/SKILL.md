@@ -68,9 +68,9 @@ python3 <project>/.opc/archa.py run -p <project> --task <task-id> --revision <re
 
 `run --deliver` 仅在 Expert 明确返回 `finish=request_acceptance` 时，对所选 source run 终验。`finish=close_incomplete`（以及旧 `exhausted=true`）保存缺口、停止依据与有依据的重开条件后结束，不因 Run 关闭派发终验。读取返回的 delivery.complete；只有 true 才报告任务完成。未产生终验或 delivery_error 均为未完成。
 
-1. 普通可修复 findings：用 `run ... --repair-promotion <report_dir>/report.json --deliver` 从失败报告的 selected commit 续接，沿用同 task 累计预算，不重启旧 run、不创建新 task。具体 findings 进入新 run direction。
-2. 仅 reviewer 不可用/输出格式错误：用 `promote ... --source-run <run-id> --review <configured-provider>` 重试审核，不调用 designer。沿用 max_consecutive_infra 和总预算；达到限制停止并报告未完成。
-3. 若修复后 selected commit 未变化且 findings 相同，不再次修复或重审；仅具体修复、外部状态变化或用户确认新标准后继续。
+1. 读取报告的 next_step 与逐项 gaps。retry_evaluation / retry_review 用 `run ... --repair-promotion <report_dir>/report.json --deliver` 补未完成验收：复用原候选、已完成回执及适用测量，不创建开发 Run。
+2. repair_candidate / supplement_evidence 使用同一修复入口，把失败原报告、候选和缺项交给 Expert；新修复 Run 沿用 Task 累计预算。Expert 可选择改成果、补测、补分析或有依据地未完成收尾；仅主张论述更新时可选择原代码与新主张版本，再按契约审核。
+3. 相同明确候选（含主张版本）及缺口在没有新依据时保持未完成；有具体修改、补证或外部状态恢复后再验。不以固定次数代替继续价值判断，不自动无限重试。
 4. 用户 pause/stop、显式预算耗尽或显式 token 限制下 accounting_unknown 时停止新增派发。用户仅要求准备时不进入本流程。
 5. scope/evaluator 变化需要明确的新 revision；验收含义变更须用户明确确认。所有终验命令默认不传 --apply。
 

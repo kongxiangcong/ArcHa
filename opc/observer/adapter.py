@@ -843,6 +843,8 @@ class ObserverAdapter:
                           task_revision_id=revision['id'] if revision and not revision.get('_contract_mismatch') else None, execution_task_id=row.get('task_id'),
                           workers=worker_selection, configuration_sources=worker_execution.get('configuration_sources', {}),
                           preparation=prep, execution=execution, acceptance=acceptance,
+                          delivery_repair=next((e['body'] for e in reversed(events) if e['kind'] == 'delivery_repair'), None),
+                          delivery_next_step=valid_report[0].get('next_step') if valid_report else None,
                           acceptance_history=self._acceptance_history(row['task_id']), stop_reason=row.get('stop_reason'),
                           phase='onboard' if row.get('revision') == 'preparation' else 'loop', last_activity_at=self.source_at,
                           versions=versions, requirements=requirements, metrics=metrics, usage=self._usage(row, data['charges'], events, contract),

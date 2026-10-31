@@ -1464,12 +1464,13 @@ def test_explicit_adopted_claim_versions_survive_handoff_and_resume(make_project
 
 
 @pytest.mark.parametrize('reference,reason', [
-    ({'claim_id': 'known', 'version': 99}, 'unknown adopted claim'),
-    ({'claim_id': 'absent', 'version': 1}, 'unknown adopted claim'),
+    ({'claim_id': 'known', 'version': 99}, r'unknown.*claim.*(?:identity|version)'),
+    ({'claim_id': 'absent', 'version': 1}, r'unknown.*claim.*(?:identity|version)'),
     ({'task_id': 'other', 'claim_id': 'known', 'version': 1}, 'outside authorized'),
     ({'claim_id': 'known', 'version': True}, 'positive version'),
 ])
 def test_invalid_work_adoption_rejects_whole_decision(make_project, engine_for, reference, reason):
+    import re
     claim = dict(claim_id='known', statement='Copying affects speed', scope='fixed inputs',
                  status='unresolved', reason='More evidence needed', evidence=[])
     seq = Sequence([plan(1), dict(select_work=False, claims=[claim]),
@@ -1477,7 +1478,7 @@ def test_invalid_work_adoption_rejects_whole_decision(make_project, engine_for, 
                          conclusions=[dict(attempt=1, conclusion='Still need comparable evidence')])], [0])
     e = use_sequence(engine_for(make_project()), seq)
     result = e.run()
-    assert result['state'] == 'blocked' and reason in result['stop_reason']
+    assert result['state'] == 'blocked' and re.search(reason, result['stop_reason'])
     assert result['pending_conclusions'] == [1]
     assert len(e.attempt_records()) == 1
 
