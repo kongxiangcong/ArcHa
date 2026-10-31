@@ -151,8 +151,10 @@ def worker_policy(role: str, tree: Path, log_dir: Path, ctx: dict | None = None)
     ctx = ctx or {}
     comp = ctx.get('component') or {}
     reads = ([ctx['source_root']] if ctx.get('source_root') else [])
-    if role == 'expert' and ctx.get('evidence_root'):
-        reads.append(ctx['evidence_root'])
+    if role == 'expert':
+        if ctx.get('evidence_root'):
+            reads.append(ctx['evidence_root'])
+        reads += [prior['evidence_root'] for prior in ctx.get('prior_runs', [])]
     reads += [entry['path'] for entry in ctx.get('handoff', {}).get('inputs', [])]
     policy = tool_policy(tree, editable=comp.get('editable', []) if role == 'designer' else [],
                          scratch=comp.get('scratch', []) if role == 'designer' else [],

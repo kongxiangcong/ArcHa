@@ -5,6 +5,7 @@ import pytest
 from opc.core.engine import Engine
 from opc.core.model import Cost, OPCError, BudgetExhausted
 from opc.tests.conftest import task
+from opc.tests.test_codex_and_config import fake_codex
 
 
 def prepare_switch(make_project, *, hard=None):
@@ -141,3 +142,57 @@ def test_explicit_switch_cannot_bypass_unknown_prior_execution(make_project):
     with new.ledger.writer(), pytest.raises(OPCError, match='execution unknown'):
         new.open_run(new_run=True, switch_backend=True)
     assert len(new.ledger.runs()) == 1
+
+
+def test_switched_expert_reads_prior_results_without_replaying_old_work(make_project, fake_codex, tmp_path):
+    from pathlib import Path
+    import subprocess
+    import sys
+    from opc.adapters.worker import WorkerCall
+    from opc.core.tool_boundary import worker_policy
+    root = make_project(tsk=task(workers={'expert': {}, 'designer': {}}))
+    local = root / '.opc/local/workers.json'
+    local.parent.mkdir(exist_ok=True)
+    local.write_text(json.dumps({role: {'kind': 'codex', 'binary': fake_codex, 'model': 'fixture'}
+                                 for role in ('expert', 'designer')}))
+    old = Engine(root, 't-toy', log=lambda _: None)
+    old.run(max_attempts_now=1)
+    before = old.attempt_records()
+    assert len(before) == 1 and old.summary()['pending_conclusions'] == [1]
+    old_calls = old.ledger.calls(old.run_id)
+    local.write_text(json.dumps({'expert': {'kind': 'dsh'}}))
+    seen = []
+    class Expert:
+        def propose(self, ctx, tree, log):
+            seen.append(ctx)
+            assert 'session_id' not in ctx
+            assert ctx['history'] == [] and ctx['pending_feedback'] == []
+            prior = ctx['prior_runs'][0]
+            assert prior['run_id'] == old.run_id and prior['pending_feedback'] == [1]
+            result = Path(prior['results'][0]['path'])
+            decision = Path(prior['decisions'][0]['path'])
+            policy = worker_policy('expert', tree, log, ctx)
+            assert str(result.parent.parent.parent) in policy['read']
+            assert str(result.parent.parent.parent) not in policy['write']
+            probe = subprocess.run([sys.executable, '-c',
+                'import json,sys; from pathlib import Path; '
+                'from opc.core.tool_boundary import restrict,RUNTIME_READ; '
+                'p=json.loads(sys.argv[1]); restrict(p["read"],p["write"],RUNTIME_READ); '
+                'assert json.loads(Path(sys.argv[2]).read_text())["outcome"]; '
+                'assert json.loads(Path(sys.argv[3]).read_text())["role"]=="expert"; '
+                '\ntry: Path(sys.argv[2]).write_text("overwrite")\nexcept PermissionError: pass\nelse: raise AssertionError("prior result writable")',
+                json.dumps(policy), str(result), str(decision)], capture_output=True, text=True)
+            assert probe.returncode == 0, probe.stderr
+            return WorkerCall('expert', True, Cost(0, 1), call_id='fresh-backend-session',
+                              output={'exhausted': True, 'stop_reason':'prior evidence read'}, exhausted=True)
+    switched = Engine(root, 't-toy', log=lambda _: None)
+    switched.workers = lambda tree: (Expert(), Expert())
+    switched.run(new_run=True, switch_backend=True)
+    assert len(seen) == 1 and switched.ledger.attempts(switched.run_id) == []
+    assert old.ledger.calls(old.run_id) == old_calls
+    assert old.attempt_records() == before and old.summary()['pending_conclusions'] == [1]
+    # A normal new Run in the switched allowance still has the explicit source.
+    later = Engine(root, 't-toy', log=lambda _: None)
+    later.workers = lambda tree: (Expert(), Expert())
+    later.run(new_run=True)
+    assert len(seen) == 2 and seen[-1]['prior_runs'][0]['run_id'] == old.run_id

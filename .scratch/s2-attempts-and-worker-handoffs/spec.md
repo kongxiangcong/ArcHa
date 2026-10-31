@@ -164,3 +164,13 @@
 公共检查：边界/观察/参数拒绝 **11 passed**；配置/计量/边界 **56 passed**；边界与材料 **20 passed、12 subtests passed**；先前相关引擎回归的旧机制提示词断言已恢复并复验。`node --check` 与本地 `setuptools.build_meta.build_wheel` 的 DSH guard/公共 runner 资产包含检查通过，临时 wheel/build/egg-info 已清理。组合 HTTP Observer 检查在既有 AnyIO 等待处取消，未算通过；真实公开 Observer 核对保持账本次数、用量和控制不变。DSH **已实现、未运行验证**：只静态核查固定官方源码、JS 语法与公共隔离逻辑，没有新增 DSH 专用测试、安装、登录或真实运行。最终全量回归及双轴审查由集成分支收尾。
 
 07 合入原生配置与 Reviewer 公共控制修正后，相关配置/Codex/计量/边界 **95 passed**，Reviewer/交付/边界重点 **17 passed**，未知评价工作区恢复 **1 passed**；无新增真实调用。
+
+### 最终审查修正
+
+Standards 轴没有阻塞项；Spec 轴的两项问题与随后恢复审计的一个问题已集中修正：
+
+- 便携部署补入公共工具边界 Python 模块与现有 DSH guard 资产，继续复用原 allowlist/完整性清单；部署测试夹具的源码 helper 在收集期加载，避免历史快照缓存遮蔽测试包，原接入与历史断言保留。
+- 显式换 CLI 的新 Run 及同额度后续普通 Run 提供前序结果/决策回执与只读原件引用；不复制 trace、不复用旧会话、不合并当前待反馈。公共 Engine 与 Landlock 子进程证明可读旧原件、拒绝覆盖，旧 Run 保持原记录与待反馈。
+- Designer 的可靠未启动/基础设施失败保留原 Attempt，显式恢复以新 Call 和新原件目录补完；未知执行继续阻塞，独立就绪分支继续，累计成本来自既有账本而非另设累加状态。
+
+相关部署/切换材料/原工作恢复/独立分支检查 **22 passed、1 existing skipped**，未新增跳过或 DSH 专用测试；未追加真实模型调用。Python 3.10 便携 runtime 的 TOML 依赖边界见 [跨平台文档](../../docs/cross-platform.md)。集成分支最终全量复验后再关闭本规格。

@@ -9,6 +9,8 @@ import sys
 
 import pytest
 
+from opc.tests.conftest import component, task as contract_template
+
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location(
     "research_initialize", ROOT / "skills/archa-map/scripts/initialize.py")
@@ -131,6 +133,8 @@ def test_bundle_relocation_and_reinstall_backup(tmp_path):
     assert Path(json.loads(created.stdout)['topic']).is_dir()
     assert (target / ".opc/runtime/LICENSE").is_file()
     assert (target / ".opc/runtime/opc/scaffold/brief.py").is_file()
+    assert (target / ".opc/runtime/opc/core/tool_boundary.py").is_file()
+    assert (target / ".opc/runtime/opc/adapters/dsh-tool-boundary.mjs").is_file()
     initialize.verify(target / ".opc/runtime")
 
 
@@ -342,7 +346,6 @@ def test_two_r01_real_onboard_resume_revision_and_history(tmp_path, runtime, mon
     from opc.core.model import Cost
     from opc.core.ledger import Ledger
     from opc.scaffold.onboard import onboard
-    from opc.tests.conftest import component, task as contract_template
     root = tmp_path / 'two topics'
     root.mkdir()
     subprocess.run(['git', 'init', str(root)], check=True, capture_output=True)
