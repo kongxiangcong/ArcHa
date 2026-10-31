@@ -49,6 +49,24 @@ PLAN_SCHEMA: dict[str, Any] = {
     },
 }
 
+# A decision selects one plan or a list of ordinary Attempt plans, never an
+# executable subgraph inside an Attempt.
+PLAN_SCHEMA["properties"].update({
+    "work_id": {"type": ["string", "null"], "description": "stable node identity independent of title; null lets Engine allocate it"},
+    "directions": {"type": "array", "items": {"type": "string"}},
+    "deliverables": {"type": "array", "items": {"type": "string"}, "description": "relative editable/scratch file paths to preserve under Attempt outputs/"},
+    "base_work_id": {"type": ["string", "null"], "description": "use this dependency's saved candidate as the code parent; null uses base_attempt"},
+    "dependencies": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False, "required": ["work_id", "artifact"],
+        "properties": {"work_id": {"type": "string"}, "artifact": {"type": "string", "description": "candidate, result, or path relative to that Attempt's artifacts"}}}},
+})
+PLAN_SCHEMA["required"] += ["work_id", "directions", "dependencies", "base_work_id", "deliverables"]
+_work_fields = {k: v for k, v in PLAN_SCHEMA["properties"].items()
+                if k not in {"select_work", "exhausted", "stop_reason", "conclusions"}}
+PLAN_SCHEMA["properties"]["works"] = {"type": ["array", "null"], "items": {
+    "type": "object", "additionalProperties": False, "required": list(_work_fields), "properties": _work_fields}}
+PLAN_SCHEMA["required"].append("works")
+
 
 def request_rejected(message: str, executed: bool) -> bool:
     """Known provider request rejection, not a failure after useful execution."""

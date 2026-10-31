@@ -795,6 +795,7 @@ class ObserverAdapter:
                           pending_feedback=[a['attempt_no'] for a in data['attempts']
                                             if a.get('outcome') and not any(e['kind'] == 'conclusion' and e.get('attempt_no') == a['attempt_no'] for e in events)],
                           decisions=[e['body'] for e in events if e['kind'] == 'expert_decision'],
+                          max_concurrency=mapping(frozen_baseline.get('execution')).get('max_concurrency'),
                           attempts=attempts, calls=call_refs, artifacts=[ref(a) for a in {a['id']: a for a in artifacts}.values()], report_refs=report_refs,
                           meta=run_meta)
             self._attempt_cache = getattr(self, '_attempt_cache', {})
@@ -842,6 +843,10 @@ class ObserverAdapter:
                    conclusion=fact(conclusion.get('text'), 'conclusion'), gaps=fact(conclusion.get('gaps'), 'conclusion'), next_step=fact(conclusion.get('next_step'), 'conclusion'),
                    parent_commit=(projected.get('development_parent') or {}).get('commit') or row.get('champion_before'),
                    candidate_commit=(projected.get('candidate_saved') or {}).get('commit'),
+                   work_id=plan.get('work_id') or 'a%d' % n,
+                   directions=plan.get('directions') or [], dependencies=plan.get('dependencies') or [],
+                   blocked_by=(projected.get('node_waiting') or {}).get('blocked_by', []),
+                   resource_wait=(projected.get('node_waiting') or {}).get('reason') if not outcome else None,
                    feedback_state='interpreted' if conclusion.get('text') else 'pending' if outcome else 'awaiting_result',
                    selected_by_call=(projected.get('work_selected') or {}).get('decision_call'),
                    reviewed_by_call=conclusion.get('reviewed_by_call'),
