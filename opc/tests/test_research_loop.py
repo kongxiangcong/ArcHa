@@ -1519,3 +1519,37 @@ def test_committed_basis_review_recovers_without_repeating_expert_or_dispatch(ma
     assert len(seq.contexts) == 1  # Only final feedback; the recorded review is reused.
     assert len([c for c in resumed.ledger.calls(resumed.run_id) if c['role'] == 'designer']) == 2
     assert len(resumed.ledger.events(resumed.run_id, 'work_reconsidered')) == 1
+
+
+@pytest.mark.parametrize("action", ["continue", "adjust"])
+def test_new_call_after_infrastructure_failure_reconsiders_changed_basis(make_project, engine_for, action):
+    claim = dict(claim_id='basis', statement='Reduced copying helps', scope='fixed fields',
+                 status='supported', reason='Initial observations', evidence=[])
+    ref = dict(task_id='t-toy', claim_id='basis', version=1)
+    class Unavailable(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            (tree / 'params.json').write_text('{"x":0}')
+            return WorkerCall('designer', False, Cost(), error='Temporary worker failure', extra={'infra': True})
+    e = use_sequence(engine_for(make_project()), Unavailable([dict(plan(1, adopted_claims=[ref]), claims=[claim])]))
+    assert e.run()['state'] == 'blocked'
+    original_context = (e.attempt_dir(1) / 'context.json').read_bytes()
+    e.ledger.record_decision(e.run_id, 'fixture-revision', dict(select_work=False,
+        claims=[dict(claim, base_version=1, status='unresolved', reason='Need comparison')]))
+    e.ledger.event(e.run_id, 'decision_applied', call_id='fixture-revision')
+    def review(ctx):
+        return dict(plan(1, evaluate=False, base_attempt=0, adopted_claims=[ref]) if action == 'adjust'
+                    else dict(select_work=False),
+                    basis_review=dict(attempt=1, action=action, scope='fixed fields',
+                        reason='Retry still valid within scope', changes=ctx['basis_review']['changes']))
+    class Retrying(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            assert self.contexts, 'new Call bypassed basis review'
+            assert ctx['handoff']['basis_review']['reason'] == 'Retry still valid within scope'
+            assert json.loads((tree / 'params.json').read_text())['x'] == (3 if action == 'adjust' else 0)
+            return super().implement(p, ctx, tree, log_dir)
+    resumed = use_sequence(engine_for(e.root), Retrying([review, stop]))
+    assert resumed.run()['state'] == 'closed'
+    calls = [c for c in resumed.ledger.calls(resumed.run_id) if c['role'] == 'designer']
+    assert len(calls) == 2 and calls[0]['input']['context']['claims'][0]['version'] == 1
+    assert calls[1]['input']['context']['claims'][0]['version'] == 2
+    assert (resumed.attempt_dir(1) / 'context.json').read_bytes() == original_context

@@ -1296,10 +1296,18 @@ class Engine:
                                     current_status=current["status"], reason=current["reason"]))
         return changes
 
+    def fixed_designer_input(self, n: int) -> bool:
+        calls = [c for c in self.ledger.calls(self.run_id)
+                 if c["attempt_no"] == n and c["role"] == "designer"]
+        if not calls:
+            return False
+        latest = calls[-1]
+        return not (latest["result"] and (latest["state"] == "not_started"
+                    or latest["result"].get("extra", {}).get("infra")))
+
     def pending_basis_review(self, attempt: dict, records: list[dict]) -> list[dict]:
-        # A started Call always resumes its original input, even if its basis changes.
-        if any(c["attempt_no"] == attempt["attempt_no"] and c["role"] == "designer"
-               for c in self.ledger.calls(self.run_id)):
+        # A pending receipt replays its input; a new infrastructure retry may reconsider it.
+        if self.fixed_designer_input(attempt["attempt_no"]):
             return []
         changes = self.basis_changes(self.direct_basis(attempt["plan"] or {}, records))
         reviewed = (attempt.get("basis_review") or {}).get("changes", [])
@@ -1803,12 +1811,15 @@ class Engine:
             loader = ws.checkout("a%06d/material-source" % n, parent)
             try:
                 _, designer = self.workers(loader)
-                context_path = adir / "context.json"
+                failed_designs = [c for c in self.ledger.calls(self.run_id)
+                                 if c["attempt_no"] == n and c["role"] == "designer" and c["result"]
+                                 and not c["result"]["ok"] and (c["state"] == "not_started" or c["result"].get("extra", {}).get("infra"))]
+                context_path = adir / ("context-retry-%d.json" % (len(failed_designs) + 1)
+                                       if failed_designs and selected.get("basis_review") else "context.json")
                 ctx = json.loads(context_path.read_text(encoding="utf-8")) if context_path.is_file() else None
                 if (ctx is not None and selected.get("basis_review")
                         and ctx.get("handoff", {}).get("basis_review") != selected["basis_review"]
-                        and not any(c["attempt_no"] == n and c["role"] == "designer"
-                                    for c in self.ledger.calls(self.run_id))):
+                        and not self.fixed_designer_input(n)):
                     ctx = None  # Material prepared before a Call may follow the new reviewed plan.
                 if ctx is None:
                     ctx = self.context(n, champ, focus, loader)
@@ -1835,14 +1846,14 @@ class Engine:
             ctx["component"].update(frozen=self.comp.frozen, evaluator_files=self.comp.evaluator_files)
             write_json(adir / "plan.json", plan)
             self.hard_check()
-            design_tree = ws.root / ("a%06d/designer" % n)
+            design_name = ("designer-retry-%d" % (len(failed_designs) + 1)
+                           if failed_designs and (selected.get("basis_review") or {}).get("action") == "adjust"
+                           else "designer")
+            design_tree = ws.root / ("a%06d/" % n) / design_name
             if not design_tree.exists():
-                design_tree = ws.checkout("a%06d/designer" % n, parent)
+                design_tree = ws.checkout("a%06d/" % n + design_name, parent)
             trees.append(design_tree)
             if plan.get("designer") is not False:
-                failed_designs = [c for c in self.ledger.calls(self.run_id)
-                                 if c["attempt_no"] == n and c["role"] == "designer" and c["result"]
-                                 and not c["result"]["ok"] and (c["state"] == "not_started" or c["result"].get("extra", {}).get("infra"))]
                 designer_log = adir / ("designer-%d" % (len(failed_designs) + 1) if failed_designs else "designer")
                 call = yield CallExecution("designer", n, {"plan": plan, "context": ctx, "parent": parent},
                                            design_tree, designer_log,
