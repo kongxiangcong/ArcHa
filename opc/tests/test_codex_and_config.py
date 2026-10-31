@@ -138,7 +138,9 @@ def test_codex_usage_limit_blocks_the_run_at_once(make_project, engine_for, fake
     e = engine_for(make_project(tsk=codex_task(fake_codex)))
     s = e.run()
     assert s["state"] == "blocked" and "usage limit" in s["stop_reason"]
-    assert [a["outcome"] for a in e.ledger.attempts(e.run_id)] == [Outcome.INFRA.value]
+    assert e.ledger.attempts(e.run_id) == []  # no work was selected by the rejected Expert
+    calls = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'expert']
+    assert len(calls) == 1 and not calls[0]['result']['ok']
     assert s["spent"]["search_attempts"] == 0
 
 

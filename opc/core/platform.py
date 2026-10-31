@@ -152,7 +152,7 @@ class Process(subprocess.Popen):
                 super().wait(timeout=min(.05, remaining) if remaining is not None else .05)
             except subprocess.TimeoutExpired:
                 continue
-        self._control.record(self, "completed")
+        self._control.record(self, "cancelled" if self.cancel_reason else "completed")
         return self.returncode
 
     def communicate(self, input=None, timeout=None):

@@ -832,6 +832,8 @@ def test_stop_cancels_owned_process_without_followup_dispatch(make_project, engi
     designer = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer']
     assert len(designer) == 1 and designer[0]['state'] == 'cancelled'
     assert not designer[0]['result']['ok']
+    process = json.loads((Path(designer[0]['receipt_path']).parent / 'process.json').read_text())
+    assert process['state'] == 'cancelled' and process['returncode'] is not None
     assert len([c for c in e.ledger.calls(e.run_id) if c['role'] == 'evaluator']) == 1
     before = e.ledger.calls(e.run_id)
     engine_for(e.root).run()
