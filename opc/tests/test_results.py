@@ -84,10 +84,19 @@ def test_registration_failure_retries_without_running_experiment(make_project, e
     report = json.loads((e.artifact_dir() / 'views/report.json').read_text(encoding="utf-8"))
     assert report['results_registration_error'] == 'disk full'
     cost = e.ledger.totals(e.run_id)
+    calls = [c['call_id'] for c in e.ledger.calls(e.run_id)]
+    candidate = e.attempt_records()[0]['candidate']
     monkeypatch.setattr(results, 'write_text', real)
     e.write_views()
-    assert len(split((root / ENTRY).read_text(encoding="utf-8"))[1]) == 2
+    rows = split((root / ENTRY).read_text(encoding="utf-8"))[1]
+    assert len(rows) == 1  # Stop is a Run decision, not a second execution.
+    assert rows[0]['key'] == e.run_id + '/a1' and rows[0]['experiment_id'] == 'E1'
+    assert rows[0]['status'] == e.attempt_records()[0]['outcome']
+    evidence = ((root / ENTRY).parent / rows[0]['refs']['evidence']).resolve()
+    assert evidence == e.attempt_dir(1) / 'eval/evaluation.json'
+    assert json.loads(evidence.read_text())['commit'] == candidate
     assert e.ledger.totals(e.run_id) == cost
+    assert [c['call_id'] for c in e.ledger.calls(e.run_id)] == calls
     assert len(seq.contexts) == 2
 
 
@@ -197,11 +206,17 @@ def test_interrupted_and_cached_batches_are_not_new_measurements(make_project, e
 
 def test_invalid_worker_plan_cannot_corrupt_results(make_project, engine_for):
     root = make_project(tsk=task(results_path=ENTRY))
+    register(root, ENTRY, [dict(key='external/control', experiment_id='E0', question='existing control',
+                                status='completed', refs={}, issues=[])])
+    previous = split((root / ENTRY).read_text(encoding="utf-8"))[1]
     e = use_sequence(engine_for(root), Sequence([plan(1, experiment_id=['not', 'an', 'ID']), stop]))
-    e.run()
-    row = e.attempt_records()[0]
-    assert row['outcome'] == 'worker_failed'
-    assert split((root / ENTRY).read_text(encoding="utf-8"))[1][0]['experiment_id'] is None
+    result = e.run()
+    assert result['state'] == 'blocked' and e.attempt_records() == []
+    call = next(c for c in e.ledger.calls(e.run_id) if c['role'] == 'expert')
+    assert call['attempt_no'] is None and call['result']['output']['experiment_id'] == ['not', 'an', 'ID']
+    rejection = e.ledger.events(e.run_id, 'expert_rejected')[-1]['body']
+    assert rejection['call_id'] == call['call_id'] and 'experiment_id' in rejection['reason']
+    assert split((root / ENTRY).read_text(encoding="utf-8"))[1] == previous
 
 
 def test_missing_entry_is_visible_and_symlinks_cannot_expose_secrets(make_project):
