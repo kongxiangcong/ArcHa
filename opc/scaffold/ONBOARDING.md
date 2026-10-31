@@ -143,6 +143,15 @@
   - `scripted`：固定搜索策略，不调用模型。参数类任务直接用
     `{"kind": "scripted", "strategy": "builtin:param_search", "options": {"file": "configs/emulator.json", "space": {"banks": [4, 8, 16]}}}`。
 
+### Profile 与来源冻结
+
+Task 可选择 `"profile": {"name": "development", "version": 1}`；`tuning` 和 `exploration` 同样提供 v1 默认策略。内置策略默认 token 无上限、时间 7200 秒，不授予执行、可改范围或验收权限。
+项目可在 `.opc/profiles/<name>/v<N>.json` 保存指定版本的普通默认值，格式为 `{"name": "development", "version": 2, "budget": {...}, "workers": {...}}`。只允许 budget/workers 默认字段；Task 显式字段覆盖 Profile，允许的本机角色字段再覆盖 Task。缺少指定版本会明确报错。
+
+项目与 Task 可设置 `hard_limits`（max_tokens/max_wall_seconds）；共同上限取较小值，null 不撤销明确上限，追加预算授权也不能超过硬限制。本机 bindings 只允许 artifact_root/workspace_root，不能更改目标、验收或权限。凭据从进程环境或后端凭据路径接入，不在合同 env/worker 选项中内联秘密值。
+
+Run 将实际解析配置及逐项来源保存在既有 `frozen/baseline.json` 的 execution 中，恢复读取冻结值，不重新套用后来 Profile/本机默认值。开发允许功能门未通过但通道须真实运行；调优要求 objective 和可比基线；探索要求可读 context 材料、评价/证据保存通道与 requirements 验收声明，准备不要求提前生成研究结论。
+
 ### 独立的 worker 环境配置
 
 `opc init --apply` 自动生成 `.opc/local/workers.json`，该目录已由 `.opc/.gitignore`
@@ -165,7 +174,7 @@
 旧项目可从 ArcHa 源码的 `opc/scaffold/workers.json` 复制到项目的 `.opc/local/workers.json`。
 只有 runtime 的项目也可先创建该文件，再执行 onboard；初始化会保留已有配置。
 
-优先级为：本机角色配置的非 null 值 > 该角色的合同字段 > 后端默认配置。
+优先级为：本机角色配置的非 null 值 > 该角色的 Task 字段 > Profile 默认值 > 后端默认配置。
 expert、designer 的 `kind`、超时、binary、profile 等仍由任务合同决定，
 合同里的 `reasoning_effort` 也可直接使用。Codex 通过 `-m` 和
 `-c model_reasoning_effort=...` 接收设置；显式的模型与强度优先于旧 `extra_args` 中对应参数。

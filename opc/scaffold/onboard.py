@@ -74,8 +74,12 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
         raise OPCError("revision must be rNNNN")
     contract_path = task_dir / revision / "task.json"
     explicit = {key: value for key, value in (("max_tokens", max_tokens), ("max_wall_seconds", max_wall_seconds)) if value is not None}
-    legacy = json.loads(contract_path.read_text(encoding="utf-8-sig")).get("budget", {}) if contract_path.exists() else {}
-    caps = resolve_budget_limits(legacy, load_budget_config(root) | explicit)
+    from ..core.config import resolve_task_defaults
+    candidate = json.loads(contract_path.read_text(encoding="utf-8-sig")) if contract_path.exists() else {}
+    resolved, _ = resolve_task_defaults(root, candidate)
+    caps = resolve_budget_limits(resolved.get("budget", {}), load_budget_config(root) | explicit)
+    for key, limit in resolved.get("hard_limits", {}).items():
+        caps[key] = min(caps[key], limit) if caps.get(key) is not None else limit
     max_tokens, max_wall_seconds = caps.get("max_tokens"), caps.get("max_wall_seconds")
     ledger = Ledger(root / ".opc/local/ledger.sqlite3")
     with ledger.writer():
