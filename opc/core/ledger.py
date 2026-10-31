@@ -299,6 +299,33 @@ class Ledger:
                             dict(call_id=call_id, reason="usage unavailable", charged=cost,
                                  log_dir=result.get("log_dir", ""), error=result.get("error", "")))
 
+    def record_decision(self, run_id: str, call_id: str, output: dict) -> None:
+        """A decision and its feedback acknowledgments are one durable handoff."""
+        with self.tx() as db:
+            self._event(db, run_id, "expert_decision", None, dict(call_id=call_id, output=output))
+            for row in output.get("conclusions", []):
+                self._event(db, run_id, "conclusion", row["attempt"],
+                            dict(text=row["conclusion"], reviewed_by_call=call_id))
+
+    def begin_selected_attempt(self, run_id: str, decision_call: str, plan: dict,
+                               parent: str, champion: str, focus: str | None) -> int:
+        """Register selected work atomically; a recovered decision cannot duplicate it."""
+        selected = [e for e in self.events(run_id, "work_selected")
+                    if e["body"]["decision_call"] == decision_call]
+        if selected:
+            return selected[0]["attempt"]
+        with self.tx() as db:
+            n = (db.execute("SELECT MAX(attempt_no) FROM attempts WHERE run_id=?",
+                            (run_id,)).fetchone()[0] or 0) + 1
+            db.execute("INSERT INTO attempts (run_id, attempt_no, state, champion_before, focus, plan, "
+                       "started_at) VALUES (?,?,?,?,?,?,?)",
+                       (run_id, n, "planned", champion, focus, json.dumps(plan), now()))
+            self._event(db, run_id, "attempt_started", n, dict(champion=champion, focus=focus))
+            self._event(db, run_id, "work_selected", n, dict(decision_call=decision_call, parent=parent))
+            self._event(db, run_id, "development_parent", n,
+                        dict(commit=parent, base_attempt=plan.get("base_attempt")))
+        return n
+
     # ---------------------------------------------------------------- attempts
     def next_attempt_no(self, run_id: str) -> int:
         row = self.db.execute("SELECT MAX(attempt_no) FROM attempts WHERE run_id=?",
