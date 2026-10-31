@@ -373,6 +373,7 @@ The working directory is a read-only checkout of the champion."""
     def invoke():
         ws.checkout(name, best["commit_sha"])
         options = dict(spec.options)
+
         options["tool_policy"] = {"read": [str(tree.resolve()), str(engine.artifact_dir().resolve())],
                                   "write": [], "network": False, "limitations": []}
         worker = make_worker(WorkerSpec(spec.kind, options), tree)

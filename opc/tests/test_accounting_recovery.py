@@ -218,9 +218,10 @@ def test_codex_home_precedence_and_parent_environment(tmp_path, monkeypatch):
         assert json.loads((log / 'onboard-request.json').read_text(encoding="utf-8"))['codex_home'] == str(homes[index])
         import os
         assert os.environ['CODEX_HOME'] == str(homes[2])
-    with pytest.raises(OPCError, match='existing absolute directory'):
-        CodexWorker({**options, 'codex_home': 'relative'})._run(
-            'onboard', 'test', tmp_path, tmp_path / 'invalid-log', 'workspace-write', None)
+    rejected, _ = CodexWorker({**options, 'codex_home': 'relative'})._run(
+        'onboard', 'test', tmp_path, tmp_path / 'invalid-log', 'workspace-write', None)
+    assert rejected.extra['not_started'] and rejected.extra['usage_complete']
+    assert 'existing absolute directory' in rejected.error
 
 
 def test_preparation_retry_preserves_call_logs_and_diagnostics(make_project, monkeypatch):

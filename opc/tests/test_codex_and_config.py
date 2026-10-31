@@ -31,7 +31,7 @@ if mode in ("input_expert", "input_designer") and ((cwd / "research.json").exist
     print(json.dumps({"type": "turn.failed", "error": {"message": "context_length_exceeded: input too long"}}))
     sys.exit(1)
 if mode.startswith("onboard"):
-    assert "workspace-write" in args and "PREPARATION" in prompt
+    assert any(a.startswith('default_permissions=') for a in args) and "PREPARATION" in prompt
     (cwd / ".opc/README.md").write_text("Open items: none\n")
     if mode == "onboard_stray":
         with open(cwd / "params.json", "a") as f:
@@ -49,7 +49,7 @@ if (cwd / "research.json").exists():
 else:
     x = json.loads((cwd / "params.json").read_text())["x"]
 if "--output-schema" in args:
-    assert "read-only" in args and "EXPERT" in prompt
+    assert any(a.startswith('default_permissions=') for a in args) and "EXPERT" in prompt
     schema = json.loads(Path(args[args.index("--output-schema") + 1]).read_text())
     if set(schema["required"]) != set(schema["properties"]):
         print(json.dumps({"type": "turn.failed", "error": {"message":
@@ -69,7 +69,7 @@ if "--output-schema" in args:
                       "base_attempt": None, "stop_reason": "", "changes": "set x to %d" % (x + 1),
                       "expected": "lower loss", "falsifier": "loss rises", "exhausted": False, "conclusions": reviews})
 else:
-    assert "workspace-write" in args and "DESIGNER" in prompt
+    assert any(a.startswith('default_permissions=') for a in args) and "DESIGNER" in prompt
     if mode == "scratch":
         assert 'Generated scratch paths:' in prompt
         scratch = json.loads(prompt.split('Generated scratch paths: ', 1)[1].split('].', 1)[0] + ']')

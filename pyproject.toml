@@ -20,6 +20,7 @@ build-backend = "setuptools.build_meta"
 include = ["opc*"]
 
 [tool.setuptools.package-data]
+"opc.adapters" = ["*.mjs"]
 opc = ["scaffold/*.md", "scaffold/*.py", "scaffold/*.json"]
 "opc.observer" = ["static/*.html", "static/*.txt", "static/assets/*"]
 

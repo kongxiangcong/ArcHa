@@ -922,6 +922,11 @@ class ObserverAdapter:
                 availability = 'available'
                 art = self._register(log_path, phase='loop', owners=[dict(id=ident, label=role)])
                 art_refs.append(ref(art))
+                for name in ('tool-policy.json', role + '-request.json'):
+                    source = directory / name
+                    if self._allowed(source) and source.is_file():
+                        artifact = self._register(source, phase='loop', owners=[dict(id=ident, label=role)])
+                        art_refs.append(ref(artifact))
         event_art = self._register(record=event, locator='events.seq=%s' % event['seq'], phase='onboard' if row.get('revision') == 'preparation' else 'loop', owners=[dict(id=ident, label=role)], title=role + ' · 调用回执')
         art_refs.append(ref(event_art))
         obj = dict(id=ident, run_id=self._id('run', row['run_id']), attempt_id=self._id('attempt', row['run_id'] + ':' + str(event['attempt_no'])) if event.get('attempt_no') is not None else None,
