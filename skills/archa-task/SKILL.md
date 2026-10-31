@@ -74,7 +74,7 @@ python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --brief <br
 
 ## 自主准备与冻结
 
-预算与模型统一配置在 `.opc/local/workers.json` 的 `budget` 对象：`max_tokens`、`max_wall_seconds` 默认 `null`（无上限），可分别设置。仅用户明确给出相应上限时写入数值；保留已有明确配置，不从模板、历史实验或 agent 估算生成限制，不为预算停下来提问。正常推进已授权工作，持续记录实际用量；无上限时缺失计量只标为 unknown，不阻塞执行。显式 token 上限要求可靠累计 token，显式时间上限要求可靠累计时间；无法自主恢复必要计量时报告实际阻塞。保留用户 pause/stop、真实外部权限和冻结验收边界。
+预算遵循 [接入说明的资源配置](../../opc/scaffold/ONBOARDING.md#独立的-worker-环境配置)：按 Task 累计准备及所有 Run，默认 token 无上限、时间额度两小时。仅在明确授权时调整总额度，保留已用量和已有硬限制；不为默认预算提问。仅对启用的约束要求可靠计量，实际缺失时先自主修复，再报告具体阻塞。保留用户 pause/stop、真实外部权限和冻结验收边界。
 
 
 发现准备待办时使用已有 onboard 命令的 `--prepare --task <task-id> --brief <brief>`。有可靠计量时附加 --prior-tokens / --prior-wall-seconds 更新累计主流程用量（包含 cached input），不重复计算 ledger 已记录的 worker/reviewer。无记录时保留 unknown，不填猜测的 0。显式上限下准备与正式 run 共用累计消耗，不能新建 run 重置。
@@ -82,7 +82,7 @@ python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --brief <br
 准备默认不调用 reviewer；合同 preparation_review=true 时进行针对性独立审核。当前任务及实际共享评价依赖摘要在 ledger 中冻结。提交被审文件，check/preflight 通过且用户允许正式执行才进入 run。“本步只准备”时到此结束，不能自动启动设备实验。产品未实现的功能失败是未完成基线，不能变造评分过门。
 已有正式 run 时不原地改冻结合同/评价器：保留旧 revision/run，准备新 revision 并重新审阅冻结；预算账本沿用。旧部署 runtime/全局技能不会自动更新，先核对入口 --help 是否支持 --prepare，不以仓库源码代替已安装行为。
 
-每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用已有冻结回执。缺失计量按上述预算策略处理；无上限时直接继续。
+每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用已有冻结回执。缺失计量按上述预算策略处理。
 
 
 准备默认仅执行与本次接入改动对应的必要检查，不固定建设全套负控或通用监控工具。ready 表示必要接入完成，不代表研究结论成立。合同显式设置 `preparation_review: true` 时保留独立准备审核；旧 ready 回执继续有效。冻结仅覆盖当前 task、component 及 evaluator_files（显式共享依赖也在这些 glob 中登记）。

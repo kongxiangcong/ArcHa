@@ -286,7 +286,7 @@ class WorkerSpec:
 
 @dataclass
 class Budget:
-    max_attempts: int
+    max_attempts: int | None
     max_wall_seconds: float | None
     max_tokens: int | None
     max_usd: float | None
@@ -382,15 +382,15 @@ class TaskSpec:
         b = _need(d, "budget", where, dict)
         bw = where + " budget"
         _keys(b, BUDGET_KEYS, bw)
-        from .worker_config import load_budget_config, validate_limits
+        from .worker_config import load_budget_config, resolve_budget_limits
         local_limits = load_budget_config(root)
-        caps = validate_limits({k: b.get(k) for k in ("max_tokens", "max_wall_seconds")} | local_limits)
-        budget = Budget(max_attempts=int(_need(b, "max_attempts", bw, int)),
+        caps = resolve_budget_limits(b, local_limits)
+        budget = Budget(max_attempts=b.get("max_attempts"),
                         max_wall_seconds=caps.get("max_wall_seconds"),
                         max_tokens=caps.get("max_tokens"), max_usd=b.get("max_usd"),
                         max_stagnation=int(b.get("max_stagnation", 8)),
                         max_consecutive_infra=int(b.get("max_consecutive_infra", 3)))
-        if budget.max_attempts < 1:
+        if budget.max_attempts is not None and (type(budget.max_attempts) is not int or budget.max_attempts < 1):
             raise OPCError("%s: max_attempts must be positive" % bw)
 
         w = _need(d, "workers", where, dict)

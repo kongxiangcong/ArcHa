@@ -115,7 +115,7 @@
     "repeats": 1,
     "noise_k": 2.0
   },
-  "budget": {"max_attempts": 30, "max_wall_seconds": null, "max_tokens": null,
+  "budget": {"max_attempts": null, "max_wall_seconds": 7200, "max_tokens": null,
              "max_stagnation": 8, "max_consecutive_infra": 3},
   "workers": {
     "expert": {"kind": "codex", "timeout_s": null},
@@ -146,11 +146,11 @@
 ### 独立的 worker 环境配置
 
 `opc init --apply` 自动生成 `.opc/local/workers.json`，该目录已由 `.opc/.gitignore`
-排除。模型与 token/时间上限统一在此配置；只在用户明确指定相应上限时修改 budget，默认 null 为无上限：
+排除。模型与 token/时间上限统一在此配置；只在用户明确指定相应上限时修改 budget，默认 token 无上限、Task 时间额度 7200 秒：
 
 ```json
 {
-  "budget": {"max_tokens": null, "max_wall_seconds": null},
+  "budget": {"max_tokens": null, "max_wall_seconds": 7200},
   "expert": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
   "designer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
   "reviewer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
@@ -160,7 +160,7 @@
 
 以上是新项目生成的 Codex 默认配置；已有本机配置不会被自动覆盖。
 模型需当前账号和后端支持；推理强度也是后端和模型决定的，ArcHa 不把它固定成某个枚举。
-角色字段的 null 表示继承；budget 的 null 表示无上限。budget 只支持 max_tokens（正整数/null）、max_wall_seconds（正有限数/null），允许单独设置。优先级为本地 budget 显式字段（包括 null）覆盖旧合同同名字段；二者都缺失时无上限。旧合同显式限制保留。有效 budget 纳入任务摘要，正式运行后的修改需要新 run；不重置累计用量。默认模型调用 timeout_s=null；评价器 gate 的工具超时仍独立保留。
+角色字段的 null 表示继承。预算默认 max_tokens=null、max_wall_seconds=7200，max_attempts 缺失或 null 表示无轮数限制；已有明确上限保留，null 不能撤销。预算按 Task 汇总准备及所有 revision、Run 的原始 charges；准备使用 ledger 内的 Task scope，不创建执行 Run。onboard 的显式预算参数记录授权变更，追加总额度不清零消耗。历史 Run 的执行配置保持冻结。仅启用 token 或金额上限时要求相应用量完整；缺省 token 无上限时保留 unknown，不阻塞。默认模型调用 timeout_s=null，评价器 gate 工具超时独立保留。
 文件缺失时保持兼容，JSON 格式、角色或字段拼写错误会报错，不会静默忽略。
 旧项目可从 ArcHa 源码的 `opc/scaffold/workers.json` 复制到项目的 `.opc/local/workers.json`。
 只有 runtime 的项目也可先创建该文件，再执行 onboard；初始化会保留已有配置。
@@ -315,7 +315,7 @@ Codex 状态目录语义参考：[OpenAI environment variables](https://learn.ch
 
 准备默认仅执行与本次接入改动对应的必要检查，不固定建设全套负控或通用监控工具。ready 表示必要接入完成，不代表研究结论成立。合同显式设置 `preparation_review: true` 时保留独立准备审核；旧 ready 回执继续有效。冻结仅覆盖当前 task、component 及 evaluator_files（显式共享依赖也在这些 glob 中登记）。
 
-默认按用户任务与证据自主形成简报及合同，不为大纲确认、缺省预算或缺省计量停下来提问。仅用户明确上限时修改本地 budget；onboard 的 --max-tokens / --max-wall-seconds 是显式上限入口并写回该文件，未传时读取现有配置。未知主流程用量记录为 host_usage_unknown，不假报已完整计量。
+默认按用户任务与证据自主形成简报及合同，不为大纲确认、缺省预算或缺省计量停下来提问。默认时间额度两小时，只有用户明确授权时修改总额度；onboard 的 --max-tokens / --max-wall-seconds 是显式上限入口并写回该文件，未传时读取现有配置。未知主流程用量记录为 host_usage_unknown，不假报已完整计量。
 
 ## 目录式技能交接
 
