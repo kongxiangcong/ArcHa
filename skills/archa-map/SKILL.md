@@ -47,4 +47,4 @@ $archa-task /absolute/project/.opc/research/topics/dma-scheduling/tasks/r01-base
 
 ## 默认预算
 
-预算与模型统一配置在 `.opc/local/workers.json` 的 `budget` 对象：`max_tokens`、`max_wall_seconds` 默认 `null`（无上限），可分别设置。仅用户明确给出相应上限时写入数值；保留已有明确配置，不从模板、历史实验或 agent 估算生成限制，不为预算停下来提问。正常推进已授权工作，持续记录实际用量；无上限时缺失计量只标为 unknown，不阻塞执行。显式 token 上限要求可靠累计 token，显式时间上限要求可靠累计时间；无法自主恢复必要计量时报告实际阻塞。保留用户 pause/stop、真实外部权限和冻结验收边界。
+预算细节见任务项目 `.opc/ONBOARDING.md` 的“独立的 worker 环境配置”：按 Task 累计，默认 token 无上限、时间额度两小时。仅在明确授权时调整总额度，保留消耗和已有硬限制；不为默认预算提问。对启用的约束可靠计量，必要计量缺失时先自主修复，再报告具体阻塞。保留用户 pause/stop 和冻结验收边界。

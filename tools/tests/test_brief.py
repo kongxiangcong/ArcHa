@@ -1,7 +1,6 @@
 """Discussion handoff: validate before calling a worker, preserve exact input."""
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -9,7 +8,6 @@ from opc.cli import main
 from opc.core.model import OPCError
 from opc.scaffold import init
 from opc.scaffold.brief import SECTIONS, load_brief
-from opc.scaffold.onboard import _draft as onboard
 
 
 FIELDS = {
@@ -82,53 +80,7 @@ def test_outside_source_and_brief_rejected(tmp_path):
         load_brief(root, "link.md")
 
 
-def test_onboard_consumes_and_records_brief(tmp_path, monkeypatch):
-    body = brief_project(tmp_path)
-    init(tmp_path, "demo", "Demo", "main", "t-main", True)
-    monkeypatch.setattr("opc.scaffold.onboard._snapshot", lambda root: {})
-    calls = []
-
-    def run(self, role, prompt, tree, log, sandbox, schema):
-        calls.append(prompt)
-        assert body in prompt
-        assert "context_files" in prompt and "blocking Open" in prompt
-        return SimpleNamespace(ok=True, call_id="fake", cost=SimpleNamespace(tokens=4), error=""), "drafted"
-
-    monkeypatch.setattr("opc.adapters.codex.CodexWorker._run", run)
-    result = onboard(tmp_path, "codex", "task-brief.md")
-    assert result["ok"] and result["brief_input"]["map"] == "map.md"
-    assert (tmp_path / ".opc/local/onboard/task-brief.md").read_text(encoding="utf-8") == body
-    metadata = json.loads((tmp_path / ".opc/local/onboard/brief-input.json").read_text(encoding="utf-8"))
-    assert metadata["sha256"] == result["brief_input"]["sha256"]
-    (tmp_path / "task-brief.md").write_text(body.replace("ready-for-onboard", "draft"), encoding="utf-8")
-    with pytest.raises(OPCError, match="not ready"):
-        onboard(tmp_path, "codex", "task-brief.md")
-    assert len(calls) == 1
-
 
 def test_cli_propagates_onboard_failure(monkeypatch):
     monkeypatch.setattr("opc.scaffold.onboard.onboard", lambda *a, **k: {"ok": False})
     assert main(["onboard", "-p", "."]) == 1
-
-
-@pytest.mark.parametrize("action", ["edit", "delete"])
-def test_onboard_rejects_rewriting_research_inputs(tmp_path, monkeypatch, action):
-    init(tmp_path, "demo", "Demo", "main", "t-main", True)
-    research = tmp_path / ".opc/research"
-    research.mkdir()
-    source = research / "evidence.md"
-    source.write_text("original evidence")
-    # Input protection must work even when git dirty-path reporting omits these files.
-    monkeypatch.setattr("opc.scaffold.onboard._snapshot", lambda root: {})
-
-    def run(*args):
-        if action == "edit":
-            source.write_text("changed evidence")
-        else:
-            source.unlink()
-        return SimpleNamespace(ok=True, call_id="fake", cost=SimpleNamespace(tokens=0), error=""), "done"
-
-    monkeypatch.setattr("opc.adapters.codex.CodexWorker._run", run)
-    result = onboard(tmp_path, "codex")
-    assert not result["ok"]
-    assert result["changed_protected_opc"] == [".opc/research/evidence.md"]

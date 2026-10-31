@@ -232,7 +232,7 @@ def main(argv=None) -> int:
     p.add_argument("--task", default="t-main")
     p.add_argument("--revision", help="candidate revision to prepare (resolved once if omitted)")
     p.add_argument("--max-tokens", type=int, help="explicit token cap, saved in local workers.json; default unlimited")
-    p.add_argument("--max-wall-seconds", type=float, help="explicit time cap, saved in local workers.json; default unlimited")
+    p.add_argument("--max-wall-seconds", type=float, help="authorized Task time cap, saved in local workers.json; default 7200 seconds")
     p.add_argument("--prior-wall-seconds", type=float)
     p.add_argument("--prior-tokens", type=int, help="cumulative host/nested input+output including cached input, excluding metered worker receipts")
     p = add("brief-check", cmd_brief_check, task=False)

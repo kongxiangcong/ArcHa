@@ -811,7 +811,7 @@ class Engine:
                     self.ledger.event(self.preparation or self.run_id, "accounting_unknown", None, reason="usage unavailable")
                     if self.accounting_required():
                         call.ok = False
-                        call.error = "usage unavailable; stop dispatch until actual accounting is reconciled"
+                        call.error = (call.error + "; " if call.error else "") + "usage unavailable; stop dispatch until actual accounting is reconciled"
                         call.extra["infra"] = True
             total = total.add(cost)
             self.ledger.charge(self.run_id, n, role, cost)
