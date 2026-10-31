@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from opc.adapters.codex import CodexWorker
+from opc.adapters.worker import WorkerCall
 from opc.adapters.dsh import DshWorker
 from opc.core.config import TaskSpec
 from opc.core.model import Cost, OPCError
@@ -123,7 +124,7 @@ def test_reviewer_does_not_inherit_expert(make_project, engine_for, monkeypatch,
         assert role == "reviewer"
         expected = ("review-model", "high") if configured else ("native-model", "low")
         assert (self.model, self.reasoning_effort) == expected
-        return SimpleNamespace(ok=True, call_id="fake", cost=Cost(0, 0, None), error="", extra={"usage_complete": True}), '{"verdict":"accept"}'
+        return WorkerCall("reviewer", True, Cost(0, 0, None), call_id="fake", extra={"usage_complete": True}), '{"verdict":"accept"}'
 
     monkeypatch.setattr(CodexWorker, "_run", run)
     commit = engine.ledger.run(engine.run_id)["base_commit"]
