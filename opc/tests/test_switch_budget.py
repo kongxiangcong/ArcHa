@@ -144,7 +144,8 @@ def test_explicit_switch_cannot_bypass_unknown_prior_execution(make_project):
     assert len(new.ledger.runs()) == 1
 
 
-def test_switched_expert_reads_prior_results_without_replaying_old_work(make_project, fake_codex, tmp_path):
+@pytest.mark.parametrize('relocated', [False, True])
+def test_switched_expert_reads_prior_results_without_replaying_old_work(make_project, fake_codex, tmp_path, relocated):
     from pathlib import Path
     import subprocess
     import sys
@@ -160,6 +161,14 @@ def test_switched_expert_reads_prior_results_without_replaying_old_work(make_pro
     before = old.attempt_records()
     assert len(before) == 1 and old.summary()['pending_conclusions'] == [1]
     old_calls = old.ledger.calls(old.run_id)
+    if relocated:
+        import shutil
+        from opc.core.config import Bindings
+        artifact_root = tmp_path / 'relocated-artifacts'
+        shutil.move(str(old.bindings.artifact_root), artifact_root)
+        (root / '.opc/local/bindings.json').write_text(json.dumps({'artifact_root': str(artifact_root)}))
+        old.bindings = Bindings.load(old.project)
+        assert not Path(next(c for c in old_calls if c['role'] == 'expert')['receipt_path']).exists()
     local.write_text(json.dumps({'expert': {'kind': 'dsh'}}))
     seen = []
     class Expert:
@@ -171,6 +180,7 @@ def test_switched_expert_reads_prior_results_without_replaying_old_work(make_pro
             assert prior['run_id'] == old.run_id and prior['pending_feedback'] == [1]
             result = Path(prior['results'][0]['path'])
             decision = Path(prior['decisions'][0]['path'])
+            assert decision.is_file() and decision.is_relative_to(Path(prior['evidence_root']))
             policy = worker_policy('expert', tree, log, ctx)
             assert str(result.parent.parent.parent) in policy['read']
             assert str(result.parent.parent.parent) not in policy['write']

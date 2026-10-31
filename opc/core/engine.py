@@ -1139,7 +1139,8 @@ class Engine:
                               "results": [{"attempt": a["attempt_no"], "outcome": a["outcome"],
                                            "path": str(root / "attempts" / ("a%06d" % a["attempt_no"]) / "decision.json")}
                                           for a in attempts[-HISTORY_WINDOW:] if a["outcome"]],
-                              "decisions": [{"call_id": c["call_id"], "path": c["receipt_path"]}
+                              "decisions": [{"call_id": c["call_id"], "path": str(root / Path(c["receipt_path"]).relative_to(
+                                                Path(c["input"]["tree"]).parent))}
                                             for c in calls[-HISTORY_WINDOW:]],
                               "pending_feedback": [a["attempt_no"] for a in attempts
                                                    if a["outcome"] and a["attempt_no"] not in concluded]})

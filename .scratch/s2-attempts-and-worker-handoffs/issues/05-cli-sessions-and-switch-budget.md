@@ -31,3 +31,5 @@ Expert 依据本 Run 的可靠 Call 记录显式续接原生 session，Designer 
 验证：公共配置/预算/Codex/研究循环目标回归 77 通过；最终补充切换暂停、阻止未知绕过后目标回归 42 通过，Observer 只读公共 Adapter 新增 2 通过；`compileall` 与 `git diff --check` 通过。真实 Codex 0.165.0：初次调用 17811 token；独立进程用同一 UUID `01a19145-820b-79f3-aae3-5359951ce561` 续接，准确返回前轮 marker，当前调用 35655 token；另一次实际 shell `sleep 30` 启动后取消，5.89 秒内停止且 unknown 为空，未上报 token 保持未知。原件保留于忽略目录 [work/s2-smoke/codex-05](../../../work/s2-smoke/codex-05/)。外层只读 home 启动失败也保留；实际运行通过授权提升使用原有认证，未更改安装或登录。完整真实 Engine/并行/工具访问隔离由 07 验证，当前记录不宣称已完成该范围。
 
 最终 Spec 审查修正：显式切换后的 Expert 材料现在引用前序 Run 的结果、决策回执及只读原件入口，并沿已有切换来源继承至普通后续 Run；只提供轻量引用，不复制 trace，不混合当前 history/pending feedback，也不续接旧后端原生 session。公共 Engine 回归在真实 Landlock 子进程中证明旧结果/决策可读且不可写；旧 Run 工作、Call 与待反馈均未改动，没有重做旧工作。
+
+材料搬迁补查：前序决策回执按原 Call 的 Run 材料 cwd 根计算相对路径，再绑定当前 source Run 原件根；仅投影引用，不重写账本原始路径。普通与搬迁后的切换/后续 Run 均通过原件可读、拒绝覆盖及旧记录不变检查；连同原工作补完与部署入口重点检查 6 passed。
