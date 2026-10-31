@@ -54,6 +54,187 @@ def use_sequence(e, seq):
     return e
 
 
+def test_later_run_discovers_and_analyzes_historical_pending_feedback(make_project, engine_for):
+    from opc.observer.adapter import ObserverAdapter
+    root = make_project()
+    first = use_sequence(engine_for(root), Sequence([plan(1)], [4]))
+    first.run(max_attempts_now=1)
+    old_run = first.run_id
+    original = (first.attempt_dir(1) / 'context.json').read_bytes()
+    def interpret(ctx):
+        assert ctx['history'] == [] and ctx['pending_feedback'] == []
+        pending = ctx['historical_pending_feedback']
+        assert [(p['run_id'], p['attempt']) for p in pending] == [(old_run, 1)]
+        assert Path(pending[0]['evidence']).is_dir()
+        observer = ObserverAdapter(root)
+        observed = observer.run(observer._id('run', later.run_id))['data']['historical_pending_feedback']
+        assert [(p['run_id'], p['attempt']) for p in observed] == [(old_run, 1)]
+        import subprocess
+        from opc.core.model import write_json
+        from opc.core.tool_boundary import worker_policy, runner_argv
+        policy = later.artifact_dir() / 'read-feedback-policy.json'
+        write_json(policy, worker_policy('expert', Path(ctx['knowledge']['context']).parent,
+                                        later.artifact_dir() / 'read-feedback', ctx))
+        original_source = Path(pending[0]['evidence']) / 'eval/evaluation.json'
+        read = subprocess.run(runner_argv(policy, ['/bin/cat', str(original_source)]),
+                              check=True, capture_output=True, text=True)
+        assert json.loads(read.stdout)['metrics']['values'] == {'loss': 10, 'correct': 1}
+        return dict(select_work=False, conclusions=[dict(run_id=old_run, attempt=1,
+                    conclusion='Historical comparable long field supports the limited scope; short fields unknown')])
+    def finish(ctx):
+        assert ctx['historical_pending_feedback'] == []
+        return stop(ctx)
+    later = use_sequence(engine_for(root), Sequence([interpret, finish]))
+    result = later.run(new_run=True)
+    assert result['state'] == 'closed' and later.run_id != old_run
+    assert first.attempt_records()[0]['conclusion'].startswith('Historical comparable')
+    assert (first.attempt_dir(1) / 'context.json').read_bytes() == original
+    assert not later.attempt_records()
+    assert not any(c['role'] == 'designer' for c in later.ledger.calls(later.run_id))
+    before = later.ledger.path.read_bytes()
+    observer = ObserverAdapter(root)
+    assert observer.run(observer._id('run', later.run_id))['data']['historical_pending_feedback'] == []
+    assert later.ledger.path.read_bytes() == before
+
+
+@pytest.mark.parametrize('measurement,explanation', [
+    ({'short_latency': 12, 'before': 10, 'interference': True},
+     'Interference makes the short observation invalid as counterevidence'),
+    ({'short_latency': [8, 12], 'before': 10, 'interference': False},
+     'Comparable short observations disagree; variability remains unexplained'),
+])
+def test_analyzed_measurement_can_leave_claim_unresolved(make_project, engine_for, measurement, explanation):
+    root = make_project(comp=component(scratch=['raw/**']))
+    claim = dict(claim_id='copy-all', statement='Reducing copying always improves speed',
+                 scope='Comparable long and short fields', status='unresolved', reason='Need valid short data')
+    class Measurement(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            call = super().implement(p, ctx, tree, log_dir)
+            (tree / 'raw').mkdir()
+            (tree / 'raw/short.json').write_text(json.dumps(measurement))
+            call.output['evidence_files'] = ['raw/short.json']
+            return call
+    def analyze(ctx):
+        assert ctx['pending_feedback'][0]['attempt'] == 1
+        saved = ctx['history'][0]['execution']['saved_files']
+        assert saved == ['outputs/raw/short.json']
+        actual = json.loads((Path(ctx['pending_feedback'][0]['evidence']) / saved[0]).read_text())
+        assert actual == measurement
+        return dict(stop(ctx), claims=[dict(claim, base_version=1, reason=explanation,
+                    evidence=[dict(run_id=engine.run_id, attempt=1, artifact=saved[0])],
+                    counterevidence=[], unresolved=[explanation])])
+    engine = use_sequence(engine_for(root), Measurement([dict(plan(1), claims=[claim]), analyze]))
+    result = engine.run()
+    assert result['state'] == 'closed' and result['pending_conclusions'] == []
+    assert result['claims'][0]['status'] == 'unresolved'
+    assert result['claims'][0]['counterevidence'] == []
+    assert result['claims'][0]['reason'] == explanation
+    assert engine.attempt_records()[0]['conclusion'] is not None
+
+
+@pytest.mark.parametrize('identity', ['absent-run', [], 'foreign-task-run'])
+def test_historical_feedback_rejects_invalid_run_identity(make_project, engine_for, identity):
+    root = make_project()
+    if identity == 'foreign-task-run':
+        path = root / '.opc/tasks/t-other/revisions/r0001/task.json'
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(task(task_id='t-other')))
+        git(root, 'add', str(path.relative_to(root)))
+        git(root, 'commit', '-qm', 'add separate feedback owner')
+        foreign = use_sequence(engine_for(root, task_id='t-other'), Sequence([plan(1)], [4]))
+        foreign.run(max_attempts_now=1)
+        identity = foreign.run_id
+    seq = Sequence([plan(1), dict(plan(2), conclusions=[dict(run_id=identity, attempt=1,
+                            conclusion='Do not process an unauthorized execution')])], [4])
+    engine = use_sequence(engine_for(root), seq)
+    result = engine.run()
+    assert result['state'] == 'blocked' and 'pending attempts' in result['stop_reason']
+    assert result['pending_conclusions'] == [1] and len(engine.attempt_records()) == 1
+    if isinstance(identity, str) and identity.startswith('run-'):
+        assert foreign.attempt_records()[0]['conclusion'] is None
+
+
+def test_copying_claim_loop_changes_scoped_choice_in_later_run(make_project, engine_for):
+    from opc.core.results import query_claims
+    from opc.observer.adapter import ObserverAdapter
+    root = make_project(comp=component(scratch=['raw/**']))
+    broad = dict(claim_id='copy-all', statement='Reducing copying always improves speed',
+                 scope='Comparable long and short fields; fixed code/input/tool',
+                 status='unresolved', reason='Only long fields measured', unresolved=['Short fields unknown'])
+    limited = dict(claim_id='copy-long', statement='Reducing copying helps long fields',
+                   scope='Long fields only; fixed code/input/tool', status='supported',
+                   reason='Controlled long field fixture improved', related_claims=['copy-all'])
+    def ref(attempt):
+        return dict(run_id=first.run_id, attempt=attempt, artifact='outputs/raw/measurement.json')
+    def analyze_long(ctx):
+        return dict(plan(2), changes='Measure short fields under the same code/input/tool',
+                    claims=[dict(broad, evidence=[ref(1)]), dict(limited, evidence=[ref(1)])],
+                    conclusions=[dict(attempt=1, conclusion='Comparable long field supports only the limited scope')])
+    class Measurements(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            call = super().implement(p, ctx, tree, log_dir)
+            raw = tree / 'raw'
+            raw.mkdir(exist_ok=True)
+            (raw / 'measurement.json').write_text(json.dumps(dict(
+                field='long' if p['title'] == 'experiment 1' else 'short',
+                before=10, after=8 if p['title'] == 'experiment 1' else 12,
+                conditions='fixed code/input/tool', comparable=True)))
+            call.output['evidence_files'] = ['raw/measurement.json']
+            return call
+    first = use_sequence(engine_for(root), Measurements([plan(1), analyze_long], [4, 0]))
+    paused = first.run(max_attempts_now=2)
+    assert paused['pending_conclusions'] == [2]
+    assert [(c['claim_id'], c['status']) for c in paused['claims']] == [
+        ('copy-all', 'unresolved'), ('copy-long', 'supported')]
+    old_input = (first.attempt_dir(2) / 'context.json').read_bytes()
+    old_raw = (first.attempt_dir(1) / ref(1)['artifact']).read_bytes()
+    def analyze_short(ctx):
+        assert ctx['pending_feedback'][0]['attempt'] == 2
+        assert ctx['claims'][0]['pending_feedback'][0]['attempt'] == 2
+        assert ctx['claims'][0]['status'] == 'unresolved'
+        return dict(select_work=False, claims=[dict(broad, evidence=[ref(1)],
+                    base_version=1, status='refuted', counterevidence=[ref(2)], unresolved=[],
+                    reason='Valid comparable short field counterexample is inside the stated scope')],
+                    conclusions=[dict(attempt=2, conclusion='Short field degradation is valid and refutes the broad proposition')])
+    restored = use_sequence(engine_for(root), Sequence([analyze_short, stop]))
+    closed = restored.run()
+    assert closed['pending_conclusions'] == []
+    assert [(c['claim_id'], c['version'], c['status']) for c in closed['claims']] == [
+        ('copy-all', 2, 'refuted'), ('copy-long', 1, 'supported')]
+    received = []
+    def reuse(ctx):
+        assert ctx['history'] == [] and ctx['historical_pending_feedback'] == []
+        assert query_claims(ctx, claim_id='copy-all', version=1)['claims'][0]['status'] == 'unresolved'
+        supported = query_claims(ctx, status='supported', text='long fields')['claims']
+        assert [c['claim_id'] for c in supported] == ['copy-long']
+        assert query_claims(ctx, claim_id='copy-long', source=0)['source']['availability'] == 'read'
+        assert query_claims(ctx, claim_id='copy-all', source=1)['source']['availability'] == 'read'
+        return dict(plan(1), changes='Reuse copying reduction only for long fields; retain baseline for short fields',
+                    evaluate=False, adopted_claims=[dict(claim_id='copy-all', version=2),
+                                                   dict(claim_id='copy-long', version=1)])
+    class ScopedChoice(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            received.append((p, ctx))
+            assert p['evaluate'] is False and 'only for long fields' in p['changes']
+            assert [(r['claim_id'], r['version']) for r in ctx['handoff']['adopted_claims']] == [
+                ('copy-all', 2), ('copy-long', 1)]
+            return super().implement(p, ctx, tree, log_dir)
+    later = use_sequence(engine_for(root), ScopedChoice([reuse, stop]))
+    result = later.run(new_run=True)
+    assert result['state'] == 'closed' and later.run_id != first.run_id
+    assert len(received) == 1 and len(later.attempt_records()) == 1
+    assert later.attempt_records()[0]['experiment'] is None  # Historical evidence was reused, not remeasured.
+    assert (first.attempt_dir(2) / 'context.json').read_bytes() == old_input
+    assert (first.attempt_dir(1) / ref(1)['artifact']).read_bytes() == old_raw
+    before = later.ledger.path.read_bytes()
+    observer = ObserverAdapter(root)
+    observed = observer.run(observer._id('run', later.run_id))['data']
+    assert [(c['claim_id'], c['version'], c['status']) for c in observed['claims']] == [
+        ('copy-all', 2, 'refuted'), ('copy-long', 1, 'supported')]
+    assert observer.attempt(observer._id('run', later.run_id), 1)['data']['adopted_claims'] == later.attempt_records()[0]['adopted_claims']
+    assert later.ledger.path.read_bytes() == before
+
+
 def test_expert_material_and_full_history_are_research_only(make_project, engine_for):
     evaluate = EVALUATE.replace('{"metrics": {"loss": (x - 7) ** 2 + 1, "correct": 1}}',
         '{"metrics": {"loss": (x - 7) ** 2 + 1, "correct": 1}, "verdict": "PRIVATE_VERDICT", "stdout": "PRIVATE_LOG", "conditions": {"seed": 9}, "cases": [{"id": "a", "latency": 17}]}')

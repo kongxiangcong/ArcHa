@@ -64,6 +64,15 @@ def current_claims(bodies) -> list[dict]:
     return list(current.values())
 
 
+def pending_feedback(attempts, events) -> list[dict]:
+    """The existing conclusion event processes feedback, including across Runs."""
+    analyzed = {(e['run_id'], e['attempt_no']) for e in events if e['kind'] == 'conclusion'}
+    return [dict(run_id=a['run_id'], attempt=a['attempt_no'],
+                 title=json.loads(a['plan'])['title'], outcome=a['outcome'])
+            for a in attempts if a.get('plan') and a.get('outcome')
+            and (a['run_id'], a['attempt_no']) not in analyzed]
+
+
 class ClaimConflict(OPCError):
     def __init__(self, conflicts):
         super().__init__('claim revision conflicts: ' + json.dumps(conflicts))
@@ -325,6 +334,13 @@ class Ledger:
         return [c for c in selected if (claim_id is None or c["claim_id"] == claim_id)
                 and (version is None or c["version"] == version)]
 
+    def pending_feedback(self, task_id: str) -> list[dict]:
+        attempts = [dict(r) for r in self.db.execute(
+            'SELECT a.* FROM attempts a JOIN runs r ON r.run_id=a.run_id WHERE r.task_id=?', (task_id,))]
+        events = [dict(r) for r in self.db.execute(
+            "SELECT e.* FROM events e JOIN runs r ON r.run_id=e.run_id WHERE r.task_id=? AND e.kind='conclusion'", (task_id,))]
+        return pending_feedback(attempts, events)
+
     def record_decision(self, run_id: str, call_id: str, output: dict) -> None:
         """A decision and its feedback acknowledgments are one durable handoff."""
         with self.tx() as db:
@@ -354,7 +370,7 @@ class Ledger:
                                  version=(row.get("base_version") or 0) + 1,
                                  registered_by_call=call_id))
             for row in output.get("conclusions", []):
-                self._event(db, run_id, "conclusion", row["attempt"],
+                self._event(db, row.get('run_id') or run_id, "conclusion", row["attempt"],
                             dict(text=row["conclusion"], reviewed_by_call=call_id))
 
     def begin_selected_attempt(self, run_id: str, decision_call: str, plan: dict,
