@@ -248,3 +248,18 @@ def test_preflight_is_charged_to_task_without_execution_run(make_project, engine
     assert e.preflight()['ok']
     assert e.ledger.runs() == []
     assert e.ledger.task_totals('t-toy')['wall_seconds'] > 0
+
+
+def test_status_displays_preparation_budget_without_fake_run(make_project, capsys):
+    from opc.cli import main
+    root = make_project(tsk=task(budget={}))
+    onboard(root, 'codex', task_id='t-toy', prior_tokens=4, prior_wall_seconds=2,
+            record_usage_only=True)
+    assert main(['status', '-p', str(root), '--task', 't-toy']) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert rows[0]['run_id'] is None
+    assert rows[0]['task'] == 't-toy'
+    assert rows[0]['revision'] == 'r0001'
+    assert rows[0]['budget']['used']['tokens'] == 4
+    assert rows[0]['budget']['limits']['wall_seconds'] == 7200
+    assert 'files' not in rows[0]['preparation'][0]

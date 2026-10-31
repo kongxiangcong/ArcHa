@@ -190,8 +190,9 @@ from types import SimpleNamespace
 import sys
 sys.path.insert(0, sys.argv[1])
 from opc.scaffold.brief import SECTIONS
-from opc.scaffold.onboard import _draft as onboard
-from opc.core.model import OPCError
+from opc.scaffold.onboard import onboard
+from opc.core.model import OPCError, Cost
+from opc.adapters.worker import WorkerCall
 from opc.adapters.codex import CodexWorker
 import opc.core.engine, opc.core.promote, opc.adapters.dsh, opc.adapters.scripted
 root = Path(sys.argv[2])
@@ -223,11 +224,11 @@ def fake_run(self, role, prompt, tree, log, sandbox, schema):
     assert config['execution_enabled'] is False
     assert (root / '.opc/tasks/t-main/revisions/r0001/task.json').is_file()
     assert brief.read_text() in prompt
-    return SimpleNamespace(ok=True, call_id='fake', cost=SimpleNamespace(tokens=0), error=''), 'mock draft'
+    return WorkerCall(role, True, Cost(0, 0, None), extra={'usage_complete': True}), json.dumps({'state': 'pending', 'reason': 'drafted; checks remain', 'evidence': []})
 CodexWorker._run = fake_run
 result = onboard(root, 'codex', brief)
-assert result['ok'], result
-assert (root / '.opc/local/onboard/task-brief.md').read_text() == brief.read_text()
+assert result['preparation'] == 'pending', result
+assert not list((root / '.opc/local/onboard').glob('**/task-brief.md'))
 '''
     subprocess.run([sys.executable, "-B", "-c", script, str(project / ".opc/runtime"), str(project)],
                    cwd=tmp_path, check=True, capture_output=True, text=True)
@@ -380,7 +381,7 @@ def test_two_r01_real_onboard_resume_revision_and_history(tmp_path, runtime, mon
     for directory, brief, task_id in zip(dirs, briefs, ids):
         assert research.resolve(root, str(directory))['task_id'] == task_id
         assert onboard(root, 'codex', brief=brief, task_id=task_id)['ok']
-        assert ledger.task_totals(task_id)['tokens'] == 14
+        assert ledger.task_totals(task_id)['tokens'] == 7  # unchanged checks are reused
     # A recorded formal run freezes r0001. Revision preparation must preserve it.
     formal = ledger.create_run(task_id=ids[0], revision='r0001', task_digest='frozen',
                                component='main', base_commit='fixture', evaluator_digest='frozen',
@@ -393,13 +394,13 @@ def test_two_r01_real_onboard_resume_revision_and_history(tmp_path, runtime, mon
         research.resolve(root, str(dirs[0]))
     assert research.resolve(root, str(dirs[0]), True)['task_id'] == ids[0]
     revisions[ids[0]] = 'r0002'
-    assert onboard(root, 'codex', brief=briefs[0], task_id=ids[0])['ok']
+    assert onboard(root, 'codex', brief=briefs[0], task_id=ids[0], revision='r0002')['ok']
     research.record(root, str(dirs[0]), ids[0], 'r0002')
     assert research.resolve(root, str(dirs[0]))['revision'] == 'r0002'
     assert research.resolve(root, str(dirs[1]))['revision'] == 'r0001'
     assert all(p.read_bytes() == content for p, content in old_contracts.items())
     assert {r['task_id']: r['run_id'] for r in ledger.runs()} == initial_runs
-    assert ledger.task_totals(ids[0])['tokens'] == 21
+    assert ledger.task_totals(ids[0])['tokens'] == 14
     history = (root / '.opc/local/ledger.sqlite3').read_bytes()
     research.create(root, 'third', 'Third', 'new objective')
     initialize.initialize(root, runtime)

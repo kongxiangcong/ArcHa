@@ -898,3 +898,23 @@ def test_digest_match_does_not_hide_ambiguous_brief_source(project):
     assert revision['ownership_state'] == 'verified'
     assert revision['link_state'] == 'ambiguous'
     assert revision['brief_id'] is None
+
+
+def test_task_usage_includes_preparation_and_other_runs(project):
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        for owner, tokens in [('old-run', 3), ('new-run', 5), ('preparation:dma', 7)]:
+            db.execute('INSERT INTO charges(run_id,attempt_no,role,wall_seconds,tokens,usd,usd_known,at) VALUES(?,?,?,?,?,?,?,?)',
+                       (owner, None, 'host', 2, tokens, None, 0, AT))
+    from opc.observer.adapter import ObserverAdapter
+    adapter = ObserverAdapter(project)
+    refs = adapter.overview()['data']['unlinked_runs']
+    for revision in adapter.overview()['data']['unlinked_revisions']:
+        refs += adapter.task_revision(revision['id'])['data']['runs']
+    detail = next(adapter.run(ref['id'])['data'] for ref in refs
+                  if adapter.run(ref['id'])['data']['source_run_id'] == 'old-run')
+    usage = detail['task_usage']
+    assert usage['scope'] == 'task'
+    assert usage['includes_preparation']
+    assert usage['recorded_tokens'] == 15
+    assert usage['recorded_wall_seconds'] == 6
+    assert usage['source_refs'][0]['kind'] == 'ledger'

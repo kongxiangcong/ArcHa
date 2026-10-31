@@ -376,3 +376,82 @@ def test_preparation_candidate_is_not_reused_for_changed_brief(make_project, mon
     brief.write_text(brief.read_text(encoding="utf-8") + '\nNew evidence changes the brief.\n', encoding="utf-8")
     assert onboard(root, 'codex', **kw)['preparation'] == 'pending'
     assert calls == ['onboard', 'reviewer', 'onboard', 'reviewer']
+
+
+def test_preparation_targets_revision_and_receipts_do_not_cross_versions(make_project, monkeypatch):
+    from opc.adapters.worker import WorkerCall
+    from opc.core.engine import Engine
+    from opc.tests.conftest import task, write, git
+    root = make_project()
+    write(root / '.opc/tasks/t-toy/revisions/r0002/task.json', json.dumps(task(revision='r0002')))
+    git(root, 'add', '.opc'); git(root, 'commit', '-qm', 'candidate r0002')
+    targets = []
+    def worker(self, role, prompt, tree, log, sandbox, schema):
+        targets.append(prompt)
+        log.mkdir(parents=True)
+        (log / 'checks.txt').write_text('focused integration passed', encoding='utf-8')
+        return WorkerCall(role, True, Cost(0, 0, None), extra={'usage_complete': True}), json.dumps(
+            dict(state='ready', evidence=[(log / 'checks.txt').relative_to(root).as_posix()]))
+    monkeypatch.setattr('opc.adapters.codex.CodexWorker._run', worker)
+    kw = dict(task_id='t-toy', prior_tokens=0, prior_wall_seconds=0)
+    result = onboard(root, 'codex', revision='r0001', **kw)
+    assert result['ok'] and result['revision'] == 'r0001'
+    assert 'Target revision: r0001.' in targets[0]
+    assert Engine(root, 't-toy', 'r0001').static_check()['ok']
+    check = Engine(root, 't-toy', 'r0002').static_check()
+    assert not check['ok'] and any('not ready' in p for p in check['problems'])
+    # A failure preparing another revision must not revoke the original receipt.
+    ledger = Ledger(root / '.opc/local/ledger.sqlite3')
+    rid = ledger.preparation_scope('t-toy')
+    ledger.event(rid, 'preparation', task_id='t-toy', revision='r0002', state='pending', reason='tool missing')
+    assert Engine(root, 't-toy', 'r0001').static_check()['ok']
+    assert ledger.runs() == []  # preparation never starts an execution worker/run
+
+
+def test_reviewed_candidate_can_be_edited_in_place_and_only_changed_inputs_need_checks(make_project, monkeypatch):
+    from opc.adapters.worker import WorkerCall
+    from opc.core.engine import Engine
+    from opc.tests.conftest import task, git
+    root = make_project(tsk=task(preparation_review=True))
+    prompts = []
+    def worker(self, role, prompt, tree, log, sandbox, schema):
+        log.mkdir(parents=True)
+        if role == 'onboard':
+            prompts.append(prompt)
+            (log / 'checks.txt').write_text('necessary integration passed', encoding='utf-8')
+            reply = dict(state='ready', evidence=[(log / 'checks.txt').relative_to(root).as_posix()])
+        else:
+            reply = dict(verdict='accept')
+        return WorkerCall(role, True, Cost(0, 0, None), extra={'usage_complete': True}), json.dumps(reply)
+    monkeypatch.setattr('opc.adapters.codex.CodexWorker._run', worker)
+    kw = dict(task_id='t-toy', revision='r0001', prior_tokens=0, prior_wall_seconds=0)
+    assert onboard(root, 'codex', **kw)['ok']
+    contract = root / '.opc/tasks/t-toy/revisions/r0001/task.json'
+    data = json.loads(contract.read_text()); data['goal'] = 'improve the local parameter'
+    contract.write_text(json.dumps(data), encoding='utf-8')
+    git(root, 'add', '.opc'); git(root, 'commit', '-qm', 'modify candidate after review')
+    assert not Engine(root, 't-toy', 'r0001').static_check()['ok']
+    result = onboard(root, 'codex', **kw)
+    assert result['ok'] and result['revision'] == 'r0001'
+    assert 'Changed preparation inputs:' in prompts[-1]
+    assert 'Retain unaffected checks' in prompts[-1]
+    assert len(list(contract.parent.parent.iterdir())) == 1
+    assert Engine(root, 't-toy', 'r0001').static_check()['ok']
+
+
+def test_new_evaluator_input_invalidates_preparation_until_checked(make_project, monkeypatch):
+    from opc.adapters.worker import WorkerCall
+    from opc.core.engine import Engine
+    from opc.tests.conftest import git, write
+    root = make_project()
+    def worker(self, role, prompt, tree, log, sandbox, schema):
+        log.mkdir(parents=True)
+        (log / 'checks.txt').write_text('focused integration passed', encoding='utf-8')
+        return WorkerCall(role, True, Cost(0, 0, None), extra={'usage_complete': True}), json.dumps(
+            dict(state='ready', evidence=[(log / 'checks.txt').relative_to(root).as_posix()]))
+    monkeypatch.setattr('opc.adapters.codex.CodexWorker._run', worker)
+    assert onboard(root, 'codex', task_id='t-toy', revision='r0001', prior_tokens=0, prior_wall_seconds=0)['ok']
+    write(root / '.opc/eval/new-input.json', '{"threshold": 1}')
+    git(root, 'add', '.opc'); git(root, 'commit', '-qm', 'new evaluation input')
+    check = Engine(root, 't-toy', 'r0001').static_check()
+    assert not check['ok'] and any('prepared inputs changed' in p for p in check['problems'])
