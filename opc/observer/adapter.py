@@ -779,7 +779,7 @@ class ObserverAdapter:
             frozen_baseline = self._read(run_dir / 'frozen/baseline.json', json_file=True, default={}) if run_dir else {}
             worker_execution = mapping(mapping(frozen_baseline).get('execution'))
             worker_selection = {role: {key: value for key, value in mapping(spec).items()
-                                      if key in ('kind', 'model', 'provider', 'reasoning_effort')}
+                                      if key in ('kind', 'model', 'provider', 'reasoning_effort', 'native_model_provider', 'native_profile', 'native_selection_error')}
                                 for role, spec in mapping(worker_execution.get('workers')).items()}
             result = dict(id=ident, compatibility=compatibility, control_request=control_events[-1]['kind'].removeprefix('control_') if control_events else 'run', source_run_id=row['run_id'], kind='preparation' if row.get('revision') == 'preparation' else 'execution',
 

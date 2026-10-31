@@ -1003,12 +1003,12 @@ def test_pending_call_and_pause_request_remain_distinct_from_paused_run(project,
 def test_run_shows_frozen_role_backends_without_exposing_cli_credentials(client, project):
     baseline = project / '.opc/local/artifacts/test/dma/old-run/frozen/baseline.json'
     put(baseline, {'execution': {
-        'workers': {'expert': {'kind': 'codex', 'model': 'frozen-model', 'env': {'PRIVATE_KEY': 'hidden'}},
+        'workers': {'expert': {'kind': 'codex', 'model': 'frozen-model', 'native_model_provider': 'local', 'native_profile': 'research', 'env': {'PRIVATE_KEY': 'hidden'}},
                     'reviewer': {'kind': 'codex', 'model': 'independent-reviewer'}},
         'configuration_sources': {'workers.expert.kind': '.opc/local/workers.json'}}})
     before = snapshot(project)
     data = run(client)
-    assert data['workers'] == {'expert': {'kind': 'codex', 'model': 'frozen-model'},
+    assert data['workers'] == {'expert': {'kind': 'codex', 'model': 'frozen-model', 'native_model_provider': 'local', 'native_profile': 'research'},
                                'reviewer': {'kind': 'codex', 'model': 'independent-reviewer'}}
     assert data['configuration_sources']['workers.expert.kind'] == '.opc/local/workers.json'
     assert 'hidden' not in json.dumps(data)

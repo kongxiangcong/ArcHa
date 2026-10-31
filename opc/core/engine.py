@@ -742,6 +742,9 @@ class Engine:
             self.resolved_workers = execution["workers"]
             if any(v["kind"] != "scripted" and not v.get("frozen_config") for v in self.resolved_workers.values()) and run["state"] != "closed":
                 raise OPCError("legacy Run remains readable but cannot resume: CLI installation was not frozen")
+            if any(v["kind"] == "codex" and not v.get("native_defaults_frozen")
+                   for v in self.resolved_workers.values()) and run["state"] != "closed":
+                raise OPCError("legacy Run remains readable but cannot resume: native Codex model/provider selection was not frozen")
             self._workers = None
             current_bindings = {key: str(value) for key, value in vars(self.bindings).items()}
             if current_bindings != execution["bindings"]:

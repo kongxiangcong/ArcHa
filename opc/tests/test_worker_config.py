@@ -107,6 +107,10 @@ def test_reviewer_does_not_inherit_expert(make_project, engine_for, monkeypatch,
                       "designer": {"kind": "codex"}})
     t["budget"]["max_tokens"] = 10000
     root = make_project(tsk=t)
+    native_home = root / ".opc/local/native-home"
+    native_home.mkdir(parents=True)
+    (native_home / "config.toml").write_text('model = "native-model"\nmodel_reasoning_effort = "low"\n')
+    monkeypatch.setenv("OPC_CODEX_HOME", str(native_home))
     config = {"expert": {"model": "expert-model"}}
     if configured:
         config["reviewer"] = {"model": "review-model", "reasoning_effort": "high"}
@@ -117,7 +121,7 @@ def test_reviewer_does_not_inherit_expert(make_project, engine_for, monkeypatch,
 
     def run(self, role, *args):
         assert role == "reviewer"
-        expected = ("review-model", "high") if configured else (None, None)
+        expected = ("review-model", "high") if configured else ("native-model", "low")
         assert (self.model, self.reasoning_effort) == expected
         return SimpleNamespace(ok=True, call_id="fake", cost=Cost(0, 0, None), error="", extra={"usage_complete": True}), '{"verdict":"accept"}'
 
@@ -203,12 +207,16 @@ def test_explicit_contract_backend_conflict_prevents_start(make_project, engine_
         engine_for(root).open_run()
 
 
-def test_new_run_may_select_backend_without_inheriting_profile_parameters(make_project, engine_for, fake_codex):
+def test_new_run_may_select_backend_without_inheriting_profile_parameters(make_project, engine_for, fake_codex, monkeypatch):
     t = task(profile={"name": "development", "version": 2}, workers={})
     profile = {"name": "development", "version": 2, "workers": {
         "expert": {"kind": "scripted", "strategy": ".opc/strategy.py:Step", "model": "other-backend-model"},
         "designer": {"kind": "scripted", "strategy": ".opc/strategy.py:Step"}}}
     root = make_project(tsk=t, extra={".opc/profiles/development/v2.json": json.dumps(profile)})
+    native_home = root / ".opc/local/native-home"
+    native_home.mkdir(parents=True)
+    (native_home / "config.toml").write_text('model = "native-model"\n')
+    monkeypatch.setenv("OPC_CODEX_HOME", str(native_home))
     first = engine_for(root)
     first.run(max_attempts_now=0)
     settings(root, {"expert": {"kind": "codex", "binary": fake_codex},
@@ -218,6 +226,99 @@ def test_new_run_may_select_backend_without_inheriting_profile_parameters(make_p
     result = second.summary()
     assert result["revision"] == "r0001" and result["run_id"] != first.run_id
     assert result["workers"]["expert"]["kind"] == "codex"
-    assert "model" not in result["workers"]["expert"]
+    assert result["workers"]["expert"]["model"] == "native-model"
     assert "strategy" not in result["workers"]["expert"]
     assert result["configuration_sources"]["workers.expert.kind"] == CONFIG_PATH
+
+
+@pytest.mark.parametrize("profile", [None, "research"])
+def test_resume_pins_native_model_provider_and_profile_defaults(make_project, engine_for, fake_codex, monkeypatch, profile):
+    home = Path(fake_codex).parent / "native-home"
+    home.mkdir()
+    native = home / "config.toml"
+    native.write_text('model = "model-a"\nmodel_reasoning_effort = "low"\n'
+                      '[model_providers.local]\nname = "Local"\nbase_url = "http://localhost:8123/v1"\n'
+                      'env_key = "MODEL_API_KEY"\nwire_api = "responses"\n'
+                      '[profiles.research]\nmodel = "profile-model-a"\nmodel_provider = "local"\nmodel_reasoning_effort = "high"\n')
+    t = task(workers={"expert": {"kind": "codex", "binary": fake_codex},
+                      "designer": {"kind": "codex", "binary": fake_codex}})
+    root = make_project(tsk=t)
+    settings(root, {"expert": {"codex_home": str(home), **({"profile": profile} if profile else {})},
+                    "designer": {"codex_home": str(home)}})
+    monkeypatch.setenv("MODEL_API_KEY", "do-not-copy-credential")
+    first = engine_for(root)
+    paused = first.run(max_attempts_now=0)
+    native.write_text('model = "model-b"\nmodel_provider = "other"\n')
+    monkeypatch.setenv("FAKE_CODEX_MODE", "exhausted")
+    resumed = engine_for(root)
+    result = resumed.run()
+    assert result["run_id"] == paused["run_id"]
+    expected_model = "profile-model-a" if profile else "model-a"
+    assert result["workers"]["expert"]["model"] == expected_model
+    request = next(resumed.artifact_dir().rglob("expert-request.json"))
+    argv = json.loads(request.read_text())["argv"]
+    assert argv[argv.index("-m") + 1] == expected_model
+    assert "--ignore-user-config" in argv
+    assert "-p" not in argv and "--profile" not in argv
+    assert ('model_provider="local"' if profile else 'model_provider="openai"') in argv
+    if profile:
+        assert result["workers"]["expert"]["native_profile"] == "research"
+        assert any('model_providers.' in arg and 'base_url=' in arg and '8123' in arg for arg in argv)
+    assert "do-not-copy-credential" not in json.dumps(result["workers"])
+
+
+def test_resume_can_repair_same_frozen_executable_without_searching_new_path(make_project, engine_for, fake_codex, monkeypatch):
+    missing = Path(fake_codex).parent / "restored-codex"
+    t = task(workers={"expert": {"kind": "codex", "binary": str(missing)},
+                      "designer": {"kind": "codex", "binary": str(missing)}})
+    root = make_project(tsk=t)
+    first = engine_for(root)
+    paused = first.run(max_attempts_now=0)
+    missing.write_text(Path(fake_codex).read_text())
+    missing.chmod(0o755)
+    monkeypatch.setenv("OPC_CODEX_BIN", "/must-not-use/another-codex")
+    monkeypatch.setenv("FAKE_CODEX_MODE", "exhausted")
+    resumed = engine_for(root)
+    result = resumed.run()
+    assert result["run_id"] == paused["run_id"]
+    assert result["state"] == "closed" and result["stop_reason"].startswith("expert_exhausted")
+    assert result["workers"]["expert"]["binary"] == str(missing)
+
+
+def test_unfrozen_native_selection_stays_readable_but_cannot_resume(make_project, engine_for, fake_codex):
+    root = make_project(tsk=task(workers={"expert": {"kind": "codex", "binary": fake_codex},
+                                        "designer": {"kind": "codex", "binary": fake_codex}}))
+    first = engine_for(root)
+    first.run(max_attempts_now=0)
+    baseline = first.artifact_dir() / "frozen/baseline.json"
+    snapshot = json.loads(baseline.read_text())
+    for spec in snapshot["execution"]["workers"].values():
+        spec.pop("native_defaults_frozen", None)
+    baseline.write_text(json.dumps(snapshot))
+    with pytest.raises(OPCError, match="native Codex model/provider selection was not frozen"):
+        engine_for(root).open_run()
+    assert first.ledger.run(first.run_id)["state"] == "paused"
+
+
+@pytest.mark.parametrize("extra", [["-m", "legacy-model"], ["--model=legacy-model"],
+                                    ["-c", 'model="legacy-model"'], ["-p", "legacy-profile"],
+                                    ["-c", 'model_provider="legacy-provider"']])
+def test_native_default_freeze_rejects_ambiguous_legacy_selection(make_project, engine_for, fake_codex, extra):
+    root = make_project(tsk=task(workers={"expert": {"kind": "codex", "binary": fake_codex, "extra_args": extra},
+                                        "designer": {"kind": "codex", "binary": fake_codex}}))
+    with pytest.raises(OPCError, match="overrides must use role fields"):
+        engine_for(root).open_run()
+
+
+def test_explicit_role_model_still_outranks_legacy_extra_args(make_project, engine_for, fake_codex, monkeypatch):
+    root = make_project(tsk=task(workers={"expert": {"kind": "codex", "binary": fake_codex,
+        "model": "role-model", "extra_args": ["--model=legacy-model", "-c", 'model="legacy-model"']},
+        "designer": {"kind": "codex", "binary": fake_codex}}))
+    monkeypatch.setenv("FAKE_CODEX_MODE", "exhausted")
+    engine = engine_for(root)
+    result = engine.run()
+    assert result["workers"]["expert"]["model"] == "role-model"
+    request = next(engine.artifact_dir().rglob("expert-request.json"))
+    argv = json.loads(request.read_text())["argv"]
+    assert "--model=legacy-model" not in argv
+    assert argv[argv.index("-m") + 1] == "role-model"

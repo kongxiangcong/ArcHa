@@ -24,3 +24,8 @@
 统一 `resolve_worker` 解析准备/Expert/Designer/Reviewer 的后端、安装定位及角色参数。合同省略 kind 时允许环境选择；显式限制冲突会报错。新 Run 冻结实际配置与来源，恢复复用原安装路径（含 argv 前缀）；缺工具保留明确未启动失败。观察入口只读显示后端/模型与来源，清理旧 `worker_options` 和准备/终验独立选类路径。新模板不再无意锁定 Codex。
 
 验证：配置/引擎/预算/计量相关回归 126 passed；最终配置含 argv/JSON 前缀覆盖 21 passed；独立观察投影 1 passed。合入 02 后配置/计量回归 42 passed，`git diff --check` 通过。组合运行的 observer fixture 在 AnyIO TestClient.__enter__ 等待处阻塞，已取消，未记为通过；独立新增观察测试已通过。未新增 DSH 专用测试，已有缺工具回归已通过；本票未执行真实 CLI 或正式考试，真实 Codex 接入交后续票。
+
+
+2026-10-31 集成补查修复：先以公开恢复入口复现原生默认模型漂移和缺工具永久阻塞，再冻结 Codex 所选 native profile 的模型、推理设置及受支持的非秘密 provider 路由。派发忽略可变用户配置，保留 profile 名称及配置来源；认证仍从选定 home/环境读取，不复制认证。未冻结的旧 native 选择仍可读，但执行恢复明确阻塞。无法可靠解析的默认/特殊 provider 设置和歧义 extra_args 显式报错；显式角色模型继续覆盖旧额外模型参数。Python 3.10 声明条件 tomli 依赖，当前 3.12 使用标准库，无安装操作。冻结绝对路径上的可执行文件修复后可恢复，仍不重新搜索 PATH。DSH 无原生默认解析能力时要求显式 provider/model；原生路由/安装/认证仍未实测。
+
+补查验证：新增模型/原生 profile/provider 与同路径修复的三项公开回归由失败转为通过；配置/计量/Codex 76 passed，切换预算及既有 DSH 回归 35 passed；补入旧快照和额外参数场景后配置 31 passed，配置/计量/切换预算检查 56 passed，diff 检查通过。已修正预算未知执行断言的精确词序，不放宽语义。观察投影经公开 ObserverAdapter 及只读快照核对通过；HTTP 单测再次在 AnyIO TestClient fixture 进入处等待，已取消，未计为通过。未新增 DSH 专用测试，既有假 CLI 夹具改为显式模型/provider；无真实 CLI、DSH 安装/登录或考试。

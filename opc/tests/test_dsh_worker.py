@@ -117,8 +117,8 @@ def fake_dsh(tmp_path):
 
 def dsh_task(binary: str, **budget) -> dict:
     t = task()
-    t["workers"] = {"expert": {"kind": "dsh", "binary": binary},
-                    "designer": {"kind": "dsh", "binary": binary}}
+    t["workers"] = {"expert": {"kind": "dsh", "binary": binary, "provider": "fixture", "model": "fixture"},
+                    "designer": {"kind": "dsh", "binary": binary, "provider": "fixture", "model": "fixture"}}
     t["budget"].update({"max_tokens": 100000, **budget})
     return t
 
