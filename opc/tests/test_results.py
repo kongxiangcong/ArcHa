@@ -398,8 +398,9 @@ def test_claim_source_expansion_distinguishes_missing_and_access_denied(make_pro
     assert 'content' not in denied['source']
 
 
-@pytest.mark.parametrize('worker_ok', [True, False])
-def test_designer_discovered_originals_survive_cleanup_and_candidate_rejection(make_project, engine_for, worker_ok):
+@pytest.mark.parametrize('worker_ok,invalid_adoption', [(True, False), (False, False), (True, True)])
+def test_designer_discovered_originals_survive_cleanup_and_candidate_rejection(make_project, engine_for, worker_ok,
+                                                                              invalid_adoption):
     from opc.core.results import query_claims
     from opc.tests.conftest import component
     trees = []
@@ -414,6 +415,8 @@ def test_designer_discovered_originals_survive_cleanup_and_candidate_rejection(m
             call.output['evidence_files'] = ['measurements/long.json', 'measurements/trace.bin']
             call.ok = worker_ok
             call.error = '' if worker_ok else 'Work incomplete; observations retained'
+            if invalid_adoption:
+                call.output['adopted_claims'] = [dict(claim_id='missing', version=1)]
             return call
     def register_claim(ctx):
         saved = ctx['history'][0]['execution']['saved_files']
@@ -426,7 +429,7 @@ def test_designer_discovered_originals_survive_cleanup_and_candidate_rejection(m
         plan(1, deliverables=['measurements/long.json']), register_claim], [0]))
     result = e.run()
     assert result['state'] == 'closed'
-    assert e.attempt_records()[0]['outcome'] == ('no_gain' if worker_ok else 'worker_failed')
+    assert e.attempt_records()[0]['outcome'] == ('no_gain' if worker_ok and not invalid_adoption else 'worker_failed')
     assert json.loads((root / 'params.json').read_text()) == {'x': 3}
     assert not trees[0].exists()
     original = e.attempt_dir(1) / 'outputs/measurements/long.json'
