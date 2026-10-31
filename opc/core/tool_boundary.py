@@ -20,7 +20,7 @@ RUNTIME_READ = ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/etc/ld.so.cache',
 
 
 def tool_policy(tree: Path, *, editable=(), scratch=(), protected=(), reads=()) -> dict:
-    from .config import denied, matches
+    from .config import denied
     tree = tree.resolve()
     protected = list(protected) + ['.git', '.git/**']
     writes = []
@@ -146,14 +146,6 @@ def main():
     os.execvpe(command[0], command, env)
 
 
-if __name__ == '__main__':
-    try:
-        main()
-    except Exception as exc:
-        print('archa-tool-boundary: ' + str(exc), file=sys.stderr)
-        sys.exit(125)
-
-
 def worker_policy(role: str, tree: Path, log_dir: Path, ctx: dict | None = None) -> dict:
     """Resolve only this invocation's fixed workspace and authorized evidence."""
     ctx = ctx or {}
@@ -180,7 +172,10 @@ def worker_policy(role: str, tree: Path, log_dir: Path, ctx: dict | None = None)
 
 
 def codex_policy_args(policy: dict) -> list[str]:
-    """Native tools use least privilege, independently of trusted CLI transport."""
+    """Native tools use least privilege, independently of trusted CLI transport.
+
+    Profile vocabulary: https://learn.chatgpt.com/docs/permissions .
+    """
     filesystem = {':minimal': 'read', **{p: 'read' for p in policy['read']},
                   **{p: 'write' for p in policy['write']}}
     table = '{' + ','.join(json.dumps(k) + '=' + json.dumps(v) for k, v in filesystem.items()) + '}'
@@ -208,13 +203,38 @@ def codex_policy_args(policy: dict) -> list[str]:
     return argv
 
 
-def preparation_policy(root: Path, task_id: str, revision: str) -> dict:
+def preparation_policy(root: Path, task_id: str, revision: str, *, frozen: bool = False) -> dict:
     """Preparation edits candidate integration, never runtime or frozen history."""
-    editable = ['.opc/eval/**', '.opc/components/**', '.opc/context/**', '.opc/profiles/**',
-                '.opc/tasks/%s/revisions/%s/**' % (task_id, revision),
-                ]
-    # Existing local evidence files may be extended; the runtime/log ledger and
-    # workers configuration remain outside the model's write authority.
+    editable = ['.opc/eval/**', '.opc/components/**', '.opc/context/**', '.opc/profiles/**']
+    if not frozen:
+        editable.append('.opc/tasks/%s/revisions/%s/**' % (task_id, revision))
+    # Runtime, ledger, workers configuration and historical contracts remain
+    # outside the model's write authority.
     policy = tool_policy(root, editable=editable, scratch=[], protected=[])
     policy['limitations'].append('preparation root files such as .opc/project.json remain read-only; only candidate integration subdirectories are writable')
     return policy
+
+
+def validate_cli_boundary_args(backend: str, args: list[str]) -> None:
+    """Backend flags cannot widen the Engine's task tool authorization."""
+    from .model import OPCError
+    for index, arg in enumerate(args):
+        if backend == 'codex':
+            blocked = arg.startswith(('--dangerously-', '--sandbox', '--add-dir', '--approve-for-me',
+                                      '--worktree', '--search', '--remote', '--enable', '--profile', '--cd', '--yolo', '--full-auto', '-s', '-C', '-p'))
+            config = args[index + 1] if arg in ('-c', '--config') and index + 1 < len(args) else arg[9:] if arg.startswith('--config=') else arg[2:] if arg.startswith('-c') and arg != '-c' else None
+            if config is not None:
+                key = config.split('=', 1)[0].strip()
+                blocked = blocked or key not in ('model', 'model_reasoning_effort')
+        else:
+            blocked = arg.startswith(('--permission-mode', '--add-dir', '--patch', '--from-default-profile'))
+        if blocked:
+            raise OPCError(backend + ' argument conflicts with task tool boundary: ' + arg)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as exc:
+        print('archa-tool-boundary: ' + str(exc), file=sys.stderr)
+        sys.exit(125)

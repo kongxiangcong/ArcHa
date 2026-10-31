@@ -1,5 +1,7 @@
 // Loaded by DSH through an absolute --patch module entry. Model transport stays
 // in the trusted host; every tool effect goes through the confined bash runner.
+// Guard contract: deepseek-ai/deepseek-harness@ce7073d51254c26cd63b22a60835b8f948deb447,
+// packages/core/tools/src/index.ts (tools.guard); patches load this absolute module.
 export const name = 'archa-tool-boundary';
 export const inject = ['tools'];
 export function apply(ctx) {

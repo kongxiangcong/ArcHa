@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 
 from ..core.platform import Process, command_prefix
-from ..core.tool_boundary import worker_policy
+from ..core.tool_boundary import worker_policy, validate_cli_boundary_args
 from typing import Any
 
 from ..core.model import Cost, OPCError, write_json, write_text
@@ -225,39 +225,47 @@ class DshWorker:
         `schema` is accepted and ignored: headless has no `--output-schema`, and
         the core validates the plan either way.
         """
-        log_dir.mkdir(parents=True, exist_ok=True)
-        session_id = (ctx or {}).get("session_id", self.session_id)
-        policy = worker_policy(role, tree, log_dir, ctx or self.tool_scope)
-        write_json(log_dir / "tool-policy.json", policy)
-        from ..core import tool_boundary
-        import sys
-        patch = [{"id": "sandbox", "config": {
-                    "runnerCommand": [sys.executable, str(Path(tool_boundary.__file__).resolve()), str((log_dir / "tool-policy.json").resolve())],
-                    "runnerFailureSignatures": ["archa-tool-boundary:"], "probeTimeoutMs": 5000}},
-                 {"id": "tool-bash", "config": {"enableRunInBackground": False, "promoteOnTimeout": False}},
-                 {"insert": [{"id": "archa-tool-boundary", "name": str(Path(__file__).with_name("dsh-tool-boundary.mjs").resolve())}]}]
-        patch += [{"id": name, "disabled": True} for name in
-                  ("tool-fs", "tool-fs-search", "tool-pwsh", "tool-web", "tool-subagent", "tool-subagent-fork", "tool-subagent-control", "tool-workflow")]
-        overlay = log_dir / "tool-boundary.patch.json"
-        write_json(overlay, patch)
-        argv = [*command_prefix(self.binary), *self.extra, "--profile", self.profile, "--patch", str(overlay.resolve()), "--json", "-"]
-        prompt += "\nArcHa tool boundary: use foreground bash for all reads, edits and checks. Other tools, background calls and permission escalation are disabled.\n"
-        if role == "expert" and session_id:
-            argv[-1:-1] = ["--session-id", session_id]
-        if self.selection:
-            # JSON is a YAML subset. An invocation-local patch never edits DSH_HOME.
-            selection = {"provider": self.selection["provider"], "model": self.selection["model"]}
-            if "reasoning_effort" in self.selection:
-                selection["reasoningEffort"] = self.selection["reasoning_effort"]
-            overlay = log_dir / ("%s-model.patch.json" % role)
-            write_json(overlay, [{"id": "agent-default-model", "config": selection}])
-            at = argv.index("--patch")
-            argv[at:at] = ["--patch", str(overlay.resolve())]
-        write_text(log_dir / ("%s-prompt.md" % role), prompt)
-        write_json(log_dir / ("%s-request.json" % role),
-                   {"argv": argv, "cwd": str(tree), "sandbox": sandbox,
-                    "timeout_s": self.timeout})
         t0 = time.time()
+        try:
+            validate_cli_boundary_args("dsh", self.extra)
+            log_dir.mkdir(parents=True, exist_ok=True)
+            session_id = (ctx or {}).get("session_id", self.session_id)
+            policy = worker_policy(role, tree, log_dir, ctx or self.tool_scope)
+            write_json(log_dir / "tool-policy.json", policy)
+            from ..core import tool_boundary
+            import sys
+            patch = [{"id": "sandbox", "config": {
+                        "runnerCommand": [sys.executable, str(Path(tool_boundary.__file__).resolve()), str((log_dir / "tool-policy.json").resolve())],
+                        "runnerFailureSignatures": ["archa-tool-boundary:"], "probeTimeoutMs": 5000}},
+                     {"id": "tool-bash", "config": {"enableRunInBackground": False, "promoteOnTimeout": False}},
+                     {"insert": [{"id": "archa-tool-boundary", "name": str(Path(__file__).with_name("dsh-tool-boundary.mjs").resolve())}]}]
+            patch += [{"id": name, "disabled": True} for name in
+                      ("tool-fs", "tool-fs-search", "tool-pwsh", "tool-web", "tool-subagent", "tool-subagent-fork", "tool-subagent-control", "tool-workflow", "tool-executor-ptc")]
+            patch.append({"id": "tool-executor-native", "disabled": False})
+            overlay = log_dir / "tool-boundary.patch.json"
+            write_json(overlay, patch)
+            argv = [*command_prefix(self.binary), *self.extra, "--profile", self.profile, "--patch", str(overlay.resolve()), "--json", "-"]
+            prompt += "\nArcHa tool boundary: use foreground bash for all reads, edits and checks. Other tools, background calls and permission escalation are disabled.\n"
+            if role == "expert" and session_id:
+                argv[-1:-1] = ["--session-id", session_id]
+            if self.selection:
+                # JSON is a YAML subset. An invocation-local patch never edits DSH_HOME.
+                selection = {"provider": self.selection["provider"], "model": self.selection["model"]}
+                if "reasoning_effort" in self.selection:
+                    selection["reasoningEffort"] = self.selection["reasoning_effort"]
+                overlay = log_dir / ("%s-model.patch.json" % role)
+                write_json(overlay, [{"id": "agent-default-model", "config": selection}])
+                at = argv.index("--patch")
+                argv[at:at] = ["--patch", str(overlay.resolve())]
+            write_text(log_dir / ("%s-prompt.md" % role), prompt)
+            write_json(log_dir / ("%s-request.json" % role),
+                       {"argv": argv, "cwd": str(tree), "sandbox": sandbox,
+                        "timeout_s": self.timeout})
+        except (OPCError, OSError, ValueError) as exc:
+            return WorkerCall(role, False, Cost(time.time() - t0, 0, None),
+                              error="dsh task tool boundary could not be prepared: " + str(exc),
+                              log_dir=str(log_dir), extra={"infra": True, "not_started": True,
+                                  "usage_complete": True, "capability_gap": True}), ""
         events = log_dir / ("%s-events.jsonl" % role)
         with open(events, "wb") as out, open(log_dir / ("%s-stderr.txt" % role), "wb") as err:
             try:

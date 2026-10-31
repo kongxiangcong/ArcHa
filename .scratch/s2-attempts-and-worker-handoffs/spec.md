@@ -112,13 +112,13 @@
 
 背景、贯通例子、源码事实和 CLI 能力来源见 [S2 专题](../../docs/architecture-and-task-policies/02-attempts-and-worker-handoffs/README.md)。S1 的历史交付记录不改写；本规格的显式 CLI 切换额度重置是对其预算规则的后续修订。
 
-只读核查基点为 `02aeecf8493d970b53e41f804491d9079c6bd594`。Codex 本机仅检查过帮助与版本；DSH 仅核查官方源码，本机 PATH 未找到安装。两个真实后端的运行验证均未完成，详细证据边界保留在专题，不在此复制。
+只读核查基点为 `02aeecf8493d970b53e41f804491d9079c6bd594`。发布前 Codex 本机仅检查过帮助与版本；DSH 仅核查官方源码，本机 PATH 未找到安装。当时两个真实后端的运行验证均未完成，详细证据边界保留在专题，不在此复制。
 
 已按用户确认的拆分发布 [7 张实现事项](issues/)。原 Codex 会话票、DSH 会话票和预算票合并为 05；各票声明真实阻塞关系并包含相关观察、必要验证及旧路径清理，DSH 遵循上述阶段例外。具体字段、事务与调度代码由实现按本规格选取最小方案。
 
 ## 交付验证
 
-实施中，集成分支 `feat/s2-attempts-and-worker-handoffs`。01–05 合入后的完整回归：`/tmp/archa-results-venv/bin/python -m pytest -q`，**447 passed、5 skipped、12 subtests passed**（149.34 秒）；仅既有 AnyIO 弃用警告。06、07 尚待交付，未启动正式四题考试。
+实施中，集成分支 `feat/s2-attempts-and-worker-handoffs`。01–05 合入后的完整回归：`/tmp/archa-results-venv/bin/python -m pytest -q`，**447 passed、5 skipped、12 subtests passed**（149.34 秒）；仅既有 AnyIO 弃用警告。06、07 的增量交付与验证见下文；最终集成复核进行中，未启动正式四题考试。
 
 - 02：Call 派发、原子回执、事务内幂等扣费及恢复已实现；不再统一 abandoned。已保存成果复用、未知执行保留阻塞、评价失败沿原 Attempt 新 Call 补测；普通 Run 计量可补齐。Engine/计量恢复/研究循环首轮 127 通过，唯一过时中断断言更新后，新增交接与中断用例重跑通过；具体见 [02 交付](issues/02-call-result-recovery.md#answer)。DSH 未新增专用测试、未运行验证。
 
@@ -142,3 +142,21 @@
 01 集成补查已修复原生默认漂移与同路径工具修复：Codex 从所选 native profile/配置解析并固定模型及受支持的非秘密 provider 路由，派发忽略可变用户配置；旧的未固定 native 选择只读保留，执行恢复明确阻塞。认证通过原 home/环境，不复制凭据；特殊 provider/歧义额外选择参数/未知模型明确报告能力限制，显式角色模型仍覆盖旧额外模型选项。DSH 原生默认解析不可用时要求显式 provider/model，原生路由与认证未实测。Python 3.10 使用条件 tomli 依赖；当前 3.12 未安装依赖。
 
 补查检查：模型/profile/provider 与同路径修复三项公开回归由红转绿；配置/计量/Codex 76 passed；切换预算与既有 DSH 35 passed；最终配置 31 passed，配置/计量/预算 56 passed，diff 检查通过。未知执行断言仅修正精确词序。观察公开投影及只读核对通过；HTTP fixture 的 AnyIO 等待已取消，未计为通过。无新增 DSH 专用测试或真实运行。
+
+
+### 07：工具边界与真实轻量贯通
+
+按调用保存 `tool-policy.json`，Codex 的原生权限配置、DSH 的单调拒绝 guard 与公共前台工具 runner 复用固定输入、独立工作区及授权成果路径；模型通信留在可信外层。工具环境不继承传输凭据，冻结评价/`.opc` 不可被 Designer 修改。准备仅写候选集成子目录、宿主自行验证合同/维护账本，避免将工具看不到宿主 runtime 误报为外部阻塞。符号链接越界、保护规则冲突和宽松 CLI 参数在派发前拒绝或明确报告能力限制；不为新文件 glob 放大父目录权限。观察 Call 可展开实际请求与工具权限。基准启动器已复用公共边界并清理重复内核实现。
+
+真实原件与复现脚本保存在现有忽略路径 [work/s2-smoke/codex-07](../../work/s2-smoke/codex-07/)；版本为 `codex-cli 0.165.0`，角色显式使用 `gpt-6.1-sol` / low，配置来源、预算与逐次 Call 原件沿该 toy 项目的单账本保存。`engine.py`、`control.py`、`observe.py`、`boundary.py` 是复现入口，`ARCHA_S2_SMOKE_ROOT` 可指定新的证据目录，setup 拒绝覆盖已有项目。
+
+- [工具命令事件](../../work/s2-smoke/codex-07/boundary-directory-call/designer-events.jsonl)：`src/**` 的有效读写成功，冻结写入返回 EROFS，宿主确实存在的兄弟文件在工具视图不可见，socket 被拒绝，模拟传输凭据变量不存在。判断依据是实际工具 stdout/退出码，非模型自报。
+- 主 Run `run-c253403a1d8c`：真实 Expert 选定 left/right，两 Designer 使用同一父提交及不同工作区并行执行；pause 收住当前调用且没有新增评价/反馈调用。独立进程继续时复用两份 Designer 回执，最终 Expert 以同一 session `01a1917b-f047-7231-9436-e66bfc17d5f6` 分别解释两结果后停止。四个独立 Call ID、两份未隐式合并的候选内容、只读 Observer 核对见 [checks.stdout](../../work/s2-smoke/codex-07/checks.stdout)、[paused-status.json](../../work/s2-smoke/codex-07/paused-status.json)、[observer.json](../../work/s2-smoke/codex-07/observer.json)。暂停时尚待 Engine 登记节点结果，明确保留两份已完成调用；继续后补交接，不重复实施。
+- 停止 Run `run-7b74c96b3eba`：实际 45 秒工具命令已开始每 0.1 秒追加心跳，观察到三次写入后 stop；CLI 返回和后续等待均保持 84 字节，没有后续派发，Run closed。见 [stop-run-control.json](../../work/s2-smoke/codex-07/stop-run-control.json) 与对应 Call 工具事件；中断 token 未上报时仍保留未知。
+- 恢复 Run `run-32105eb480e3`：在真实 Designer 已写回执、尚未落账处注入宿主失败；新进程补同一 Attempt，重复恢复仍只有原 Expert/Designer 两 Call，已知用量维持 26.889 秒 / 78166 token。原始失败、恢复结果、完整单账本快照及公开核对保存在该证据目录，没有重发模型或补造测量。
+
+真实准备首轮暴露“工具不能访问宿主 runtime”提示词边界不一致，修正明确职责后沿同一准备流程完成；两次实际用量均保留，共 131.955 秒 / 348570 token（含缓存输入）。主 Run 收尾后的 Task 累计为 212.175 秒 / 555163 token；并行耗时逐次累加，没有重置历史账本。模拟/夹具中的正式测量排他及默认三并发仍由 06 回归证明，此真实案例只验证两个轻量分支，不冒充性能评价或正式考试。
+
+能力限制：当前 Codex 0.165.0 Linux 对直接“可写单个文件”原生权限在 thread/start 前失败，错误为把文件当作目录创建 `.git/.aws` 挂载点；[原始失败](../../work/s2-smoke/codex-07/boundary-call/designer-stderr.txt)保留。适配器如实报告启动前能力失败，不改授父目录；真实有效写入仅验证明确的 `src/**` 子树。保护 glob 与子树权限相交时保守拒绝该目录写入，新 glob 路径和准备根文件可能需要显式可写子目录。公共 runner 当前要求 Linux x86_64 / Landlock ABI≥3，其他平台失败关闭。
+
+公共检查：边界/观察/参数拒绝 **11 passed**；配置/计量/边界 **56 passed**；边界与材料 **20 passed、12 subtests passed**；先前相关引擎回归的旧机制提示词断言已恢复并复验。`node --check` 与本地 `setuptools.build_meta.build_wheel` 的 DSH guard/公共 runner 资产包含检查通过，临时 wheel/build/egg-info 已清理。组合 HTTP Observer 检查在既有 AnyIO 等待处取消，未算通过；真实公开 Observer 核对保持账本次数、用量和控制不变。DSH **已实现、未运行验证**：只静态核查固定官方源码、JS 语法与公共隔离逻辑，没有新增 DSH 专用测试、安装、登录或真实运行。最终全量回归及双轴审查由集成分支收尾。

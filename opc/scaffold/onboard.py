@@ -201,7 +201,8 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             from ..core.config import WorkerSpec
             worker_spec = resolve_worker(config, "onboard", WorkerSpec(agent, {"timeout_s": remaining()}))
             worker = make_worker(WorkerSpec(worker_spec.kind, {**worker_spec.options,
-                                 "tool_policy": preparation_policy(root, task_id, revision)}), root)
+                                 "tool_policy": preparation_policy(root, task_id, revision, frozen=any(
+                                     r["task_id"] == task_id and r["revision"] == revision for r in ledger.runs()))}), root)
             ledger.event(rid, "worker_configuration", role="onboard", backend=worker_spec.kind,
                          options=worker_spec.options, source=CONFIG_PATH)
             before = _snapshot(root)
@@ -221,6 +222,10 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                       (HERE / "ONBOARDING.md").read_text(encoding="utf-8") + "\n" +
                       f"Target task ID: {task_id}. Create its contract if missing; do not prepare another task.\n"
                       f"Target revision: {revision}. Modify this candidate in place; preparation and review do not freeze it.\n"
+                      "ArcHa host validates the contract after this reply. Tool subprocesses intentionally cannot access "
+                      "the host runtime or write the ledger; do not run nested opc commands or treat their absence "
+                      "as a preparation blocker. Check the declared gate directly with bounded local positive/negative "
+                      "controls, keep the confirmed editable scope, and preserve receipts in tool TMPDIR or context. "
                       "PREPARATION: Complete necessary evaluator integration and focused validation "
                       "and bounded capability probes within the confirmed task. Write only .opc except protected "
                       "runtime/research/workers inputs. Do not change user requirements or execute formal device "
