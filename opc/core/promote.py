@@ -140,9 +140,19 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
                 raise OPCError("cannot read standards confirmation: " + str(exc)) from exc
             confirmation = dict(confirmation, sha256=hashlib.sha256(document.read_bytes()).hexdigest())
         validate_standards_confirmation(engine, run, confirmation)
+    revisions = {}
+    for path in sorted((engine.root / '.opc/tasks' / engine.task.task_id / 'revisions').glob('r[0-9][0-9][0-9][0-9]/task.json')):
+        raw = json.loads(path.read_text(encoding='utf-8'))
+        revisions[path.parent.name] = hashlib.sha256(canonical_json(raw).encode()).hexdigest()
+    if revised:
+        source_digest = revisions[engine.task.revision]
+    else:
+        frozen = json.loads((engine.artifact_dir() / 'frozen/baseline.json').read_text(encoding='utf-8'))
+        source_digest = frozen.get('source_contract_digest', engine.task.digest)
     records = recorded_promotions(engine)
     if any(report['acceptance_revision'] == engine.task.revision and
-           report['acceptance_task_digest'] != engine.task.digest for report, _ in records):
+           (report['acceptance_source_digest'] != source_digest if 'acceptance_source_digest' in report
+            else report['acceptance_task_digest'] != engine.task.digest) for report, _ in records):
         raise OPCError('frozen acceptance revision cannot be overwritten; save a new revision')
     champs = engine.ledger.champions(engine.run_id)
     selected = engine.selected_commit()
@@ -432,15 +442,7 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
               "results_review_scope": 'supplied excerpts only; omitted sources and later revisions are not covered' if review and task_results else None,
               "applied": False}
 
-    revisions = {}
-    for path in sorted((root / '.opc/tasks' / task.task_id / 'revisions').glob('r[0-9][0-9][0-9][0-9]/task.json')):
-        raw = json.loads(path.read_text(encoding='utf-8'))
-        revisions[path.parent.name] = hashlib.sha256(canonical_json(raw).encode()).hexdigest()
-    if revised:
-        report['acceptance_source_digest'] = revisions[task.revision]
-    else:
-        frozen = json.loads((engine.artifact_dir() / 'frozen/baseline.json').read_text(encoding='utf-8'))
-        report['acceptance_source_digest'] = frozen.get('source_contract_digest', task.digest)
+    report['acceptance_source_digest'] = source_digest
     report['acceptance_history'] = acceptance_history(revisions, [*records, (report, str(out / 'report.json'))])
     write_json(out / "report.json", report)
     if apply_to:
@@ -542,7 +544,7 @@ The working directory is a read-only checkout of the champion."""
         options = dict(spec.options)
 
         source_paths = [s["source"] for s in (task_results or {}).get("sources", [])
-                        if s.get("availability") == "read"]
+                        if s.get("availability") in ("read", "not_expanded")]
         options["tool_policy"] = {"read": [str(tree.resolve()), *source_paths],
                                   "write": [], "network": False, "limitations": []}
         worker = make_worker(WorkerSpec(spec.kind, options), tree)
