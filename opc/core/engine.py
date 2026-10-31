@@ -44,6 +44,30 @@ class StopDecision:
     reason: str
 
 
+def run_compatibility(root: Path, frozen: Path, run) -> dict[str, Any]:
+    """Read existing sources without probing tools or changing execution state."""
+    missing = [name for name in ("task.json", "component.json", "baseline.json")
+               if not (frozen / name).is_file()]
+    report = {"record": {"state": "readable", "reason": "ledger and existing artifacts remain available"},
+              "execution": {"state": "requires_check", "reason": "tool availability is checked when continuing"},
+              "measurement": {"state": "unknown", "reason": "current environment has not been probed by this read"}}
+    try:
+        baseline = json.loads((frozen / "baseline.json").read_text(encoding="utf-8"))
+        if not isinstance(baseline, dict):
+            raise ValueError("baseline snapshot is not an object")
+        if not baseline.get("execution"):
+            missing.append("baseline.execution (legacy)")
+        rev_parse(root, run["base_commit"])
+    except (OSError, ValueError, OPCError) as exc:
+        missing.append(str(exc))
+    if missing:
+        report["execution"] = {"state": "blocked", "reason": "missing execution source: " + "; ".join(missing)}
+        report["measurement"]["reason"] = "legacy/unknown: execution sources are incomplete"
+    elif run["state"] == "closed":
+        report["execution"] = {"state": "closed", "reason": "closed Run is observed without reopening"}
+    return report
+
+
 class Engine:
     def __init__(self, project_root: Path, task_id: str, revision: str | None = None,
                  log: Callable[[str], None] = print, *, run_id: str | None = None):
@@ -445,29 +469,49 @@ class Engine:
         self.task = TaskSpec.load(self.root, run["task_id"], run["revision"],
                                   source=task, resolve_local=False)
         if execution:
+            if self.task.digest != execution["task_digest"]:
+                raise OPCError("frozen task source differs from execution identity; use original sources")
             self.task.budget = Budget(**execution["budget"])
             self.task.digest = execution["task_digest"]
             self.worker_config = execution["worker_config"]
-            self.bindings = Bindings(**{key: Path(value) for key, value in execution["bindings"].items()})
+            current_bindings = {key: str(value) for key, value in vars(self.bindings).items()}
+            if current_bindings != execution["bindings"]:
+                self._binding_repair = {"previous": execution["bindings"], "current": current_bindings}
             self.task.configuration_sources = execution.get("configuration_sources", {})
+            if execution["task_digest"] != run["task_digest"]:
+                raise OPCError("frozen execution identity differs from ledger; use original sources")
         self.comp = ComponentConfig.load(self.root, run["component"], source=component)
+        original_component = json.loads(git("show", run["base_commit"] + ":.opc/components/" + run["component"] + ".json", cwd=self.root))
+        if component != original_component:
+            raise OPCError("frozen component permissions or evaluator changed; save a new revision and Run")
+        if baseline["commit"] != run["base_commit"]:
+            raise OPCError("frozen base identity differs from ledger; use original sources")
+        if self.evaluator_digest(run["base_commit"])[0] != run["evaluator_digest"]:
+            raise OPCError("frozen evaluator source is unavailable or changed; a changed contract needs a new revision")
         self._domain = self._rule = None
         self._eval_tree = None
 
     def toolchain_digest(self, commit: str) -> str:
+        def checked(domain):
+            digest, details = domain.toolchain()
+            unavailable = [key + ": " + value for key, value in details.items()
+                           if str(value).startswith("unavailable:")]
+            if unavailable:
+                raise OPCError("toolchain unavailable: " + "; ".join(unavailable))
+            return digest
         if self._domain is not None:
-            return self._domain.toolchain()[0]
+            return checked(self._domain)
         ws = self.workspaces("toolchain")
         try:
             tree = ws.checkout("probe", commit)
-            return self.domain(tree).toolchain()[0]
+            return checked(self.domain(tree))
         finally:
             ws.drop_all()
 
     def measure_champion(self, ws: Workspaces, commit: str, attempt: int | None,
-                         reason: str) -> Measurements:
-        out = self.artifact_dir() / "champion" / ("%s-%d" % (commit[:12], int(time.time())))
-        ev, meas, tree = self.evaluate_commit(ws, commit, "", out, "champion")
+                         reason: str, *, fresh: bool = False) -> Measurements:
+        out = self.artifact_dir() / "champion" / ("%s-%d" % (commit[:12], time.time_ns()))
+        ev, meas, tree = self.evaluate_commit(ws, commit, "", out, "champion", fresh=fresh)
         ws.drop(tree)
         self.ledger.charge(self.run_id, attempt, "evaluator", Cost(ev.seconds, 0, 0.0))
         if ev.failure is not None:
@@ -485,6 +529,10 @@ class Engine:
     def reconcile(self, ws: Workspaces) -> None:
         """Make ledger and git agree before anything new is dispatched."""
         run = self.ledger.run(self.run_id)
+        if getattr(self, "_binding_repair", None):
+            repairs = self.ledger.events(self.run_id, "binding_repaired")
+            if not repairs or repairs[-1]["body"] != self._binding_repair:
+                self.ledger.event(self.run_id, "binding_repaired", **self._binding_repair)
         for a in self.ledger.open_attempts(self.run_id):
             n = a["attempt_no"]
             intents = [e for e in self.ledger.events(self.run_id, "champion_intent")
@@ -504,6 +552,15 @@ class Engine:
                                        "controller stopped during '%s'; costs kept, no verdict"
                                        % a["state"], 0.0, Cost())
             self.log("attempt %d abandoned (was %s)" % (n, a["state"]))
+        current = self.toolchain_digest(run["base_commit"])
+        self._compatibility = run_compatibility(self.root, self.artifact_dir() / "frozen", run)
+        self._compatibility["execution"] = {"state": "resumable", "reason": "frozen sources and required tools are available"}
+        drift = current != run["toolchain_digest"]
+        self._compatibility["measurement"] = {"state": "reusable", "reason": "toolchain matches existing measurements"}
+        if drift:
+            self._compatibility["measurement"] = {"state": "requires_recheck", "reason": "toolchain changed; prior measurements cannot establish current comparability"}
+            self.remeasure_environment(ws, current)
+            self._compatibility["measurement"] = {"state": "rechecked", "reason": "old measurements retained; affected baseline and selected work freshly measured"}
         if not self.task.acceptance.objective_metric:
             return
         champ = self.ledger.champion(self.run_id)
@@ -519,12 +576,34 @@ class Engine:
         elif ref != champ[0]:
             raise OPCError("%s points at %s but the ledger champion is %s; the ref was moved "
                            "outside OPC" % (self.ref, ref[:12], champ[0][:12]))
-        # toolchain drift: a champion measured under other tools is not comparable
-        current = self.toolchain_digest(champ[0])
-        if current != champ[1].toolchain_digest:
-            self.log("toolchain changed; re-measuring champion %s" % champ[0][:12])
-            self.ledger.update_toolchain(self.run_id, current)
-            self.measure_champion(ws, champ[0], None, "re-measured: toolchain changed")
+    def remeasure_environment(self, ws: Workspaces, current: str) -> None:
+        """Rebuild only this Run's comparison baseline and current selected work."""
+        run = self.ledger.run(self.run_id)
+        sequence = len(self.ledger.events(self.run_id, "measurement_baseline")) + 1
+        out = self.artifact_dir() / "environment" / str(sequence)
+        ev, meas, tree = self.evaluate_commit(ws, run["base_commit"], "", out / "baseline", "environment-baseline", fresh=True)
+        ws.drop(tree)
+        self.ledger.charge(self.run_id, None, "evaluator", Cost(ev.seconds, 0, 0.0))
+        if ev.failure is not None and (self.task.acceptance.objective_metric or ev.failure is not Outcome.BROKEN):
+            raise OPCError("changed environment baseline failed: " + ev.reason)
+        self.ledger.event(self.run_id, "measurement_baseline", commit=run["base_commit"],
+                          metrics=meas.as_dict() if meas else None, cached=False, reason=ev.reason,
+                          toolchain_digest=current, evidence=str(out / "baseline/evaluation.json"))
+        champ = self.ledger.champion(self.run_id)
+        if champ:
+            self.hard_check()
+            self.measure_champion(ws, champ[0], None, "re-measured: toolchain changed", fresh=True)
+        else:
+            selected = self.working_commit()
+            if selected != run["base_commit"]:
+                self.hard_check()
+                ev, _, tree = self.evaluate_commit(ws, selected, "", out / "working", "environment-working", fresh=True)
+                ws.drop(tree)
+                self.ledger.charge(self.run_id, None, "evaluator", Cost(ev.seconds, 0, 0.0))
+                if ev.failure is not None and ev.failure is not Outcome.BROKEN:
+                    raise OPCError("changed environment working version failed: " + ev.reason)
+        self.ledger.update_toolchain(self.run_id, current)
+
 
     # ----------------------------------------------------------------- budget
     def enable_delivery(self) -> None:
@@ -768,6 +847,9 @@ class Engine:
         run = self.ledger.run(self.run_id)
         directions = [e["body"]["text"] for e in self.ledger.events(self.run_id, "direction")]
         base = champions[0] if champions else {"commit_sha": run["base_commit"], "metrics": {"values": {}}}
+        baselines = self.ledger.events(self.run_id, "measurement_baseline")
+        if baselines and baselines[-1]["body"].get("metrics"):
+            base = {"commit_sha": run["base_commit"], "metrics": baselines[-1]["body"]["metrics"]}
         acc = self.task.acceptance
         streak = 0
         for a in reversed(attempts):
@@ -1046,12 +1128,8 @@ class Engine:
                 return finish(Outcome.WORK, "saved work; not numerically ranked", gates=gates,
                               metrics=meas.as_dict())
             if meas.toolchain_digest != champ[1].toolchain_digest:
-                # tools changed under a live run: re-measure the champion now, or every
-                # later candidate is incomparable with it
-                self.log("toolchain changed; re-measuring champion %s" % champ[0][:12])
-                self.ledger.update_toolchain(self.run_id, meas.toolchain_digest)
-                champ = (champ[0], self.measure_champion(ws, champ[0], n,
-                                                         "re-measured: toolchain changed"))
+                self.remeasure_environment(ws, meas.toolchain_digest)
+                champ = self.ledger.champion(self.run_id)
             self.ledger.event(self.run_id, "comparison_baseline", n, commit=champ[0],
                               values=champ[1].values, spread=champ[1].spread, repeats=champ[1].repeats)
             ok, why = meas.comparable(champ[1])
@@ -1205,6 +1283,9 @@ class Engine:
                 outcomes[a["outcome"]] = outcomes.get(a["outcome"], 0) + 1
         best = champs[-1] if champs else None
         base = champs[0] if champs else None
+        baselines = self.ledger.events(self.run_id, "measurement_baseline")
+        if baselines and baselines[-1]["body"].get("metrics"):
+            base = {"metrics": baselines[-1]["body"]["metrics"]}
         m = self.task.acceptance.objective_metric
         gain = None
         if best and base and m in base["metrics"]["values"] and m in best["metrics"]["values"]:
@@ -1220,6 +1301,9 @@ class Engine:
                 business = "no_valid_candidate"
             if best and acceptance.target_met(self.task.acceptance, best["metrics"]["values"]):
                 business = "target_met"
+        compatibility = (getattr(self, "_compatibility", None) if run["state"] != "closed" else None) or run_compatibility(self.root, self.artifact_dir() / "frozen", run)
+        if run["state"] == "blocked":
+            compatibility["execution"] = {"state": "blocked", "reason": run["stop_reason"]}
         return {"run_id": self.run_id, "task": self.task.task_id, "revision": self.task.revision,
                 **({'results_path': self.task.raw['results_path'],
                     'results_registration_error': getattr(self, '_results_error', None)}
@@ -1229,6 +1313,7 @@ class Engine:
                 "selected_version": self.selected_commit(),
                 "working_version": self.working_commit() if not m else None,
                 "baseline": run["base_commit"], "startpoint": self.startpoint(),
+                "compatibility": compatibility,
                 "baseline_metrics": base["metrics"]["values"] if base else None,
                 "champion_metrics": best["metrics"]["values"] if best else None,
                 "target_met": bool(best and acceptance.target_met(

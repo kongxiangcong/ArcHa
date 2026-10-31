@@ -78,7 +78,7 @@
 - 调参任务里，被调参的模型/模拟器代码本身就是评价器的一部分，要列进 `evaluator_files`：候选能改模型，就等于能改评分。
 - `evaluator_files` 决定 evaluator digest：任何一个文件变了，就是新的评价器，必须开新 run。
 - `scratch` 声明命令生成的文件（如评测报告）：允许生成，但不进入候选补丁；冻结评价器和 `.opc/**` 仍受保护。只列实际生成物，与可改源码分开，不扩大 `editable`。
-- `toolchain` 列出会影响数字的工具版本命令。工具链变了，champion 会被重测，不同工具链的数字不比较（openTPU 上 Yosys 0.69/0.70 让 fmax 差 14.8%）。
+- `toolchain` 列出会影响数字的工具版本命令。工具链变了，原基线及当前成果会用新环境重测；旧测量保留，不同工具链的数字不比较（openTPU 上 Yosys 0.69/0.70 让 fmax 差 14.8%）。
 - 门按顺序执行，首个失败即停。占位符：`{worktree}` 候选树、`{out}` 该门输出目录、`{python}` 当前解释器。
 - 不要用 `sh -c`：把命令写成评价器里的脚本。
 - `deterministic: true`：同一源码 + 评价器 + 工具链必然得到同一数字时才打开，打开后评测结果按这三者缓存。综合/布局布线/有随机性的仿真不要打开。
@@ -331,3 +331,9 @@ Codex 状态目录语义参考：[OpenAI environment variables](https://learn.ch
 archa-task/archa-loop 接受具体任务目录，内部 CLI 继续使用 --brief 文件参数。准备时显式传入按简报路径绑定的 --task；相同目录摘要变化保留 task ID，按已有 revision 规则处理。不同专题的 R01 不代表同一执行任务。worker 必须以提示中的 Target task ID 为目标，缺少时创建其合同，不修改其他任务。交接在 DECISIONS.md 追加 brief 项目相对路径、SHA-256、实际 task ID、revision 与合同路径；索引不参与路由。旧式交接核对后补记，不改旧 ID。
 
 准备使用 `onboard --task <ID> --revision rNNNN` 明确交接对象；省略 revision 时仅在入口解析一次。候选在首次执行前可原地完善，准备和审核不冻结合同。修改后旧回执失效，仅补查受影响输入；已执行合同保持不变。默认状态摘要展示对象、就绪或阻塞原因，`status --details` 展开回执及来源。
+
+### 恢复时的接入与测量
+
+`status` 分别显示记录可读、执行可恢复、测量可复用的结论；状态读取不运行工具，当前环境未检查时测量显示 unknown。继续原 Run 时检查冻结来源和工具可用性，缺失原件或旧记录的必要字段会说明 legacy/unknown 及实际阻塞。
+
+同语义的产物、工作区迁移通过 `.opc/local/bindings.json` 指向已有原件后，继续原 Run 会记录绑定修复，冻结快照保持原样。工具恢复后可重试同一 Run；版本变化会重测原基线及当前成果，包含无数值 objective 的任务。必要基线失败不能仅凭冠军成功放行。权限、输入或评价条件改变需要新 revision 和 Run；旧失败报告及测量原件保留。

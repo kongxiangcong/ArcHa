@@ -93,7 +93,9 @@ def cmd_status(a) -> int:
             continue
         snapshot_path = (bindings.artifact_root / project.project_id / r["task_id"] /
                          r["run_id"] / "frozen/baseline.json")
-        source = {"configuration_source": str(snapshot_path)}
+        from .core.engine import run_compatibility
+        source = {"configuration_source": str(snapshot_path),
+                  "compatibility": run_compatibility(project.root, snapshot_path.parent, r)}
         if a.details:
             try:
                 snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))

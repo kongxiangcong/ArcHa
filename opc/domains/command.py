@@ -87,7 +87,7 @@ class CommandDomain:
             try:
                 with Process(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as p:
                     stdout, stderr = p.communicate(timeout=60)
-                details[key] = (stdout + stderr).decode("utf-8", errors="replace").strip()[:500] or "rc=%d" % p.returncode
+                details[key] = ("unavailable: exit %s: " % p.returncode if p.returncode else "") + ((stdout + stderr).decode("utf-8", errors="replace").strip()[:500] or "rc=%d" % p.returncode)
             except (OSError, subprocess.TimeoutExpired) as exc:
                 details[key] = "unavailable: %s" % type(exc).__name__
         return hashlib.sha256(canonical_json(details).encode()).hexdigest(), details

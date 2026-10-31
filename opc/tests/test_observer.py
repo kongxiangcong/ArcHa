@@ -939,3 +939,36 @@ def test_task_editorial_handoff_uses_latest_attributed_source(project):
     assert revision['link_state'] == 'verified'
     assert len(revision['brief_bindings']) == 1
     assert any(ref['display_path'] == '.opc/context/DECISIONS.md' for ref in revision['meta']['source_refs'])
+
+
+def test_run_compatibility_keeps_legacy_material_readable(project):
+    from opc.observer.adapter import ObserverAdapter
+    adapter = ObserverAdapter(project)
+    refs = adapter.overview()['data']['unlinked_runs']
+    for revision in adapter.overview()['data']['unlinked_revisions']:
+        refs += adapter.task_revision(revision['id'])['data']['runs']
+    detail = next(adapter.run(ref['id'])['data'] for ref in refs
+                  if adapter.run(ref['id'])['data']['source_run_id'] == 'old-run')
+    assert detail['compatibility']['record']['state'] == 'readable'
+    assert detail['compatibility']['execution']['state'] == 'blocked'
+    assert detail['compatibility']['measurement']['state'] == 'unknown'
+    assert detail['report_refs']
+
+
+def test_environment_recheck_baseline_uses_its_own_measurement_source(project):
+    update_contract(project, acceptance={'objective': {'metric': 'loss', 'direction': 'minimize'}})
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        event(db, 'old-run', 'measurement_baseline', commit='a' * 40, cached=False,
+              metrics={'values': {'loss': 123}, 'source_commit': 'a' * 40,
+                       'evaluator_digest': 'eval1', 'toolchain_digest': 'tool2'})
+    from opc.observer.adapter import ObserverAdapter
+    adapter = ObserverAdapter(project)
+    refs = adapter.overview()['data']['unlinked_runs']
+    for revision in adapter.overview()['data']['unlinked_revisions']:
+        refs += adapter.task_revision(revision['id'])['data']['runs']
+    detail = next(adapter.run(ref['id'])['data'] for ref in refs
+                  if adapter.run(ref['id'])['data']['source_run_id'] == 'old-run')
+    assert detail['metrics'][0]['baseline'] == 123
+    assert detail['metrics'][0]['scopes']['baseline']['toolchain_digest'] == 'tool2'
+    assert any('events.seq=' in (source.get('locator') or '')
+               for source in detail['metrics'][0]['source_refs'])

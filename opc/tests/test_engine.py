@@ -526,3 +526,97 @@ def test_resume_without_frozen_execution_source_is_blocked_but_status_readable(m
     assert main(['status', '-p', str(root), '--task', 't-toy', '--run-id', first.run_id]) == 0
     rows = json.loads(capsys.readouterr().out)
     assert rows[0]['state'] == 'paused' and rows[0]['attempts'] == 1
+
+
+def test_resume_uses_relocated_artifacts_and_workspace_bindings(make_project, engine_for, tmp_path):
+    import shutil
+    from opc.core.engine import Engine
+    root = make_project()
+    e = engine_for(root)
+    first = e.run(max_attempts_now=1)
+    previous = e.bindings
+    artifacts = tmp_path / 'moved-artifacts'
+    workspace = tmp_path / 'moved-workspaces'
+    shutil.move(str(previous.artifact_root), artifacts)
+    write(root / '.opc/local/bindings.json', json.dumps({
+        'artifact_root': str(artifacts), 'workspace_root': str(workspace)}))
+    resumed = Engine(root, 't-toy', run_id=first['run_id'], log=lambda _: None)
+    result = resumed.run(max_attempts_now=0)
+    assert result['run_id'] == first['run_id']
+    assert (resumed.artifact_dir() / 'frozen/task.json').is_file()
+    assert resumed.bindings.artifact_root == artifacts
+    assert resumed.ledger.events(first['run_id'], 'binding_repaired')
+
+
+def test_no_objective_resume_blocks_missing_tool_then_rechecks_drift(make_project, engine_for, tmp_path):
+    marker = tmp_path / 'version.txt'
+    marker.write_text('v1')
+    comp = component(toolchain=[['{python}', '-c',
+        'import pathlib,sys; print(pathlib.Path(sys.argv[1]).read_text())', str(marker)]])
+    root = make_project(comp=comp, tsk=task(acceptance={}, requirements=[{
+        'id': 'REQ-001', 'text': 'working gate', 'verification': 'automated', 'gates': ['evaluate']}]))
+    e = engine_for(root)
+    first = e.run(max_attempts_now=0)
+    marker.unlink()
+    with pytest.raises(OPCError, match='toolchain.*unavailable'):
+        engine_for(root).run(max_attempts_now=0)
+    assert not e.ledger.attempts(first['run_id'])
+    marker.write_text('v2')
+    resumed = engine_for(root)
+    result = resumed.run(max_attempts_now=0)
+    assert result['run_id'] == first['run_id']
+    records = resumed.ledger.events(first['run_id'], 'measurement_baseline')
+    assert records and records[-1]['body']['cached'] is False
+    assert result['compatibility']['record']['state'] == 'readable'
+    assert result['compatibility']['execution']['state'] == 'resumable'
+    assert result['compatibility']['measurement']['state'] == 'rechecked'
+
+
+def test_status_separates_readable_legacy_execution_and_unknown_measurements(make_project, engine_for, capsys):
+    from opc.cli import main
+    root = make_project()
+    e = engine_for(root)
+    first = e.run(max_attempts_now=0)
+    path = e.artifact_dir() / 'frozen/baseline.json'
+    snapshot = json.loads(path.read_text())
+    del snapshot['execution']
+    path.write_text(json.dumps(snapshot))
+    assert main(['status', '-p', str(root), '--task', 't-toy', '--run-id', first['run_id']]) == 0
+    result = json.loads(capsys.readouterr().out)[0]['compatibility']
+    assert result['record']['state'] == 'readable'
+    assert result['execution']['state'] == 'blocked'
+    assert 'legacy' in result['execution']['reason']
+    assert result['measurement']['state'] == 'unknown'
+
+
+def test_environment_drift_cannot_be_certified_by_champion_alone(make_project, engine_for, tmp_path):
+    marker = tmp_path / 'version.txt'
+    marker.write_text('v1')
+    comp = component(toolchain=[['{python}', '-c',
+        'import pathlib,sys; print(pathlib.Path(sys.argv[1]).read_text())', str(marker)]])
+    evaluate = EVALUATE.replace('x = json.loads', 'x = json.loads') + (
+        '\nif Path(%r).read_text() == "v2" and x == 3: sys.exit(1)\n' % str(marker))
+    root = make_project(comp=comp, evaluate=evaluate)
+    e = engine_for(root)
+    first = e.run(max_attempts_now=1)
+    old_evidence = {p: p.read_bytes() for p in (e.artifact_dir() / 'champion').rglob('evaluation.json')}
+    count = len(e.ledger.champions(first['run_id']))
+    marker.write_text('v2')
+    with pytest.raises(OPCError, match='changed environment baseline failed'):
+        engine_for(root).run(max_attempts_now=0)
+    assert len(e.ledger.champions(first['run_id'])) == count
+    assert all(path.read_bytes() == raw for path, raw in old_evidence.items())
+
+
+def test_resume_rejects_changed_frozen_permissions_without_rewriting_history(make_project, engine_for):
+    root = make_project()
+    e = engine_for(root)
+    first = e.run(max_attempts_now=0)
+    path = e.artifact_dir() / 'frozen/component.json'
+    altered = json.loads(path.read_text())
+    altered['editable'] = ['**/*.json']
+    path.write_text(json.dumps(altered))
+    with pytest.raises(OPCError, match='permissions.*new revision'):
+        engine_for(root).run(max_attempts_now=0)
+    assert e.ledger.run(first['run_id'])['revision'] == 'r0001'
+    assert len(e.ledger.runs()) == 1

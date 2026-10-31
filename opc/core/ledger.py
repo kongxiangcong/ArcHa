@@ -168,9 +168,10 @@ class Ledger:
             self._event(db, run_id, "run_" + state, None, {"stop_reason": stop_reason})
 
     def update_toolchain(self, run_id: str, digest: str) -> None:
+        previous = self.run(run_id)["toolchain_digest"]
         with self.tx() as db:
             db.execute("UPDATE runs SET toolchain_digest=? WHERE run_id=?", (digest, run_id))
-            self._event(db, run_id, "toolchain_changed", None, {"toolchain_digest": digest})
+            self._event(db, run_id, "toolchain_changed", None, {"previous_toolchain_digest": previous, "toolchain_digest": digest})
 
     # ------------------------------------------------------------------ events
     def _event(self, db: sqlite3.Connection, run_id: str, kind: str, attempt: int | None,

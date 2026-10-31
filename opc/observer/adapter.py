@@ -715,6 +715,9 @@ class ObserverAdapter:
             if isinstance(objective, dict) and objective.get('metric'):
                 metric_name = objective['metric']
                 baseline_record = next((c for c in champs if c.get('commit_sha') == row.get('base_commit')), None)
+                baseline_event = next((e for e in reversed(events) if e['kind'] == 'measurement_baseline' and e['body'].get('metrics')), None)
+                if baseline_event:
+                    baseline_record = dict(baseline_event, metrics=baseline_event['body']['metrics'], _event_measurement=True)
                 champion_record = champs[-1] if champs else None
                 candidate_record = next((a for a in reversed(data['attempts']) if isinstance(parsed(a.get('metrics')), dict)), None)
                 candidate_event = next((e for e in reversed(events) if e['kind'] == 'candidate_saved' and candidate_record and e.get('attempt_no') == candidate_record['attempt_no']), None)
@@ -731,9 +734,11 @@ class ObserverAdapter:
                                          toolchain_digest=measurement.get('toolchain_digest'))
                     if record:
                         locator = ('attempts.run_id=%s,attempt_no=%s' % (row['run_id'], record['attempt_no'])) if label == 'candidate' else ('champions.run_id=%s,seq=%s' % (row['run_id'], record['seq']))
+                        if record.get('_event_measurement'):
+                            locator = 'events.seq=%s' % record['seq']
                         numeric_art = self._register(record=record, locator=locator, phase='loop', owners=[dict(id=ident, label=row['run_id'])], title=label + ' · 测量记录')
                         artifacts.append(numeric_art)
-                        numeric_refs.append(self._source(numeric_art))
+                        numeric_refs.append(self._source(numeric_art, locator))
                 valid = valid_report[0] if valid_report else {}
                 selected_value = mapping(valid.get('selected_metrics')).get(metric_name)
                 values['selected'] = selected_value if isinstance(selected_value, (int, float)) else None
@@ -756,7 +761,12 @@ class ObserverAdapter:
                 run_meta['issues'].extend(revision['meta']['issues'])
             if not revision and row.get('revision') != 'preparation':
                 run_meta = meta(run_meta['source_refs'], [issue('contract_missing', '未发现可核对的历史合同')], 'partial')
-            result = dict(id=ident, source_run_id=row['run_id'], kind='preparation' if row.get('revision') == 'preparation' else 'execution',
+            from ..core.engine import run_compatibility
+            compatibility = (run_compatibility(self.root, run_dir / 'frozen', row) if run_dir else
+                             dict(record=dict(state='readable', reason='ledger record available'),
+                                  execution=dict(state='blocked', reason='legacy: artifact source unavailable'),
+                                  measurement=dict(state='unknown', reason='measurement sources unavailable')))
+            result = dict(id=ident, compatibility=compatibility, source_run_id=row['run_id'], kind='preparation' if row.get('revision') == 'preparation' else 'execution',
                           task_revision_id=revision['id'] if revision and not revision.get('_contract_mismatch') else None, execution_task_id=row.get('task_id'),
                           preparation=prep, execution=execution, acceptance=acceptance, stop_reason=row.get('stop_reason'),
                           phase='onboard' if row.get('revision') == 'preparation' else 'loop', last_activity_at=self.source_at,
