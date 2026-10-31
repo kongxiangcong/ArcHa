@@ -15,8 +15,10 @@ from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 import os
 
-from .model import OPCError, write_text
-from .platform import is_link, lock_writer, unlock_writer
+# The scoped query tool also runs directly under the Worker filesystem boundary.
+if __package__:
+    from .model import OPCError, write_text
+    from .platform import is_link, lock_writer, unlock_writer
 
 START = '<!-- archa-results:start -->'
 END = '<!-- archa-results:end -->'
@@ -335,3 +337,90 @@ def sync_engine(engine) -> None:
                          refs=refs, issues=[k + ': 未提供' for k in ('plan', 'evidence', 'analysis', 'review') if k not in refs]
                          + (['run 级终验引用；逐条科学主张是否覆盖须查原报告'] if review else [])))
     register(engine.root, value, rows, engine.task.goal)
+
+
+def claim_sources(claims: list[dict], artifact_root: Path, project_id: str) -> list[dict]:
+    """Resolve only sources named by these claims; preserve their historical locators."""
+    for claim in claims:
+        for ref in claim.get('evidence', []) + claim.get('counterevidence', []):
+            storage = artifact_root / project_id / claim['task_id'] / ref['run_id'] / 'attempts' / ('a%06d' % ref['attempt'])
+            path = storage / ref['artifact']
+            ref.update(storage=str(storage), source=str(path))
+            try:
+                if not path.resolve().is_relative_to(storage.resolve()):
+                    ref.update(availability='access_denied', issue='source escaped authorized storage')
+                else:
+                    ref['availability'] = 'not_expanded' if path.is_file() else 'missing'
+            except OSError as exc:
+                ref.update(availability='access_failed', issue=str(exc))
+    return claims
+
+
+def query_claims(context: dict, *, task_id: str | None = None, claim_id: str | None = None,
+                 status: str | None = None, text: str = '', version: int | None = None,
+                 source: int | None = None, budget: int = 12000) -> dict:
+    """Query the fixed, authorized material delivered to one Call; never adopt it."""
+    material = context['knowledge']
+    if task_id is not None and task_id not in material['task_ids']:
+        raise ValueError('task is outside authorized claim material')
+    if status is not None and status not in ('unresolved', 'supported', 'refuted'):
+        raise ValueError('claim status must be unresolved, supported or refuted')
+    rows = context['claims'] + (context.get('claim_history', []) if version is not None else [])
+    selected = [c for c in rows if (task_id is None or c['task_id'] == task_id)
+                and (claim_id is None or c['claim_id'] == claim_id)
+                and (status is None or c['status'] == status)
+                and (version is None or c['version'] == version)
+                and (not text or text.casefold() in json.dumps(c, ensure_ascii=False).casefold())]
+    result = dict(scope=dict(task_ids=material['task_ids'], claim_id=claim_id,
+                             status=status, text=text, version=version),
+                  as_of='fixed_call_input', claims=selected, omitted=len(rows) - len(selected),
+                  history_versions=[{k: c[k] for k in ('task_id', 'claim_id', 'version')}
+                                    for c in context.get('claim_history', [])],
+                  bodies='not_expanded; use --claim-id and --source INDEX to read a registered source')
+    if source is not None:
+        if len(selected) != 1:
+            raise ValueError('source expansion requires exactly one authorized claim')
+        refs = selected[0].get('evidence', []) + selected[0].get('counterevidence', [])
+        if source < 0 or source >= len(refs):
+            raise ValueError('source index is outside the registered references')
+        ref = dict(refs[source])
+        result['source'] = ref
+        if not ref.get('source') or ref.get('availability') == 'access_denied':
+            ref.update(availability='access_denied', issue='source is outside authorized storage')
+            return result
+        path = Path(ref['source'])
+        if not path.resolve().is_relative_to(Path(ref['storage']).resolve()):
+            ref.update(availability='access_denied', issue='source escaped authorized storage')
+            return result
+        try:
+            with path.open('rb') as stream:
+                data = stream.read(budget + 1)
+            ref.update(availability='read', content=data[:budget].decode('utf-8'),
+                       omitted=len(data) > budget, content_format='utf-8')
+        except FileNotFoundError:
+            ref.update(availability='missing', issue='source missing: ' + str(path))
+        except UnicodeDecodeError:
+            ref.update(availability='not_expanded', issue='binary source; read original with authorized file tools')
+        except OSError as exc:
+            ref.update(availability='access_failed', issue=str(exc))
+    return result
+
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='Read fixed Call claim material without adopting it')
+    parser.add_argument('context', type=Path)
+    parser.add_argument('--task-id')
+    parser.add_argument('--claim-id')
+    parser.add_argument('--status', choices=['unresolved', 'supported', 'refuted'])
+    parser.add_argument('--text', default='')
+    parser.add_argument('--version', type=int)
+    parser.add_argument('--source', type=int)
+    args = parser.parse_args()
+    try:
+        context = json.loads(args.context.read_text(encoding='utf-8'))
+        print(json.dumps(query_claims(context, task_id=args.task_id, claim_id=args.claim_id,
+                                     status=args.status, text=args.text, version=args.version,
+                                     source=args.source), ensure_ascii=False))
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))

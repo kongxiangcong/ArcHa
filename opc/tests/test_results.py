@@ -282,6 +282,122 @@ def test_external_cli_respects_controller_lock(make_project):
     assert not (root / ENTRY).exists()
 
 
+def test_worker_claim_query_preserves_counterevidence_and_reads_scoped_sources(make_project, engine_for):
+    import subprocess
+    from opc.core.tool_boundary import worker_policy, runner_argv
+    received = []
+    class QueryWorker(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            if received:
+                material = ctx['knowledge']
+                assert 'history' not in ctx and 'task_results' not in ctx
+                policy = worker_policy('designer', tree, log_dir, ctx)
+                policy_path = log_dir / 'query-policy.json'
+                policy_path.parent.mkdir(parents=True, exist_ok=True)
+                policy_path.write_text(json.dumps(policy))
+                def query(*args):
+                    result = subprocess.run(runner_argv(policy_path, material['command'] + list(args)),
+                                            cwd=tree, text=True, capture_output=True)
+                    assert result.returncode == 0, result.stderr
+                    return json.loads(result.stdout)
+                found = query('--status', 'supported', '--text', 'long')
+                assert found['scope']['task_ids'] == ['t-toy']
+                assert found['as_of'] == 'fixed_call_input'
+                assert len(found['claims']) == 1
+                claim = found['claims'][0]
+                assert claim['scope'] == 'long fields only'
+                assert claim['counterevidence'][0]['availability'] == 'not_expanded'
+                assert claim['unresolved'] == ['Repeat measurement needed']
+                assert found['omitted'] == 1
+                expanded = query('--claim-id', 'long', '--source', '0')
+                assert expanded['source']['availability'] == 'read'
+                assert 'metrics' in expanded['source']['content']
+                denied = subprocess.run(runner_argv(policy_path, material['command'] + ['--task-id', 'other-task']),
+                                        cwd=tree, text=True, capture_output=True)
+                assert denied.returncode != 0 and 'authorized' in denied.stderr
+            received.append(ctx)
+            return super().implement(p, ctx, tree, log_dir)
+    def register_claims(ctx):
+        source = dict(run_id=e.run_id, attempt=1, artifact='eval/evaluation.json')
+        return dict(plan(2), claims=[
+            dict(claim_id='general', statement='Less copying always helps', scope='all fields',
+                 status='unresolved', reason='Short fields unknown', evidence=[source]),
+            dict(claim_id='long', statement='Less copying helps long fields', scope='long fields only',
+                 status='supported', reason='Controlled long field observation', evidence=[source],
+                 counterevidence=[source], unresolved=['Repeat measurement needed'])])
+    e = use_sequence(engine_for(make_project()), QueryWorker([plan(1), register_claims, stop], [4, 5]))
+    assert e.run()['state'] == 'closed'
+    assert len(received) == 2
+    from opc.observer.adapter import ObserverAdapter
+    before = e.ledger.path.read_bytes()
+    observer = ObserverAdapter(e.root)
+    observed = observer.run(observer._id('run', e.run_id))['data']
+    source = observed['claims'][1]['counterevidence'][0]
+    assert source['availability'] == 'not_expanded'
+    assert 'metrics' in observer.content(source['artifact_id'])['data']['content']
+    assert e.ledger.path.read_bytes() == before
+
+
+def test_cross_task_claim_query_requires_named_material_dependency(make_project, engine_for):
+    from opc.tests.conftest import task
+    from opc.core.results import query_claims
+    def register_claims(ctx):
+        return dict(stop(ctx), claims=[
+            dict(claim_id=name, statement=name + ' proposition', scope='fixed inputs',
+                 status='supported', reason='Measurement supports scoped claim',
+                 evidence=[dict(run_id=origin.run_id, attempt=1, artifact='eval/evaluation.json')])
+            for name in ('shared', 'private')])
+    root = make_project()
+    origin = use_sequence(engine_for(root), Sequence([plan(1), register_claims], [4]))
+    origin.run()
+    def add_task(ident, dependencies):
+        path = root / '.opc/tasks' / ident / 'revisions/r0001/task.json'
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(task(task_id=ident, knowledge_dependencies=dependencies)))
+        from opc.tests.conftest import git
+        git(root, 'add', str(path.relative_to(root)))
+        git(root, 'commit', '-qm', 'add dependent task')
+        return engine_for(root, task_id=ident)
+    authorized = add_task('t-dependent', [{'task_id': 't-toy', 'claim_id': 'shared'}])
+    seq = Sequence([stop])
+    use_sequence(authorized, seq).run()
+    context = seq.contexts[0]
+    found = query_claims(context, task_id='t-toy')
+    assert [c['claim_id'] for c in found['claims']] == ['shared']
+    assert query_claims(context, claim_id='private')['claims'] == []
+    assert query_claims(context, claim_id='shared', source=0)['source']['availability'] == 'read'
+    denied = add_task('t-isolated', [])
+    seq2 = Sequence([stop])
+    use_sequence(denied, seq2).run()
+    with pytest.raises(ValueError, match='authorized'):
+        query_claims(seq2.contexts[0], task_id='t-toy')
+
+
+def test_claim_source_expansion_distinguishes_missing_and_access_denied(make_project, engine_for):
+    from opc.core.results import query_claims
+    def register_claim(ctx):
+        return dict(plan(2), claims=[dict(claim_id='copy', statement='Copying affects speed', scope='fixed inputs',
+                    status='supported', reason='Observation supports claim',
+                    evidence=[dict(run_id=e.run_id, attempt=1, artifact='eval/evaluation.json')])])
+    root = make_project()
+    seq = Sequence([plan(1), register_claim, stop], [4, 5])
+    e = use_sequence(engine_for(root), seq)
+    e.run()
+    context = seq.contexts[2]
+    ref = context['claims'][0]['evidence'][0]
+    source = Path(ref['source'])
+    source.unlink()
+    missing = query_claims(context, claim_id='copy', source=0)
+    assert missing['source']['availability'] == 'missing'
+    assert missing['claims'][0]['status'] == 'supported'
+    private = root / 'private.txt'
+    private.write_text('private sibling data')
+    source.symlink_to(private)
+    denied = query_claims(context, claim_id='copy', source=0)
+    assert denied['source']['availability'] == 'access_denied'
+    assert 'content' not in denied['source']
+
+
 @pytest.mark.parametrize('has_results', [False, True])
 def test_claim_review_keeps_exact_revision_after_later_run_updates(make_project, engine_for, monkeypatch, has_results):
     from opc.core.promote import promote
@@ -308,3 +424,20 @@ def test_claim_review_keeps_exact_revision_after_later_run_updates(make_project,
     assert review_path.read_bytes() == old_review
     assert json.loads(old_review)['task_results']['claims'][0]['version'] == 1
     assert not later.ledger.events(later.run_id, 'promotion_report')
+
+
+def test_fixed_claim_query_expands_explicit_historical_revision(make_project, engine_for):
+    from opc.core.results import query_claims
+    claim = dict(claim_id='copy', statement='Less copying always helps', scope='fixed fields',
+                 status='unresolved', reason='Need comparable evidence', evidence=[])
+    e = use_sequence(engine_for(make_project()), Sequence([
+        plan(1), dict(select_work=False, claims=[claim]),
+        dict(select_work=False, claims=[dict(claim, base_version=1, status='refuted', reason='Valid counterexample')]),
+        stop], [4]))
+    e.run()
+    context = [c['input']['context'] for c in e.ledger.calls(e.run_id) if c['role'] == 'expert'][-1]
+    current = query_claims(context, claim_id='copy')
+    assert current['claims'][0]['version'] == 2 and current['claims'][0]['status'] == 'refuted'
+    historical = query_claims(context, claim_id='copy', version=1)
+    assert historical['claims'][0]['status'] == 'unresolved'
+    assert historical['claims'][0]['reason'] == 'Need comparable evidence'

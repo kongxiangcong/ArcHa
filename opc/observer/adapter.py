@@ -786,6 +786,14 @@ class ObserverAdapter:
             task_runs = {r['run_id'] for r in knowledge['runs'] if r['task_id'] == row['task_id']}
             claim_history = [parsed(e['body']) for e in sorted(knowledge['events'], key=lambda e: e['seq'])
                              if e['run_id'] in task_runs and e['kind'] == 'claim_registered']
+            from ..core.results import claim_sources
+            claim_sources(claim_history, self.artifact_root, self.project.get('source_project_id'))
+            for claim in claim_history:
+                for source in claim.get('evidence', []) + claim.get('counterevidence', []):
+                    if source['availability'] != 'access_denied':
+                        artifact = self._register(source['source'], phase='loop', title=claim['claim_id'] + ' · source')
+                        source['artifact_id'] = artifact['id']
+                        artifacts.append(artifact)
             claims = current_claims(claim_history)
             result = dict(id=ident, claims=claims, claim_history=claim_history, compatibility=compatibility, control_request=control_events[-1]['kind'].removeprefix('control_') if control_events else 'run', source_run_id=row['run_id'], kind='preparation' if row.get('revision') == 'preparation' else 'execution',
 
