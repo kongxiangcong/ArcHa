@@ -72,6 +72,7 @@ class UsageView(DTO):
 
 class Requirement(DTO):
     id: str
+    required: bool = True
     text: str
     verification: str | None = None
     result: str

@@ -677,6 +677,10 @@ class Engine:
             capability = self.preflight(base_ref=base)
             if not capability["ok"]:
                 raise OPCError("preflight failed:\n  " + "\n  ".join(capability["problems"]))
+        policy = "required"
+        if bound is not None:
+            prior = self.bindings.artifact_root / self.project.project_id / self.task.task_id / bound["run_id"] / "frozen/baseline.json"
+            policy = json.loads(prior.read_text(encoding="utf-8")).get("target_policy", "advisory")
         tool_digest = self.toolchain_digest(base)
         self.run_id = self.ledger.create_run(
             task_id=self.task.task_id, revision=self.task.revision,
@@ -690,7 +694,7 @@ class Engine:
         write_json(self.artifact_dir() / "frozen" / "task.json", self.task.raw)
         write_json(self.artifact_dir() / "frozen" / "component.json", self.comp.raw)
         write_json(self.artifact_dir() / "frozen" / "baseline.json",
-                   {"commit": base, "evaluator_digest": rep["evaluator_digest"],
+                   {"commit": base, "target_policy": policy, "evaluator_digest": rep["evaluator_digest"],
                     "evaluator_files": rep["evaluator_files"], "toolchain_digest": tool_digest,
                     "source_commit": rep["base_commit"], "source_contract_digest": source_digest,
                     "brief_source": rep.get("brief_source"),
