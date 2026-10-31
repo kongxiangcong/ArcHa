@@ -1,15 +1,13 @@
 """`opc onboard`: metered scoped preparation and independent read-only review.
 
-The agent may write only under `.opc/`; any other change is reported and the
-command fails, so the user's source tree is never silently edited. The drafts
-are not trusted: `opc check` and `opc preflight` still decide readiness, and the
-user enables execution by hand.
+Preparation may write only under `.opc/`; inputs and execution-bound contracts
+remain protected. Receipts certify the selected candidate's checked contents;
+`opc check` and `opc preflight` still decide execution readiness.
 """
 from __future__ import annotations
 
 import hashlib
 import math
-import os
 from pathlib import Path
 from typing import Any
 
@@ -29,20 +27,6 @@ def _snapshot(root: Path) -> dict[str, str | None]:
     return out
 
 
-def _dsh_options() -> dict[str, Any]:
-    """Options for the dsh onboarding worker, taken from the documented env vars.
-
-    The onboarding call happens before any task exists, so it has no contract to
-    read a binary or DSH_HOME from; the environment is the only source.
-    """
-    options: dict[str, Any] = {}
-    if os.environ.get("OPC_DSH_BIN"):
-        options["binary"] = os.environ["OPC_DSH_BIN"]
-    if os.environ.get("OPC_DSH_HOME"):
-        options["dsh_home"] = os.environ["OPC_DSH_HOME"]
-    return options
-
-
 def _inputs_snapshot(root: Path) -> dict[str, str]:
     """Include clean and ignored inputs too; onboard must not rewrite its sources."""
     paths = [root / ".opc/archa.py", root / CONFIG_PATH]
@@ -52,79 +36,8 @@ def _inputs_snapshot(root: Path) -> dict[str, str]:
             for p in paths if p.is_file()}
 
 
-def _draft(project_root: Path, agent: str, brief: str | Path | None = None) -> dict[str, Any]:
-    root = project_root.resolve()
-    config = load_worker_config(root)
-    deployed = (root / ".opc/runtime/opc/cli.py").is_file() and (root / ".opc/archa.py").is_file()
-    if not (root / ".opc" / "project.json").exists() and not deployed:
-        raise OPCError("run `opc init --apply` first")
-    if agent not in ("codex", "dsh"):
-        raise OPCError("the onboarding agent must be codex or dsh")
-    brief_report = None
-    brief_text = ""
-    brief_bytes = b""
-    if brief is not None:
-        from .brief import load_brief
-        brief_report, brief_text = load_brief(root, brief)
-        brief_bytes = (root / brief_report["brief"]).read_bytes()
-        if not brief_report["ok"]:
-            raise OPCError("brief is not ready for drafting: " + "; ".join(brief_report["problems"]))
-    before = _snapshot(root)
-    if not (root / ".opc/project.json").exists():
-        from . import init
-        init(root, "research-project", root.name, "main", "t-main", True)
-        config = load_worker_config(root)
-    inputs_before = _inputs_snapshot(root)
-    guide = (HERE / "ONBOARDING.md").read_text(encoding="utf-8")
-    prompt = ("You are onboarding this repository to OPC. Follow the guide below. Fill the "
-              "TODOs in .opc/components/*.json, .opc/tasks/*/revisions/r0001/task.json, "
-              ".opc/eval/evaluate.py and .opc/context/*.md from what the repository actually "
-              "contains. Write ONLY under .opc/. List anything you could not determine in "
-              ".opc/README.md under 'Open items'.\n\n" + guide)
-    if brief_report is not None:
-        prompt += (
-            "\n\n## Discussion handoff\n"
-            "Draft the contract from the task brief below, following section 7 of the guide. "
-            "Keep execution_enabled=false.\n"
-            + "Source: " + str(brief_report) + "\n\n" + brief_text
-        )
-    # Both adapters expose the same _run(role, prompt, tree, log_dir, sandbox, schema)
-    # contract; dsh ignores the schema and is asked to write its answer as prose.
-    if agent == "dsh":
-        from ..adapters.dsh import DshWorker
-        worker = DshWorker(worker_options(config, "onboard", _dsh_options()))
-    else:
-        from ..adapters.codex import CodexWorker
-        worker = CodexWorker(worker_options(config, "onboard"))
-    log = root / ".opc" / "local" / "onboard"
-    call, text = worker._run("onboard", prompt, root, log, "workspace-write", None)
-    after = _snapshot(root)
-    inputs_after = _inputs_snapshot(root)
-    outside = sorted(p for p in set(before) | set(after)
-                     if before.get(p) != after.get(p) and not p.startswith(".opc/"))
-    protected = sorted(p for p in set(inputs_before) | set(inputs_after)
-                       if inputs_before.get(p) != inputs_after.get(p))
-    result = {"ok": call.ok and not outside and not protected, "call_id": call.call_id, "tokens": call.cost.tokens,
-              "error": call.error, "changed_outside_opc": outside, "summary": text[-1500:],
-              "changed_protected_opc": protected,
-              "next": ["review .opc/ drafts and resolve Open items",
-                       "when execution preparation is authorized, set execution_enabled=true",
-                       "opc check", "git add .opc && git commit", "opc preflight"]}
-    if brief_report is not None:
-        result["brief_input"] = brief_report
-        from ..core.model import write_json
-        write_json(log / "brief-input.json", brief_report)
-        (log / "task-brief.md").write_bytes(brief_bytes)
-    if outside:
-        result["error"] = "agent changed files outside .opc/: revert them before continuing"
-    elif protected:
-        result["error"] = ("agent changed runtime, research or worker configuration inputs: "
-                           "restore them before continuing")
-    return result
-
-
 def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
-            prepare: bool = True, task_id: str = "t-main", max_tokens: int | None = None,
+            prepare: bool = True, task_id: str = "t-main", revision: str | None = None, max_tokens: int | None = None,
             max_wall_seconds: float | None = None, prior_tokens: int | None = None, prior_wall_seconds: float | None = None, record_usage_only: bool = False,
             reconcile_usage: str | Path | None = None) -> dict[str, Any]:
     """Develop readiness within scope; never dispatch a formal experiment here.
@@ -152,9 +65,17 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
         if not report['ok']:
             raise OPCError('brief is not ready: ' + '; '.join(report['problems']))
         brief_identity = {'brief': report['brief'], 'sha256': report['sha256']}
+    # Resolve once before any worker dispatch. A newer draft cannot redirect preparation.
+    from ..core.config import REV
+    task_dir = root / ".opc/tasks" / task_id / "revisions"
+    if revision is None:
+        revisions = sorted(p.name for p in task_dir.glob("r[0-9][0-9][0-9][0-9]") if p.is_dir())
+        revision = revisions[-1] if revisions else "r0001"
+    if not REV.fullmatch(revision):
+        raise OPCError("revision must be rNNNN")
+    contract_path = task_dir / revision / "task.json"
     explicit = {key: value for key, value in (("max_tokens", max_tokens), ("max_wall_seconds", max_wall_seconds)) if value is not None}
-    contracts = sorted((root / ".opc/tasks" / task_id / "revisions").glob("r[0-9][0-9][0-9][0-9]/task.json"))
-    legacy = json.loads(contracts[-1].read_text(encoding="utf-8-sig")).get("budget", {}) if contracts else {}
+    legacy = json.loads(contract_path.read_text(encoding="utf-8-sig")).get("budget", {}) if contract_path.exists() else {}
     caps = validate_limits({k: legacy.get(k) for k in ("max_tokens", "max_wall_seconds")} | load_budget_config(root) | explicit)
     max_tokens, max_wall_seconds = caps.get("max_tokens"), caps.get("max_wall_seconds")
     ledger = Ledger(root / ".opc/local/ledger.sqlite3")
@@ -172,13 +93,13 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                          else "resolve observed external prerequisite" if state == "external_blocked"
                          else "continue scoped preparation" if state == "pending" else "reconcile usage/budget before dispatch")
             ledger.event(rid, "preparation", None, state=state, reason=reason,
-                         responsibility=owner, next=next_step, **fields)
+                         responsibility=owner, next=next_step, task_id=task_id, revision=revision, **fields)
             ledger.set_run_state(rid, "paused" if state == "ready" else "blocked", reason)
             return {"responsibility": "external prerequisite owner" if state == "external_blocked" else
                     "accounting owner" if state == "accounting_unknown" else
                     "budget owner" if state == "budget_exhausted" else "agent",
-                    "ok": state == "ready", "preparation": state, "error": reason if state != "ready" else "", "reason": reason,
-                    "next": "freeze, check/preflight, then run only if authorized" if state == "ready"
+                    "task": task_id, "revision": revision, "ok": state == "ready", "preparation": state, "error": reason if state != "ready" else "", "reason": reason,
+                    "next": "commit prepared files, check/preflight, then run only if authorized" if state == "ready"
                     else "continue scoped preparation after resolving the stated condition", **fields}
         if ((max_tokens is not None and prior_tokens is None) or
                 (max_wall_seconds is not None and prior_wall_seconds is None)):
@@ -234,7 +155,8 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
         except OPCError as exc:
             return finish("budget_exhausted", str(exc))
         if record_usage_only or reconcile_usage is not None:
-            previous_receipts = ledger.events(rid, "preparation")
+            previous_receipts = [e for e in ledger.events(rid, "preparation")
+                                 if e["body"].get("revision", revision) == revision]
             previous_receipt = previous_receipts[-1]["body"] if previous_receipts else {}
             state = previous_receipt.get("state", "pending")
             reason = "usage updated; " + previous_receipt.get("reason", "preparation remains")
@@ -245,13 +167,22 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                           files=previous_receipt.get("files", {}), evidence=previous_receipt.get("evidence", []))
         # Reuse the existing onboard worker and its scope checks; it develops .opc
         # tooling, not product code or formal device experiments.
-        candidates = ledger.events(rid, "preparation_candidate")
+        candidates = [e for e in ledger.events(rid, "preparation_candidate")
+                      if e["body"].get("revision", revision) == revision]
         candidate = candidates[-1]["body"] if candidates else None
         reuse = False
+        changed_inputs = None
+        if candidate and not all((root / rel).is_file() and
+                                 hashlib.sha256((root / rel).read_bytes()).hexdigest() == candidate.get("evidence_hashes", {}).get(rel)
+                                 for rel in candidate["evidence"]):
+            candidate = None
         if candidate:
             try:
-                reuse = (candidate["files"] == preparation_files(root, task_id)
-                         and candidate.get("brief_input") == brief_identity)
+                current_files = preparation_files(root, task_id, revision)
+                previous_files = candidate["files"]
+                changed_inputs = sorted(rel for rel in set(previous_files) | set(current_files)
+                                        if previous_files.get(rel) != current_files.get(rel))
+                reuse = (not changed_inputs and candidate.get("brief_input") == brief_identity)
             except OPCError:
                 pass
         if reuse:
@@ -263,7 +194,6 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             import uuid
             log = root / ".opc/local/onboard" / uuid.uuid4().hex
             evidence = candidate["evidence"]
-            reuse = all((root / rel).is_file() and hashlib.sha256((root / rel).read_bytes()).hexdigest() == candidate.get("evidence_hashes", {}).get(rel) for rel in evidence)
             timeout = remaining()
         if not reuse:
             started = time.monotonic()
@@ -273,9 +203,6 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             else:
                 from ..adapters.codex import CodexWorker as Worker
             worker = Worker(worker_options(config, "onboard", {"timeout_s": remaining()}))
-            if not (root / ".opc/project.json").exists():
-                from . import init
-                init(root, "research-project", root.name, "main", task_id, True)
             before = _snapshot(root)
             protected = _inputs_snapshot(root)
             frozen_tasks = {}
@@ -292,6 +219,7 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                       "wall_seconds": remaining()}) + "\n" +
                       (HERE / "ONBOARDING.md").read_text(encoding="utf-8") + "\n" +
                       f"Target task ID: {task_id}. Create its contract if missing; do not prepare another task.\n"
+                      f"Target revision: {revision}. Modify this candidate in place; preparation and review do not freeze it.\n"
                       "PREPARATION: Complete necessary evaluator integration and focused validation "
                       "and bounded capability probes within the confirmed task. Write only .opc except protected "
                       "runtime/research/workers inputs. Do not change user requirements or execute formal device "
@@ -302,6 +230,10 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                       "Return JSON {state: ready|pending|external_blocked, reason: text, evidence: [paths]}. "
                       "External blocking requires observed evidence and the specific unavailable prerequisite. " +
                       ("\nConfirmed brief:\n" + load_brief_text(root, brief) if brief else ""))
+            if changed_inputs is not None:
+                prompt += ("\nChanged preparation inputs: " + json.dumps(changed_inputs) +
+                           "\nRetain unaffected checks and evidence; rerun only checks affected by these changes. "
+                           "Prior evidence: " + json.dumps(candidate["evidence"]))
             call, text = worker._run("onboard", prompt, root, log, "workspace-write", None)
             ledger.charge(rid, None, "onboard", call.cost)
             ledger.charge(rid, None, "preparation overhead", Cost(max(0, time.monotonic()-started-call.cost.wall_seconds), 0, 0))
@@ -338,25 +270,20 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                 timeout = remaining()
             except OPCError as exc:
                 return finish("budget_exhausted", str(exc), evidence=evidence)
-            if frozen_tasks:
-                from ..core.config import TaskSpec
-                current = TaskSpec.load(root, task_id)
-                old = ledger.latest_run(task_id)
-                if old is not None and current.revision == old["revision"]:
-                    return finish("pending", "existing execution requires a new revision before preparing changed acceptance")
         from ..core.config import TaskSpec
-        prepared_task = TaskSpec.load(root, task_id)
-        files = preparation_files(root, task_id)
+        prepared_task = TaskSpec.load(root, task_id, revision)
+        files = preparation_files(root, task_id, revision)
         if len(files) < 3:
             return finish("pending", "current task evaluator files are missing", evidence=evidence)
+        if not reuse:
+            ledger.event(rid, "preparation_candidate", task_id=task_id, revision=revision, files=files, evidence=evidence, brief_input=brief_identity,
+                         evidence_hashes={rel: hashlib.sha256((root / rel).read_bytes()).hexdigest() for rel in evidence})
         if not prepared_task.raw.get("preparation_review", False):
             return finish("ready", "necessary integration checks recorded; commit prepared files before execution",
-                          files=files, evidence=evidence)
-        ledger.event(rid, "preparation_candidate", files=files, evidence=evidence, brief_input=brief_identity,
-                     evidence_hashes={rel: hashlib.sha256((root / rel).read_bytes()).hexdigest() for rel in evidence})
+                          files=files, evidence=evidence, brief_input=brief_identity)
         # Independent read-only inspection; cannot certify its own mutable drafts.
         review = Worker(worker_options(config, "reviewer", {"timeout_s": timeout}))
-        files = preparation_files(root, task_id)
+        files = preparation_files(root, task_id, revision)
         rc, reply = review._run("reviewer", "Review the task-required preparation checks and probe receipts. "
             "Verify against the confirmed brief without executing formal device experiments. "
             "Software checks prove tooling only. Accept only when independent acceptance is preserved. "
@@ -374,14 +301,14 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             accepted = rc.ok and json.loads(reply).get("verdict") == "accept"
         except ValueError:
             accepted = False
-        if not accepted or files != preparation_files(root, task_id):
+        if not accepted or files != preparation_files(root, task_id, revision):
             return finish("pending", "preparation review rejected or reviewed files changed", evidence=evidence)
         try:
             remaining()
         except OPCError as exc:
             return finish("budget_exhausted", str(exc), evidence=evidence)
         return finish("ready", "review accepted; commit the reviewed files before formal execution",
-                      files=files, evidence=evidence)
+                      files=files, evidence=evidence, brief_input=brief_identity)
 
 
 def load_brief_text(root: Path, brief) -> str:
@@ -392,12 +319,12 @@ def load_brief_text(root: Path, brief) -> str:
     return body
 
 
-def preparation_files(root: Path, task_id: str | None = None) -> dict[str, str]:
+def preparation_files(root: Path, task_id: str | None = None, revision: str | None = None) -> dict[str, str]:
     from ..core.config import TaskSpec, ComponentConfig
     from ..core.workspace import git
     if task_id is None:
         raise OPCError("preparation_files requires an explicit task")
-    task = TaskSpec.load(root, task_id)
+    task = TaskSpec.load(root, task_id, revision)
     component = ComponentConfig.load(root, task.component)
     patterns = component.evaluator_files + [task.path.relative_to(root).as_posix(),
                 ".opc/components/%s.json" % task.component]

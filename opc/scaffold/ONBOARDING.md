@@ -255,9 +255,9 @@ base_attempt 同样用于停止时的交付选版。run 停止不代表完成，
 
 ## 授权范围内的准备
 
-onboard --prepare 在同一预算内完成必要的 .opc 评价器接入和与改动相应的关键检查，保留必要有界探针回执；仅合同 preparation_review=true 时独立审核，当前任务相关摘要冻结在原 ledger。它永不启动正式实验。pending 由 agent 继续；external_blocked 须有实际失败证据；ready 仍需提交冻结文件和 check/preflight。正式执行继承准备消耗，不重置额度。prior-tokens 是已可靠计量的主流程/外部嵌套累计量（包含 cached input），不含命令已记录的 worker/reviewer；无上限时未知用量记录为 unknown 并继续，显式 token 限额下未知用量才停止新增派发。已运行的合同只能新 revision/run，不原地改变验收。
+onboard --prepare 在同一预算内完成必要的 .opc 评价器接入和与改动相应的关键检查，保留必要有界探针回执；仅合同 preparation_review=true 时独立审核，当前 Task/revision 的内容摘要及资源身份记入原 ledger。它永不启动正式实验。pending 由 agent 继续；external_blocked 须有实际失败证据；ready 仍需提交已检查文件和 check/preflight。正式执行继承准备消耗，不重置额度。prior-tokens 是已可靠计量的主流程/外部嵌套累计量（包含 cached input），不含命令已记录的 worker/reviewer；无上限时未知用量记录为 unknown 并继续，显式 token 限额下未知用量才停止新增派发。已运行的合同只能新 revision/run，不原地改变验收。
 
-每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用已有冻结回执。无 token/时间上限时可省略累计主流程用量并保留 unknown；相应显式上限才要求可靠累计量。
+每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用对应 revision 的准备回执。无 token/时间上限时可省略累计主流程用量并保留 unknown；相应显式上限才要求可靠累计量。
 
 ### 8.1 Codex 状态目录只读与用量对账恢复
 
@@ -313,10 +313,12 @@ CLI 已启动但没有完整 usage 回执时保留 unknown 与原始 worker_erro
 Codex 状态目录语义参考：[OpenAI environment variables](https://learn.chatgpt.com/docs/config-file/environment-variables)。
 
 
-准备默认仅执行与本次接入改动对应的必要检查，不固定建设全套负控或通用监控工具。ready 表示必要接入完成，不代表研究结论成立。合同显式设置 `preparation_review: true` 时保留独立准备审核；旧 ready 回执继续有效。冻结仅覆盖当前 task、component 及 evaluator_files（显式共享依赖也在这些 glob 中登记）。
+准备默认仅执行与本次接入改动对应的必要检查，不固定建设全套负控或通用监控工具。ready 表示必要接入完成，不代表研究结论成立。合同显式设置 `preparation_review: true` 时保留独立准备审核；旧 ready 回执继续有效。准备回执仅覆盖指定 Task/revision、component 及 evaluator_files（显式共享依赖也在这些 glob 中登记）。
 
 默认按用户任务与证据自主形成简报及合同，不为大纲确认、缺省预算或缺省计量停下来提问。仅用户明确上限时修改本地 budget；onboard 的 --max-tokens / --max-wall-seconds 是显式上限入口并写回该文件，未传时读取现有配置。未知主流程用量记录为 host_usage_unknown，不假报已完整计量。
 
 ## 目录式技能交接
 
 archa-task/archa-loop 接受具体任务目录，内部 CLI 继续使用 --brief 文件参数。准备时显式传入按简报路径绑定的 --task；相同目录摘要变化保留 task ID，按已有 revision 规则处理。不同专题的 R01 不代表同一执行任务。worker 必须以提示中的 Target task ID 为目标，缺少时创建其合同，不修改其他任务。交接在 DECISIONS.md 追加 brief 项目相对路径、SHA-256、实际 task ID、revision 与合同路径；索引不参与路由。旧式交接核对后补记，不改旧 ID。
+
+准备使用 `onboard --task <ID> --revision rNNNN` 明确交接对象；省略 revision 时仅在入口解析一次。候选在首次执行前可原地完善，准备和审核不冻结合同。修改后旧回执失效，仅补查受影响输入；已执行合同保持不变。默认状态摘要展示对象、就绪或阻塞原因，`status --details` 展开回执及来源。

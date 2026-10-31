@@ -88,9 +88,13 @@ def cmd_status(a) -> int:
         work = ledger.events(r["run_id"], "working_version")
         selected = ledger.events(r["run_id"], "selected_version")
         default_commit = champ[0] if champ else work[-1]["body"]["commit"] if work else r["base_commit"]
+        preparation = [x["body"] for x in ledger.events(r["run_id"], "preparation")][-1:]
+        if preparation and not a.details:
+            preparation = [{k: preparation[0].get(k) for k in ("task_id", "revision", "state", "reason")} |
+                           {"source": ".opc/local/ledger.sqlite3", "details": "opc status --details"}]
         rows.append({"run_id": r["run_id"], "task": r["task_id"], "revision": r["revision"],
                      "state": r["state"], "stop_reason": r["stop_reason"],
-                     "preparation": [x["body"] for x in ledger.events(r["run_id"], "preparation")][-1:],
+                     "preparation": preparation,
                      "control": ledger.control(r["run_id"]), "attempts": len(attempts),
                      "last": [{"n": x["attempt_no"], "outcome": x["outcome"] or x["state"],
                                "reason": (x["reason"] or "")[:100]} for x in attempts[-5:]],
@@ -174,7 +178,7 @@ def cmd_brief_check(a) -> int:
 
 def cmd_onboard(a) -> int:
     from .scaffold.onboard import onboard
-    report = onboard(Path(a.project), a.agent, brief=a.brief, prepare=a.prepare, task_id=a.task,
+    report = onboard(Path(a.project), a.agent, brief=a.brief, prepare=a.prepare, task_id=a.task, revision=a.revision,
                      max_tokens=a.max_tokens, max_wall_seconds=a.max_wall_seconds, prior_tokens=a.prior_tokens, prior_wall_seconds=a.prior_wall_seconds, record_usage_only=a.record_usage, reconcile_usage=a.reconcile_usage)
     _print(report)
     return 0 if report["ok"] else 1
@@ -206,6 +210,7 @@ def main(argv=None) -> int:
     p.add_argument("--reconcile-usage", help="evidence-backed JSON missing-usage receipt; record only, no worker dispatch")
     p.add_argument("--record-usage", action="store_true", help="update cumulative host usage without dispatching workers")
     p.add_argument("--task", default="t-main")
+    p.add_argument("--revision", help="candidate revision to prepare (resolved once if omitted)")
     p.add_argument("--max-tokens", type=int, help="explicit token cap, saved in local workers.json; default unlimited")
     p.add_argument("--max-wall-seconds", type=float, help="explicit time cap, saved in local workers.json; default unlimited")
     p.add_argument("--prior-wall-seconds", type=float)
@@ -232,7 +237,8 @@ def main(argv=None) -> int:
     p.add_argument("--repair-promotion", help="registered failed report to continue from selected candidate")
     p.add_argument("--review", choices=["codex", "dsh"])
     p.add_argument("--max-now", type=int, default=None, help="attempts in this session")
-    add("status", cmd_status, task_required=False)
+    p = add("status", cmd_status, task_required=False)
+    p.add_argument("--details", action="store_true", help="include preparation evidence and sources")
     for c in ("pause", "stop"):
         p = add(c, cmd_control)
         p.set_defaults(command=c)

@@ -93,6 +93,12 @@ class Engine:
         return Workspaces(self.root, self.bindings.workspace_root / self.project.project_id /
                           self.task.task_id / (run_id or self.run_id or "preflight"))
 
+    def preparation_receipt(self) -> dict[str, Any]:
+        """Select evidence for this execution contract, retaining legacy receipts."""
+        events = self.ledger.events(self.preparation, "preparation") if self.preparation else []
+        matching = [e["body"] for e in events if e["body"].get("revision", self.task.revision) == self.task.revision]
+        return matching[-1] if matching else {}
+
     # -------------------------------------------------------------- preflight
     def static_check(self) -> dict[str, Any]:
         """Everything that can be checked without running project code."""
@@ -104,22 +110,31 @@ class Engine:
             base = rev_parse(self.root, self.task.base_ref)
         except OPCError as exc:
             return {"ok": False, "problems": [str(exc)], "warnings": warnings}
+        digest, files = self.evaluator_digest(base)
         if self.preparation:
-            events = self.ledger.events(self.preparation, "preparation")
-            receipt = events[-1]["body"] if events else {}
+            receipt = self.preparation_receipt()
             if self.accounting_required() and self.ledger.unresolved_accounting(self.preparation):
                 problems.append("preparation accounting incomplete; no new dispatch")
             if receipt.get("state") != "ready":
                 problems.append("preparation not ready: " + receipt.get("reason", "unmetered draft"))
             else:
-                for rel, digest in receipt.get("files", {}).items():
-                    if digest.startswith("git-blob:"):
-                        actual = "git-blob:" + str(git("rev-parse", base + ":" + rel, cwd=self.root)).strip()
-                    else:
-                        # Receipts created before Git-normalized preparation hashes.
-                        data = git("show", base + ":" + rel, cwd=self.root, binary=True)
-                        actual = hashlib.sha256(data).hexdigest()
-                    if actual != digest:
+                checked_files = receipt.get("files", {})
+                if receipt.get("revision"):
+                    current_files = set(files) | {self.task.path.relative_to(self.root).as_posix()}
+                    if current_files != set(checked_files):
+                        problems.append("prepared inputs changed since review; rerun affected preparation checks")
+                for rel, checked_digest in checked_files.items():
+                    try:
+                        if checked_digest.startswith("git-blob:"):
+                            actual = "git-blob:" + str(git("rev-parse", base + ":" + rel, cwd=self.root)).strip()
+                        else:
+                            # Receipts created before Git-normalized preparation hashes.
+                            data = git("show", base + ":" + rel, cwd=self.root, binary=True)
+                            actual = hashlib.sha256(data).hexdigest()
+                    except OPCError:
+                        problems.append("prepared input missing from execution source: " + rel)
+                        continue
+                    if actual != checked_digest:
                         problems.append("prepared acceptance changed since review: " + rel)
         dirty = dirty_paths(self.root)
         from .config import denied
@@ -132,7 +147,6 @@ class Engine:
         if edit_dirty:
             warnings.append("uncommitted edits in editable paths are NOT part of the baseline: "
                             + ", ".join(edit_dirty[:8]))
-        digest, files = self.evaluator_digest(base)
         if len(files) <= 1:
             problems.append("evaluator_files match no committed file at %s" % base[:12])
         editable_hits = tracked_digest(self.root, base, self.comp.editable)[1]
@@ -485,8 +499,7 @@ class Engine:
             if b.max_usd is not None and (not s["usd_known"] or s["usd"] >= b.max_usd):
                 raise BudgetExhausted("max_usd", "delivery budget unavailable")
         if self.preparation:
-            receipts = self.ledger.events(self.preparation, "preparation")
-            if not receipts or receipts[-1]["body"].get("state") != "ready":
+            if self.preparation_receipt().get("state") != "ready":
                 raise OPCError("preparation is not ready; no formal dispatch")
         if self.preparation and self.accounting_required() and self.ledger.unresolved_accounting(self.preparation):
             raise OPCError("usage accounting incomplete; no new dispatch")

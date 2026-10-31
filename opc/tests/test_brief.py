@@ -1,7 +1,6 @@
 """Discussion handoff: validate before calling a worker, preserve exact input."""
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -9,7 +8,10 @@ from opc.cli import main
 from opc.core.model import OPCError
 from opc.scaffold import init
 from opc.scaffold.brief import SECTIONS, load_brief
-from opc.scaffold.onboard import _draft as onboard
+from opc.scaffold.onboard import onboard
+from opc.adapters.worker import WorkerCall
+from opc.core.model import Cost
+from opc.core.ledger import Ledger
 
 
 def brief_project(tmp_path):
@@ -71,27 +73,31 @@ def test_outside_source_and_brief_rejected(tmp_path):
         load_brief(root, "link.md")
 
 
-def test_onboard_consumes_and_records_brief(tmp_path, monkeypatch):
-    body = brief_project(tmp_path)
-    init(tmp_path, "demo", "Demo", "main", "t-main", True)
-    monkeypatch.setattr("opc.scaffold.onboard._snapshot", lambda root: {})
+def test_onboard_consumes_and_records_brief(make_project, monkeypatch):
+    root = make_project()
+    body = brief_project(root)
     calls = []
 
     def run(self, role, prompt, tree, log, sandbox, schema):
         calls.append(prompt)
         assert body in prompt
-        assert "context_files" in prompt and "blocking Open" in prompt
-        return SimpleNamespace(ok=True, call_id="fake", cost=SimpleNamespace(tokens=4), error=""), "drafted"
+        log.mkdir(parents=True)
+        (log / "checks.txt").write_text("integration checked", encoding="utf-8")
+        return WorkerCall(role, True, Cost(0, 4, None), extra={"usage_complete": True}), json.dumps(
+            {"state": "ready", "evidence": [(log / "checks.txt").relative_to(root).as_posix()]})
 
     monkeypatch.setattr("opc.adapters.codex.CodexWorker._run", run)
-    result = onboard(tmp_path, "codex", "task-brief.md")
-    assert result["ok"] and result["brief_input"]["map"] == "map.md"
-    assert (tmp_path / ".opc/local/onboard/task-brief.md").read_text(encoding="utf-8") == body
-    metadata = json.loads((tmp_path / ".opc/local/onboard/brief-input.json").read_text(encoding="utf-8"))
-    assert metadata["sha256"] == result["brief_input"]["sha256"]
-    (tmp_path / "task-brief.md").write_text(body.replace("ready-for-onboard", "draft"), encoding="utf-8")
+    kw = dict(task_id="t-toy", revision="r0001", prior_tokens=0, prior_wall_seconds=0)
+    result = onboard(root, "codex", "task-brief.md", **kw)
+    assert result["ok"] and result["brief_input"]["brief"] == "task-brief.md"
+    ledger = Ledger(root / ".opc/local/ledger.sqlite3")
+    receipt = ledger.events(ledger.runs()[0]["run_id"], "preparation")[-1]["body"]
+    assert receipt["brief_input"] == result["brief_input"]
+    # The original Brief and ledger association are enough; no copied draft history.
+    assert not list((root / ".opc/local/onboard").glob("**/task-brief.md"))
+    (root / "task-brief.md").write_text(body.replace("ready-for-onboard", "draft"), encoding="utf-8")
     with pytest.raises(OPCError, match="not ready"):
-        onboard(tmp_path, "codex", "task-brief.md")
+        onboard(root, "codex", "task-brief.md", **kw)
     assert len(calls) == 1
 
 
@@ -101,26 +107,24 @@ def test_cli_propagates_onboard_failure(monkeypatch):
 
 
 @pytest.mark.parametrize("action", ["edit", "delete"])
-def test_onboard_rejects_rewriting_research_inputs(tmp_path, monkeypatch, action):
-    init(tmp_path, "demo", "Demo", "main", "t-main", True)
-    research = tmp_path / ".opc/research"
+def test_onboard_rejects_rewriting_research_inputs(make_project, monkeypatch, action):
+    root = make_project()
+    research = root / ".opc/research"
     research.mkdir()
     source = research / "evidence.md"
     source.write_text("original evidence", encoding="utf-8")
-    # Input protection must work even when git dirty-path reporting omits these files.
-    monkeypatch.setattr("opc.scaffold.onboard._snapshot", lambda root: {})
 
-    def run(*args):
+    def run(self, role, prompt, tree, log, sandbox, schema):
         if action == "edit":
             source.write_text("changed evidence", encoding="utf-8")
         else:
             source.unlink()
-        return SimpleNamespace(ok=True, call_id="fake", cost=SimpleNamespace(tokens=0), error=""), "done"
+        return WorkerCall(role, True, Cost(0, 0, None), extra={"usage_complete": True}), "done"
 
     monkeypatch.setattr("opc.adapters.codex.CodexWorker._run", run)
-    result = onboard(tmp_path, "codex")
+    result = onboard(root, "codex", task_id="t-toy", prior_tokens=0, prior_wall_seconds=0)
     assert not result["ok"]
-    assert result["changed_protected_opc"] == [".opc/research/evidence.md"]
+    assert "scope violation" in result["reason"]
 
 
 def test_direct_task_source_without_map(tmp_path):
