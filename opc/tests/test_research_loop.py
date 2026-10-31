@@ -1485,6 +1485,7 @@ def test_invalid_work_adoption_rejects_whole_decision(make_project, engine_for, 
 
 @pytest.mark.parametrize('call_ok', [True, False])
 def test_designer_invalid_adoption_is_visible_and_not_registered(make_project, engine_for, call_ok):
+    import re
     class InvalidAdoption(Sequence):
         def implement(self, p, ctx, tree, log_dir):
             call = super().implement(p, ctx, tree, log_dir)
@@ -1496,7 +1497,7 @@ def test_designer_invalid_adoption_is_visible_and_not_registered(make_project, e
     e.run()
     actual = e.attempt_records()[0]
     assert actual['outcome'] == 'worker_failed'
-    assert 'unknown adopted claim' in actual['reason']
+    assert re.search(r'unknown.*claim.*(?:identity|version)', actual['reason'])
     if not call_ok:
         assert 'Actual Designer execution failed' in actual['execution']['error']
     assert actual['adopted_claims'] == []

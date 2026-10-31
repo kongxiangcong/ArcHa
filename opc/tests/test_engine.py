@@ -294,7 +294,7 @@ def test_next_expert_receives_original_plan_and_measured_evidence(make_project, 
         prompt = expert_prompt(ctx, plain_text_reply=plain_text)
         assert 'Read research.json' in prompt
         assert json.dumps(ctx['history'], ensure_ascii=False, indent=2) not in prompt
-        assert 'does not by itself establish its proposed mechanism' in prompt
+        assert 'is not mechanism evidence' in prompt
 
 
 def test_failed_gate_history_preserves_failure_without_inventing_metrics(make_project, engine_for):
