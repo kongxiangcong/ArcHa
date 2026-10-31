@@ -66,7 +66,7 @@ python3 <project>/.opc/archa.py run -p <project> --task <task-id> --revision <re
 
 ## 自动终验与修复消费顺序
 
-`run --deliver` 在自然结束后终验明确的 source run。读取返回的 delivery.complete；只有 true 才报告任务完成。未产生终验或 delivery_error 均为未完成。
+`run --deliver` 仅在 Expert 明确返回 `finish=request_acceptance` 时，对所选 source run 终验。`finish=close_incomplete`（以及旧 `exhausted=true`）保存缺口、停止依据与有依据的重开条件后结束，不因 Run 关闭派发终验。读取返回的 delivery.complete；只有 true 才报告任务完成。未产生终验或 delivery_error 均为未完成。
 
 1. 普通可修复 findings：用 `run ... --repair-promotion <report_dir>/report.json --deliver` 从失败报告的 selected commit 续接，沿用同 task 累计预算，不重启旧 run、不创建新 task。具体 findings 进入新 run direction。
 2. 仅 reviewer 不可用/输出格式错误：用 `promote ... --source-run <run-id> --review <configured-provider>` 重试审核，不调用 designer。沿用 max_consecutive_infra 和总预算；达到限制停止并报告未完成。
