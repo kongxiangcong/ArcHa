@@ -75,9 +75,10 @@ _SOURCE_SCHEMA = {"type": "object", "additionalProperties": False,
 PLAN_SCHEMA["properties"]["claims"] = {"type": "array", "items": {
     "type": "object", "additionalProperties": False,
     "required": ["claim_id", "statement", "scope", "status", "reason", "evidence",
-                 "counterevidence", "unresolved", "related_claims"],
+                 "counterevidence", "unresolved", "related_claims", "base_version"],
     "properties": {
         "claim_id": {"type": "string"}, "statement": {"type": "string"},
+        "base_version": {"type": ["integer", "null"]},
         "scope": {"type": "string"}, "reason": {"type": "string"},
         "status": {"type": "string", "enum": ["unresolved", "supported", "refuted"]},
         "evidence": {"type": "array", "items": _SOURCE_SCHEMA},
