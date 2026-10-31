@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -163,7 +164,7 @@ def test_pause_then_resume(make_project, engine_for):
     assert s["run_id"] == e.run_id and s["state"] == "closed" and s["result"] == "target_met"
 
 
-def test_crash_mid_attempt_is_reconciled_as_abandoned(make_project, engine_for):
+def test_crash_without_reliable_execution_facts_blocks_without_abandoning(make_project, engine_for):
     root = make_project()
     e = engine_for(root)
     e.run(max_attempts_now=0)
@@ -171,9 +172,11 @@ def test_crash_mid_attempt_is_reconciled_as_abandoned(make_project, engine_for):
     n = e.ledger.begin_attempt(e.run_id, champ, None)
     e.ledger.update_attempt(e.run_id, n, "designed", patch_sha="x", files=["params.json"])
     e2 = engine_for(root)
-    e2.run()
+    with pytest.raises(OPCError, match="cannot resume"):
+        e2.run()
     first = e2.ledger.attempts(e2.run_id)[0]
-    assert first["outcome"] == Outcome.ABANDONED.value and "designed" in first["reason"]
+    assert first["outcome"] is None and first["state"] == "designed"
+    assert e2.summary()["state"] == "blocked"
 
 
 def test_crash_after_ref_move_recovers_champion(make_project, engine_for):
@@ -642,3 +645,98 @@ def test_resume_rejects_changed_frozen_permissions_without_rewriting_history(mak
         engine_for(root).run(max_attempts_now=0)
     assert e.ledger.run(first['run_id'])['revision'] == 'r0001'
     assert len(e.ledger.runs()) == 1
+
+
+def test_saved_call_receipt_recovers_without_reexecution_or_double_charge(make_project, engine_for, monkeypatch):
+    root = make_project()
+    e = engine_for(root)
+    e.run(max_attempts_now=0)
+    complete = e.ledger.finish_call
+    interrupted = []
+    def crash(call_id, result):
+        if result.get('role') == 'designer' and not interrupted:
+            interrupted.append(call_id)
+            raise RuntimeError('receipt saved, ledger not committed')
+        return complete(call_id, result)
+    monkeypatch.setattr(e.ledger, 'finish_call', crash)
+    with pytest.raises(RuntimeError, match='receipt saved'):
+        e.run(max_attempts_now=1)
+    old = e.ledger.calls(e.run_id)
+    designer = [c for c in old if c['role'] == 'designer'][0]
+    assert designer['state'] == 'dispatched'
+    assert Path(designer['input']['tree']).exists()
+    e2 = engine_for(root)
+    e2.run(max_attempts_now=0)
+    recovered = [c for c in e2.ledger.calls(e2.run_id) if c['role'] == 'designer']
+    assert len(recovered) == 1 and recovered[0]['state'] == 'completed'
+    before = e2.ledger.totals(e2.run_id)
+    engine_for(root).run(max_attempts_now=0)
+    assert e2.ledger.totals(e2.run_id) == before
+    assert len(e2.ledger.attempts(e2.run_id)) == 1
+    assert e2.ledger.attempts(e2.run_id)[0]['outcome'] == Outcome.IMPROVEMENT.value
+
+
+def test_dispatch_without_terminal_receipt_is_not_reissued(make_project, engine_for, monkeypatch):
+    root = make_project()
+    e = engine_for(root)
+    e.run(max_attempts_now=0)
+    def disappeared(*args, **kwargs):
+        raise KeyboardInterrupt
+    expert, _ = e.workers(e.workspaces().checkout('loader', e.working_commit()))
+    monkeypatch.setattr(expert, 'propose', disappeared)
+    e.run(max_attempts_now=1)
+    calls = e.ledger.calls(e.run_id)
+    assert len(calls) == 2  # baseline evaluation plus Expert dispatch
+    assert calls[-1]['state'] == 'dispatched'
+    e2 = engine_for(root)
+    with pytest.raises(OPCError, match='execution unknown'):
+        e2.run()
+    assert len(e2.ledger.calls(e2.run_id)) == 2
+    assert e2.ledger.attempts(e2.run_id)[0]['outcome'] is None
+
+
+def test_evaluator_start_failure_retries_same_attempt_with_new_call(make_project, engine_for, monkeypatch):
+    root = make_project()
+    e = engine_for(root)
+    e.run(max_attempts_now=0)
+    from opc.domains.command import CommandDomain
+    original = CommandDomain.evaluate
+    failed = []
+    def fail_once(self, tree, out, repeats):
+        from opc.domain import Evaluation
+        if not failed:
+            failed.append(True)
+            return Evaluation([], failure=Outcome.INFRA, reason='evaluator could not start')
+        return original(self, tree, out, repeats)
+    monkeypatch.setattr(CommandDomain, "evaluate", fail_once)
+    first = e.run(max_attempts_now=1)
+    assert first['state'] == 'blocked'
+    assert e.ledger.attempts(e.run_id)[0]['outcome'] is None
+    old = e.ledger.calls(e.run_id)
+    e2 = engine_for(root)
+    e2.run(max_attempts_now=0)
+    calls = e2.ledger.calls(e2.run_id)
+    assert len(e2.ledger.attempts(e2.run_id)) == 1
+    assert e2.ledger.attempts(e2.run_id)[0]['outcome'] == Outcome.IMPROVEMENT.value
+    assert len([c for c in calls if c['role'] == 'designer']) == 1
+    assert len(calls) == len(old) + 1
+    assert len({c['call_id'] for c in calls}) == len(calls)
+
+
+def test_saved_baseline_receipt_is_reused_before_champion_registration(make_project, engine_for, monkeypatch):
+    root = make_project()
+    e = engine_for(root)
+    record = e.ledger.set_champion
+    def interrupted(*args, **kwargs):
+        raise RuntimeError('baseline measured before champion registration')
+    monkeypatch.setattr(e.ledger, 'set_champion', interrupted)
+    with pytest.raises(RuntimeError, match='baseline measured'):
+        e.run(max_attempts_now=0)
+    calls = e.ledger.calls(e.run_id)
+    assert len(calls) == 1 and calls[0]['role'] == 'evaluator'
+    used = e.ledger.totals(e.run_id)
+    e2 = engine_for(root)
+    e2.run(max_attempts_now=0)
+    assert len(e2.ledger.calls(e2.run_id)) == 1
+    assert e2.ledger.totals(e2.run_id) == used
+    assert e2.ledger.champion(e2.run_id) is not None

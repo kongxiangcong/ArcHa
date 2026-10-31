@@ -41,6 +41,10 @@ CREATE TABLE IF NOT EXISTS charges (
   id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, attempt_no INTEGER,
   role TEXT NOT NULL, wall_seconds REAL NOT NULL, tokens INTEGER NOT NULL, usd REAL,
   usd_known INTEGER NOT NULL, at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS calls (
+  call_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, attempt_no INTEGER, role TEXT NOT NULL,
+  state TEXT NOT NULL, input TEXT NOT NULL, receipt_path TEXT NOT NULL,
+  session_id TEXT, result TEXT, created_at TEXT NOT NULL, finished_at TEXT);
 CREATE TABLE IF NOT EXISTS control (
   run_id TEXT PRIMARY KEY, command TEXT NOT NULL, at TEXT NOT NULL);
 """
@@ -205,8 +209,6 @@ class Ledger:
         import math
         if self._lock_fd is None:
             raise OPCError("accounting reconciliation requires the project writer lock")
-        if not run_id.startswith("preparation:") and self.run(run_id)["revision"] != "preparation":
-            raise OPCError("accounting reconciliation requires a preparation run")
         unknown = {e["seq"] for e in self.events(run_id, "accounting_unknown")}
         resolved = {e["body"]["event_seq"]: e["body"]
                     for e in self.events(run_id, "accounting_reconciled")}
@@ -219,7 +221,7 @@ class Ledger:
             seq = entry.get("event_seq")
             tokens, wall = entry.get("additional_tokens"), entry.get("additional_wall_seconds")
             if type(seq) is not int or seq not in unknown or seq in seen:
-                raise OPCError("reconciliation event_seq must name a unique unknown event in this preparation")
+                raise OPCError("reconciliation event_seq must name a unique unknown event in this scope")
             seen.add(seq)
             if (type(tokens) is not int or tokens < 0 or type(wall) not in (int, float)
                     or not math.isfinite(wall) or wall < 0):
@@ -250,6 +252,52 @@ class Ledger:
                            "VALUES (?,?,?,?,NULL,0,?)", (run_id, "accounting reconciliation",
                            body["additional_wall_seconds"], body["additional_tokens"], now()))
                 self._event(db, run_id, "accounting_reconciled", None, body)
+
+    # ------------------------------------------------------------------- calls
+    def begin_call(self, run_id: str, attempt: int | None, role: str,
+                   inputs: dict[str, Any], receipt_path: str) -> str:
+        call_id = "call-" + uuid.uuid4().hex
+        with self.tx() as db:
+            db.execute("INSERT INTO calls (call_id, run_id, attempt_no, role, state, input, "
+                       "receipt_path, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                       (call_id, run_id, attempt, role, "dispatched",
+                        json.dumps(inputs, default=str), receipt_path, now()))
+            self._event(db, run_id, "call_dispatched", attempt,
+                        dict(call_id=call_id, role=role, inputs=inputs, receipt_path=receipt_path))
+        return call_id
+
+    def calls(self, run_id: str) -> list[dict[str, Any]]:
+        rows = self.db.execute("SELECT * FROM calls WHERE run_id=? ORDER BY rowid", (run_id,))
+        return [{**dict(row), "input": json.loads(row["input"]),
+                 "result": json.loads(row["result"]) if row["result"] else None} for row in rows]
+
+    def finish_call(self, call_id: str, result: dict[str, Any]) -> None:
+        """One receipt, charge and completion in the same ledger transaction."""
+        with self.tx() as db:
+            row = db.execute("SELECT * FROM calls WHERE call_id=?", (call_id,)).fetchone()
+            if row is None:
+                raise OPCError("unknown Call " + call_id)
+            if row["result"] is not None:
+                if json.loads(row["result"]) != result:
+                    raise OPCError("Call already completed with a different receipt: " + call_id)
+                return
+            state = result.get("state", "completed")
+            cost = result["cost"]
+            db.execute("UPDATE calls SET state=?, session_id=?, result=?, finished_at=? WHERE call_id=?",
+                       (state, result.get("session_id"), json.dumps(result, default=str), now(), call_id))
+            db.execute("INSERT INTO charges (run_id, attempt_no, role, wall_seconds, tokens, usd, "
+                       "usd_known, at) VALUES (?,?,?,?,?,?,?,?)",
+                       (row["run_id"], row["attempt_no"], row["role"], cost["wall_seconds"],
+                        cost["tokens"], cost["usd"], int(cost["usd"] is not None), now()))
+            self._event(db, row["run_id"], "worker_call" if row["role"] != "evaluator" else "evaluation_call",
+                        row["attempt_no"], dict(role=row["role"], call_id=call_id,
+                        session_id=result.get("session_id"), state=state, ok=result.get("ok"),
+                        tokens=cost["tokens"], seconds=cost["wall_seconds"],
+                        error=result.get("error", ""), log_dir=result.get("log_dir", "")))
+            if not result.get("usage_complete", True):
+                self._event(db, row["run_id"], "accounting_unknown", row["attempt_no"],
+                            dict(call_id=call_id, reason="usage unavailable", charged=cost,
+                                 log_dir=result.get("log_dir", ""), error=result.get("error", "")))
 
     # ---------------------------------------------------------------- attempts
     def next_attempt_no(self, run_id: str) -> int:

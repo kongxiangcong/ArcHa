@@ -159,6 +159,56 @@ class Engine:
         return ({"state": "legacy_unknown", "reason": "legacy preparation receipt lacks a unique checked contract identity"}
                 if unidentified else {})
 
+    def dispatch_call(self, role: str, attempt: int | None, inputs: dict[str, Any],
+                      tree: Path, log_dir: Path, invoke: Callable[[], WorkerCall]) -> WorkerCall:
+        """Persist dispatch before execution and receipt before atomic accounting.
+
+        The unique log directory identifies this dispatch on replay; a deliberate
+        retry supplies a new directory and therefore receives a new ArcHa Call ID.
+        """
+        receipt = log_dir / "receipt.json"
+        previous = [c for c in self.ledger.calls(self.run_id)
+                    if c["receipt_path"] == str(receipt)]
+        if previous:
+            record = previous[-1]
+            if record["result"] is None:
+                if not receipt.is_file():
+                    raise OPCError("Call %s execution unknown; inspect running processes and original logs before retry" % record["call_id"])
+                self.ledger.finish_call(record["call_id"], json.loads(receipt.read_text(encoding="utf-8")))
+                record = next(c for c in self.ledger.calls(self.run_id) if c["call_id"] == record["call_id"])
+            result = record["result"]
+            return WorkerCall(role, result["ok"], Cost(**result["cost"]),
+                              call_id=record["call_id"], output=result.get("output"),
+                              error=result.get("error", ""), exhausted=result.get("exhausted", False),
+                              log_dir=result.get("log_dir", str(log_dir)), extra=result.get("extra", {}))
+        call_id = self.ledger.begin_call(self.run_id, attempt, role,
+                    {**inputs, "tree": str(tree), "owner_pid": __import__("os").getpid()}, str(receipt))
+        call = invoke()
+        session_id = call.extra.get("session_id") or (call.call_id if call.call_id != "scripted" else None)
+        call.call_id = call_id
+        if session_id:
+            call.extra["session_id"] = session_id
+        kind = self.worker_spec(role if role in self.resolved_workers else "expert").kind
+        usage_complete = call.extra.get("usage_complete", kind == "scripted" or role == "evaluator")
+        result = dict(role=role, ok=call.ok, cost=call.cost.as_dict(), session_id=session_id,
+                      output=call.output, error=call.error, exhausted=call.exhausted,
+                      log_dir=call.log_dir or str(log_dir), extra=call.extra,
+                      usage_complete=usage_complete,
+                      state="not_started" if call.extra.get("not_started") else "completed")
+        write_json(receipt, result)
+        self.ledger.finish_call(call_id, result)
+        return call
+
+    def reconcile_calls(self) -> None:
+        for call in self.ledger.calls(self.run_id):
+            if call["result"] is not None:
+                continue
+            path = Path(call["receipt_path"])
+            if path.is_file():
+                self.ledger.finish_call(call["call_id"], json.loads(path.read_text(encoding="utf-8")))
+            else:
+                raise OPCError("Call %s execution unknown; no reliable terminal receipt; retain workspace and inspect execution" % call["call_id"])
+
     # -------------------------------------------------------------- preflight
     def static_check(self) -> dict[str, Any]:
         """Everything that can be checked without running project code."""
@@ -298,7 +348,8 @@ class Engine:
         return frozenset(optional - mandatory)
 
     def evaluate_commit(self, ws: Workspaces, commit: str, patch: str, out: Path,
-                        name: str, *, fresh: bool = False, delivery: bool = False) -> tuple[Evaluation, Measurements | None, Path]:
+                        name: str, *, fresh: bool = False, delivery: bool = False,
+                        attempt: int | None = None) -> tuple[Evaluation, Measurements | None, Path]:
         """Evaluate `commit` (+ `patch`) in a fresh tree with the frozen gates."""
         tree = ws.checkout(name, commit)
         apply_patch(tree, patch)
@@ -310,15 +361,28 @@ class Engine:
         content = tracked_digest(self.root, tree_id, ["**"], self.comp.scratch + [
             ".opc/tasks/**", ".opc/context/**", ".opc/*.md", ".opc/README.md"])[0]
         ev = None if fresh or delivery else self._cached(content, digest, tool_digest)
-        if ev is None:
-            from ..domains.command import CommandDomain
-            if delivery and isinstance(dom, CommandDomain):
-                ev = dom.evaluate(tree, out, self.task.acceptance.repeats,
-                                  diagnostic_gates=self.diagnostic_gates())
-            else:
-                ev = dom.evaluate(tree, out, self.task.acceptance.repeats)
-            if not delivery:
-                self._store(content, digest, tool_digest, ev)
+        def evaluate() -> WorkerCall:
+            value = ev
+            if value is None:
+                from ..domains.command import CommandDomain
+                if delivery and isinstance(dom, CommandDomain):
+                    value = dom.evaluate(tree, out, self.task.acceptance.repeats,
+                                         diagnostic_gates=self.diagnostic_gates())
+                else:
+                    value = dom.evaluate(tree, out, self.task.acceptance.repeats)
+            data = {**asdict(value), "gates": [g.as_dict() for g in value.gates],
+                    "failure": value.failure.value if value.failure else None}
+            return WorkerCall("evaluator", True, Cost(value.seconds, 0, 0.0), output=data)
+        if self.run_id:
+            call = self.dispatch_call("evaluator", attempt,
+                    dict(commit=commit, patch=patch, fresh=fresh, delivery=delivery), tree, out, evaluate)
+        else:
+            call = evaluate()
+        data = call.output
+        ev = Evaluation(**{**data, "gates": [GateResult.from_dict(g) for g in data["gates"]],
+                           "failure": Outcome(data["failure"]) if data["failure"] else None})
+        if not delivery:
+            self._store(content, digest, tool_digest, ev)
         meas = None
         if ev.failure is None:
             meas = Measurements(values=ev.values, evaluator_digest=digest,
@@ -554,9 +618,14 @@ class Engine:
     def measure_champion(self, ws: Workspaces, commit: str, attempt: int | None,
                          reason: str, *, fresh: bool = False) -> Measurements:
         out = self.artifact_dir() / "champion" / ("%s-%d" % (commit[:12], time.time_ns()))
+        if reason == "baseline":
+            saved = [c for c in self.ledger.calls(self.run_id) if c["role"] == "evaluator"
+                     and c["attempt_no"] is None and c["input"].get("commit") == commit
+                     and c["result"] is not None and not c["result"]["output"].get("failure")]
+            if saved:
+                out = Path(saved[-1]["receipt_path"]).parent
         ev, meas, tree = self.evaluate_commit(ws, commit, "", out, "champion", fresh=fresh)
         ws.drop(tree)
-        self.ledger.charge(self.run_id, attempt, "evaluator", Cost(ev.seconds, 0, 0.0))
         if ev.failure is not None:
             raise OPCError("champion %s fails its own gates (%s): %s"
                            % (commit[:12], ev.failure.value, ev.reason))
@@ -572,6 +641,7 @@ class Engine:
     def reconcile(self, ws: Workspaces) -> None:
         """Make ledger and git agree before anything new is dispatched."""
         run = self.ledger.run(self.run_id)
+        self.reconcile_calls()
         if getattr(self, "_binding_repair", None):
             repairs = self.ledger.events(self.run_id, "binding_repaired")
             if not repairs or repairs[-1]["body"] != self._binding_repair:
@@ -591,10 +661,9 @@ class Engine:
                                                "champion move recovered on resume",
                                                a["gain"] or 0.0, Cost())
                     continue
-            self.ledger.finish_attempt(self.run_id, n, Outcome.ABANDONED.value,
-                                       "controller stopped during '%s'; costs kept, no verdict"
-                                       % a["state"], 0.0, Cost())
-            self.log("attempt %d abandoned (was %s)" % (n, a["state"]))
+            if not any(c["attempt_no"] == n for c in self.ledger.calls(self.run_id)):
+                raise OPCError("Attempt %d cannot resume: missing reliable Call/input records; "
+                               "existing artifacts remain readable" % n)
         current = self.toolchain_digest(run["base_commit"])
         self._compatibility = run_compatibility(self.artifact_dir() / "frozen", run)
         self._compatibility["execution"] = {"state": "resumable", "reason": "frozen sources and required tools are available"}
@@ -625,7 +694,6 @@ class Engine:
         out = self.artifact_dir() / "environment" / str(time.time_ns())
         ev, meas, tree = self.evaluate_commit(ws, run["base_commit"], "", out / "baseline", "environment-baseline", fresh=True)
         ws.drop(tree)
-        self.ledger.charge(self.run_id, None, "evaluator", Cost(ev.seconds, 0, 0.0))
         if ev.failure is not None and (self.task.acceptance.objective_metric or ev.failure is not Outcome.BROKEN):
             raise OPCError("changed environment baseline failed: " + ev.reason)
         self.ledger.event(self.run_id, "measurement_baseline", commit=run["base_commit"],
@@ -641,7 +709,6 @@ class Engine:
                 self.hard_check()
                 ev, _, tree = self.evaluate_commit(ws, selected, "", out / "working", "environment-working", fresh=True)
                 ws.drop(tree)
-                self.ledger.charge(self.run_id, None, "evaluator", Cost(ev.seconds, 0, 0.0))
                 if ev.failure is not None and ev.failure is not Outcome.BROKEN:
                     raise OPCError("changed environment working version failed: " + ev.reason)
         self.ledger.update_toolchain(self.run_id, current)
@@ -981,6 +1048,9 @@ class Engine:
         return None
 
     def save_candidate(self, ws: Workspaces, n: int, parent: str, patch: str, title: str) -> str:
+        saved = [e for e in self.ledger.events(self.run_id, "candidate_saved") if e["attempt"] == n]
+        if saved:
+            return saved[-1]["body"]["commit"]
         tree = ws.checkout("a%06d/snapshot" % n, parent)
         try:
             apply_patch(tree, patch)
@@ -1035,29 +1105,22 @@ class Engine:
         if self.comp.focus_areas:
             focus = self.comp.focus_areas[(self.ledger.next_attempt_no(self.run_id) - 1)
                                           % len(self.comp.focus_areas)]
-        n = self.ledger.begin_attempt(self.run_id, champ[0], focus)
+        pending = self.ledger.open_attempts(self.run_id)
+        n = pending[0]["attempt_no"] if pending else self.ledger.begin_attempt(self.run_id, champ[0], focus)
         adir = self.attempt_dir(n)
         total = Cost(0.0, 0, 0.0)
         trees: list[Path] = []
 
         def charge(role: str, cost: Cost, call: WorkerCall | None = None) -> None:
             nonlocal total
-            if call is not None:
-                kind = self.worker_spec(role if role in self.resolved_workers else "expert").kind
-                if kind in ("codex", "dsh") and not call.extra.get("usage_complete", False):
-                    self.ledger.event(self.preparation or self.run_id, "accounting_unknown", None, reason="usage unavailable")
-                    if self.accounting_required():
-                        call.ok = False
-                        call.error = (call.error + "; " if call.error else "") + "usage unavailable; stop dispatch until actual accounting is reconciled"
-                        call.extra["infra"] = True
             total = total.add(cost)
-            self.ledger.charge(self.run_id, n, role, cost)
-            if call is not None:
-                self.ledger.event(self.run_id, "worker_call", n, role=role, call_id=call.call_id,
-                                  ok=call.ok, tokens=cost.tokens, seconds=round(cost.wall_seconds, 2),
-                                  error=call.error[:300], log_dir=call.log_dir)
 
         def finish(outcome: Outcome, reason: str, gain: float = 0.0, **kw: Any):
+            nonlocal total
+            total = Cost(0, 0, 0.0)
+            for record in self.ledger.calls(self.run_id):
+                if record["attempt_no"] == n and record["result"] is not None:
+                    total = total.add(Cost(**record["result"]["cost"]))
             self.ledger.finish_attempt(self.run_id, n, outcome.value, reason, gain, total, **kw)
             write_json(adir / "decision.json", {"attempt": n, "outcome": outcome.value,
                                                 "reason": reason, "gain": gain,
@@ -1078,8 +1141,13 @@ class Engine:
             expert_tree.mkdir(parents=True, exist_ok=True)
             trees.append(expert_tree)
             write_json(expert_tree / "research.json", ctx)
-            write_json(adir / "context.json", ctx)
-            call = expert.propose(ctx, expert_tree, adir / "expert")
+            context_path = adir / "context.json"
+            if context_path.is_file():
+                ctx = json.loads(context_path.read_text(encoding="utf-8"))
+            else:
+                write_json(context_path, ctx)
+            call = self.dispatch_call("expert", n, {"context": ctx}, expert_tree, adir / "expert",
+                                      lambda: expert.propose(ctx, expert_tree, adir / "expert"))
             charge("expert", call.cost, call)
             if not call.ok:
                 out = self._worker_outcome(call)
@@ -1123,9 +1191,13 @@ class Engine:
             self.ledger.event(self.run_id, "development_parent", n, commit=parent,
                               base_attempt=plan.get("base_attempt"))
             ctx["parent"] = {"commit": parent, "base_attempt": plan.get("base_attempt")}
-            design_tree = ws.checkout("a%06d/designer" % n, parent)
+            design_tree = ws.root / ("a%06d/designer" % n)
+            if not design_tree.exists():
+                design_tree = ws.checkout("a%06d/designer" % n, parent)
             trees.append(design_tree)
-            call = designer.implement(plan, ctx, design_tree, adir / "designer")
+            call = self.dispatch_call("designer", n, {"plan": plan, "context": ctx, "parent": parent},
+                                      design_tree, adir / "designer",
+                                      lambda: designer.implement(plan, ctx, design_tree, adir / "designer"))
             charge("designer", call.cost, call)
             self.ledger.event(self.run_id, "execution", n, completed=call.ok,
                               summary=(call.output or {}).get("summary", ""))
@@ -1156,14 +1228,22 @@ class Engine:
                     bool(self.task.acceptance.objective_metric)):
                 return finish(Outcome.WORK, "saved work; formal evaluation not requested")
             self.ledger.event(self.run_id, "experiment", n, status="started", data=[], cached=False)
-            ev, meas, eval_tree = self.evaluate_commit(ws, candidate, "", adir / "eval",
-                                                       "a%06d/eval" % n, fresh=not patch.strip())
+            failed_evaluations = [c for c in self.ledger.calls(self.run_id)
+                                  if c["attempt_no"] == n and c["role"] == "evaluator"
+                                  and c["result"] and (c["result"].get("output") or {}).get("failure") == Outcome.INFRA.value]
+            eval_out = adir / ("eval-%d" % (len(failed_evaluations) + 1) if failed_evaluations else "eval")
+            ev, meas, eval_tree = self.evaluate_commit(ws, candidate, "", eval_out,
+                                                       "a%06d/eval" % n, fresh=not patch.strip(), attempt=n)
             trees.append(eval_tree)
             charge("evaluator", Cost(ev.seconds, 0, 0.0))
             self.ledger.event(self.run_id, "experiment", n,
                               status="failed" if ev.failure else "completed", data=ev.data,
                               cached=ev.cached, repeats=ev.repeats, values=ev.values)
             gates = [g.as_dict() for g in ev.gates]
+            if ev.failure is Outcome.INFRA:
+                self.ledger.update_attempt(self.run_id, n, "designed", gates=gates,
+                                           reason=ev.reason, cost=total.as_dict())
+                return Outcome.INFRA, StopDecision("blocked", "evaluation incomplete: " + ev.reason)
             if ev.failure is not None:
                 return finish(ev.failure, ev.reason, gates=gates)
             if not self.task.acceptance.objective_metric:
@@ -1194,15 +1274,10 @@ class Engine:
             self.ledger.set_champion(self.run_id, new, meas, n, verdict.reason)
             return finish(Outcome.IMPROVEMENT, verdict.reason, gain, gates=gates,
                           metrics=meas.as_dict())
-        except BudgetExhausted as exc:
-            finish(Outcome.ABANDONED, "budget: %s" % exc)
-            raise
-        except KeyboardInterrupt:
-            finish(Outcome.ABANDONED, "interrupted by user")
-            raise
         finally:
-            for t in trees:
-                ws.drop(t)
+            if not self.ledger.open_attempts(self.run_id):
+                for t in trees:
+                    ws.drop(t)
 
     # -------------------------------------------------------------------- run
     def repair_delivery(self, report_path: str | Path) -> dict[str, Any]:
@@ -1266,6 +1341,7 @@ class Engine:
             stop: StopDecision | None = None
             done_now = 0
             try:
+                self.reconcile_calls()
                 self.hard_check()
                 self.backfill_history()
                 self.reconcile(ws)
@@ -1280,7 +1356,8 @@ class Engine:
                     stop = self.stop_condition()
                     if stop:
                         break
-                    if max_attempts_now is not None and done_now >= max_attempts_now:
+                    if (max_attempts_now is not None and done_now >= max_attempts_now
+                            and not self.ledger.open_attempts(self.run_id)):
                         stop = StopDecision("paused", "session attempt limit reached")
                         break
                     try:
@@ -1300,7 +1377,9 @@ class Engine:
                 stop = StopDecision("blocked", "%s: %s" % (type(exc).__name__, str(exc)[:400]))
                 raise
             finally:
-                ws.drop_all()
+                if not self.ledger.open_attempts(self.run_id) and not any(
+                        c["result"] is None for c in self.ledger.calls(self.run_id)):
+                    ws.drop_all()
                 if stop is None:
                     stop = StopDecision("blocked", "controller error")
                 self.ledger.set_run_state(self.run_id, stop.state, stop.reason)
@@ -1365,6 +1444,8 @@ class Engine:
                 "objective": m, "objective_gain": gain, "outcomes": outcomes,
                 "pending_conclusions": [a["attempt_no"] for a in self.attempt_records()
                                         if a["plan"] and a["outcome"] and a["conclusion"] is None],
+                "calls": self.ledger.calls(self.run_id),
+                "unresolved_accounting": self.ledger.unresolved_accounting(self.run_id),
                 "spent": self.spent(), "budget_left": self.budget_left(),
                 "budget": {"scope": "task", "limits": {"wall_seconds": self.effective_budget().max_wall_seconds,
                            "tokens": self.effective_budget().max_tokens, "attempts": self.effective_budget().max_attempts},
