@@ -202,6 +202,8 @@ class Engine:
                     raise OPCError("Call %s execution unknown; inspect original execution before retry" % previous["call_id"])
                 self.ledger.finish_call(previous["call_id"], json.loads(receipt.read_text(encoding="utf-8")))
                 previous = next(c for c in self.ledger.calls(self.run_id) if c["call_id"] == previous["call_id"])
+            if previous['state'] == 'unknown':
+                raise OPCError('Call %s execution unknown; retain workspace and reconcile execution' % previous['call_id'])
             return self.call_from_receipt(previous["call_id"], previous["result"])
         self.hard_check()
         request.call_id = self.ledger.begin_call(self.run_id, request.attempt, request.role,
@@ -607,7 +609,7 @@ class Engine:
 
     # ------------------------------------------------------------------- runs
     def open_run(self, new_run: bool = False, direction: str | None = None,
-                 base_ref: str | None = None, *, switch_backend: bool = False) -> str:
+                 base_ref: str | None = None, *, switch_backend: bool = False, _repair: dict | None = None) -> str:
         if switch_backend and not new_run:
             raise OPCError("explicit backend switch requires a new Run")
         if new_run:
@@ -673,7 +675,7 @@ class Engine:
             if self.evaluator_digest(base)[0] != rep["evaluator_digest"]:
                 raise OPCError("--base %s carries a different evaluator than the task base"
                                % base_ref)
-        if not self.task.acceptance.objective_metric or self.task.raw.get("profile"):
+        if _repair is None and (not self.task.acceptance.objective_metric or self.task.raw.get("profile")):
             capability = self.preflight(base_ref=base)
             if not capability["ok"]:
                 raise OPCError("preflight failed:\n  " + "\n  ".join(capability["problems"]))
@@ -686,7 +688,7 @@ class Engine:
             task_id=self.task.task_id, revision=self.task.revision,
             task_digest=self.task.digest, component=self.comp.component_id, base_commit=base,
             evaluator_digest=rep["evaluator_digest"], toolchain_digest=tool_digest,
-            champion_ref=self.ref, direction=direction or self.task.direction)
+            champion_ref=self.ref, direction=direction or self.task.direction, repair=_repair)
         if self._budget_origin:
             self.ledger.event(self.run_id, "budget_origin", **self._budget_origin)
         if self.delivery_accounting():
@@ -1242,6 +1244,7 @@ class Engine:
                 background[rel] = {"excerpt": path.read_text(encoding="utf-8")[:1500], "source": str(self.root / rel)}
         return {
             "attempt": n, "focus": focus,
+            "delivery_repair": self.repair_context(),
             **({"task_results": self.results_context()} if self.task.raw.get("results_path") else {}),
             "task": {"goal": self.task.goal,
                      "direction": directions[-1] if directions else run["direction"],
@@ -2238,8 +2241,27 @@ class Engine:
             raise OPCError("repair must start from the selected candidate")
         if any(f["check"] in ("evaluator", "scope") for f in report["findings"] if f["severity"] == "block"):
             raise OPCError("repair needs an explicit contract/evaluator revision")
-        if any(f["check"] == "review" and "unavailable" in f["text"] for f in report["findings"]):
-            raise OPCError("retry promotion reviewer only; no candidate development needed")
+        action = report.get('next_step', {}).get('action')
+        if action in ('retry_evaluation', 'retry_review'):
+            from .promote import promote
+            review = report.get('review_kind')
+            if review is None and any(r.get('verification', 'automated') != 'automated' and r.get('required', True)
+                                      for r in self.task.requirements):
+                review = self.worker_spec('reviewer').kind
+            delivery = promote(self, source_run=source['run_id'], review=review,
+                               confirm_repeats=report.get('confirm_repeats', 0),
+                               standards_confirmation=report.get('standards_confirmation'))
+            return {**self.summary(), 'delivery': delivery, 'complete': delivery['complete']}
+        existing = next((owner for owner in self.ledger.runs() if owner['task_id'] == self.task.task_id
+                         and any(event['body']['source_run'] == source['run_id'] and
+                                 event['body']['source_promotion'] == report['promotion_id']
+                                 for event in self.ledger.events(owner['run_id'], 'delivery_repair'))), None)
+        if existing is not None:
+            self.restore_run(existing['run_id'])
+            self.requested_run_id = existing['run_id']
+            if self.ledger.control(self.run_id) != 'run':
+                return self.summary()
+            return self.run()
         # Every repair uses task-wide accounting, including projects without preparation.
         used = self.ledger.task_totals(self.task.task_id)
         if (self.task.budget.max_wall_seconds is not None and used["wall_seconds"] >= self.task.budget.max_wall_seconds) or (
@@ -2247,11 +2269,13 @@ class Engine:
             raise OPCError("task budget exhausted; no repair dispatch")
         self.hard_check()
         with self.ledger.writer():
-            new_id = self.open_run(new_run=True, base_ref=report["selected_version"],
+            origin = dict(source_run=source['run_id'], source_promotion=report['promotion_id'],
+                          source_report=str(path), selected_commit=report['selected_version'],
+                          candidate=report.get('candidate', dict(commit=report['selected_version'])),
+                          execution_revision=source['revision'], acceptance_revision=self.task.revision)
+            new_id = self.open_run(new_run=True, base_ref=report["selected_version"], _repair=origin,
                                    direction="Repair delivery findings: " + json.dumps(report["findings"]))
-            self.ledger.event(new_id, "delivery_repair", source_run=source["run_id"],
-                              source_promotion=report["promotion_id"], selected_commit=report["selected_version"],
-                              execution_revision=source["revision"], acceptance_revision=self.task.revision)
+        self.requested_run_id = new_id
         return self.run()
 
     def run(self, new_run: bool = False, direction: str | None = None,
@@ -2341,6 +2365,24 @@ class Engine:
                 "kind": "legacy", "commit": self.ledger.run(self.run_id)["base_commit"]})
         return {"kind": "legacy", "commit": self.ledger.run(self.run_id)["base_commit"]}
 
+    def delivery_status(self) -> dict | None:
+        from .results import delivery_status
+        return delivery_status(self.ledger.events(self.run_id, 'promotion_report'),
+                               self.task.digest, self.delivery_candidate())
+
+    def repair_context(self) -> dict | None:
+        from .results import delivery_status
+        origins = self.ledger.events(self.run_id, 'delivery_repair')
+        if not origins:
+            return None
+        origin = origins[-1]['body']
+        if 'candidate' not in origin and 'selected_commit' not in origin:
+            return {**origin, 'failure': None}  # Legacy accounting marker has no candidate source.
+        events = [event for event in self.ledger.events(origin['source_run'], 'promotion_report')
+                  if event['body']['promotion_id'] == origin['source_promotion']]
+        return {**origin, 'failure': delivery_status(events, self.task.digest,
+                        origin.get('candidate', dict(commit=origin['selected_commit'])))}
+
     def summary(self) -> dict[str, Any]:
         run = self.ledger.run(self.run_id)
         champs = self.ledger.champions(self.run_id)
@@ -2373,7 +2415,10 @@ class Engine:
         compatibility = (getattr(self, "_compatibility", None) if run["state"] != "closed" else None) or run_compatibility(self.artifact_dir() / "frozen", run)
         if run["state"] == "blocked":
             compatibility["execution"] = {"state": "blocked", "reason": run["stop_reason"]}
+        delivery = self.delivery_status()
         return {"run_id": self.run_id, "task": self.task.task_id, "revision": self.task.revision,
+                "delivery": delivery, "complete": bool(delivery and delivery['complete']),
+                "delivery_repair": self.repair_context(),
                 **({'results_path': self.task.raw['results_path'],
                     'results_registration_error': getattr(self, '_results_error', None)}
                    if self.task.raw.get('results_path') else {}),
@@ -2431,6 +2476,8 @@ class Engine:
                  "- result: %s" % (s["result"] or "running"),
                  "- closeout: %s" % json.dumps(s["closure"], ensure_ascii=False),
                  "- delivery candidate: %s" % json.dumps(s["delivery_candidate"], ensure_ascii=False),
+                 "- delivery: %s" % json.dumps(s['delivery'], ensure_ascii=False),
+                 "- repair source: %s" % json.dumps(s['delivery_repair'], ensure_ascii=False),
                  "- champion: `%s` (ref `%s`)" % ((s["champion"] or "")[:12], self.ref),
                  "- objective `%s`: baseline %s -> champion %s (%s)" % (
                      s["objective"], (s["baseline_metrics"] or {}).get(s["objective"]),

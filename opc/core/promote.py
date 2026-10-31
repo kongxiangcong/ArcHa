@@ -107,7 +107,7 @@ def validate_standards_confirmation(engine: Engine, run: dict, confirmation: dic
 
 
 def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
-            apply_to: str | None = None, source_run: str | None = None, standards_confirmation: str | Path | None = None) -> dict[str, Any]:
+            apply_to: str | None = None, source_run: str | None = None, standards_confirmation: str | Path | dict | None = None) -> dict[str, Any]:
     """Delivery owns the same project writer as execution and measurement."""
     with engine.ledger.writer():
         return _promote(engine, confirm_repeats, review, apply_to, source_run, standards_confirmation)
@@ -115,7 +115,7 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
 
 def _promote(engine: Engine, confirm_repeats: int, review: str | None,
              apply_to: str | None, source_run: str | None,
-             standards_confirmation: str | Path | None) -> dict[str, Any]:
+             standards_confirmation: str | Path | dict | None) -> dict[str, Any]:
     run = engine.ledger.run(source_run) if source_run else engine.ledger.select_run(engine.task.task_id, engine.task.revision)
     if run is None:
         raise OPCError("task %s has no run" % engine.task.task_id)
@@ -128,15 +128,18 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
     if revised:
         if not source_run or not standards_confirmation:
             raise OPCError("different acceptance revision requires explicit source run and user standards confirmation")
-        document = Path(standards_confirmation)
-        if not document.is_absolute():
-            document = engine.root / document
-        try:
-            confirmation = json.loads(document.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise OPCError("cannot read standards confirmation: " + str(exc)) from exc
+        if isinstance(standards_confirmation, dict):
+            confirmation = standards_confirmation
+        else:
+            document = Path(standards_confirmation)
+            if not document.is_absolute():
+                document = engine.root / document
+            try:
+                confirmation = json.loads(document.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise OPCError("cannot read standards confirmation: " + str(exc)) from exc
+            confirmation = dict(confirmation, sha256=hashlib.sha256(document.read_bytes()).hexdigest())
         validate_standards_confirmation(engine, run, confirmation)
-        confirmation = dict(confirmation, sha256=hashlib.sha256(document.read_bytes()).hexdigest())
     records = recorded_promotions(engine)
     if any(report['acceptance_revision'] == engine.task.revision and
            report['acceptance_task_digest'] != engine.task.digest for report, _ in records):
@@ -146,7 +149,15 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
     base = {"commit_sha": run["base_commit"], "metrics": champs[0]["metrics"] if champs else {"values": {}}}
     best = {"commit_sha": selected, "metrics": {"values": {}}}
     root, task = engine.root, engine.task
-    pid = "promotion-%d" % time.time_ns()
+    candidate = engine.delivery_candidate()
+    request = dict(candidate=candidate, acceptance_task_digest=task.digest, review=review,
+                   confirm_repeats=confirm_repeats, apply_to=apply_to)
+    completed = {event['body']['promotion_id'] for event in engine.ledger.events(engine.run_id, 'promotion_report')}
+    pending = next((event['body'] for event in reversed(engine.ledger.events(engine.run_id, 'promotion_started'))
+                    if event['body']['promotion_id'] not in completed and event['body']['request'] == request), None)
+    pid = pending['promotion_id'] if pending else "promotion-%d" % time.time_ns()
+    if pending is None:
+        engine.ledger.event(engine.run_id, 'promotion_started', promotion_id=pid, request=request)
     out = engine.artifact_dir() / "promotion" / pid
     findings: list[dict[str, str]] = []
 
@@ -187,18 +198,23 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
                sort_keys=True).encode()).hexdigest()}
     evidence = None
     evidence_source = None
-    if confirm_repeats == 0:
-        for path in sorted((engine.artifact_dir() / "promotion").glob("*/report.json"), reverse=True):
-            previous = json.loads(path.read_text(encoding="utf-8"))
+    previous_confirm = next(((previous, path) for previous, path in reversed(records)
+                             if previous.get('evidence_key') == key and previous.get('confirm_repeats') == confirm_repeats
+                             and previous.get('baseline') == base['commit_sha']), None)
+    retry_confirm = previous_confirm if previous_confirm and previous_confirm[0].get('confirmation_execution_failed') else None
+    if confirm_repeats == 0 or retry_confirm:
+        for previous, path in reversed(records):
             previous_key = previous.get("evidence_key", {})
             same_measurement = ({k:v for k,v in previous_key.items() if k != "task"} ==
                                 {k:v for k,v in key.items() if k != "task"})
-            if (previous_key == key or (revised and same_measurement)) and previous.get("evaluation"):
+            evaluation = previous.get("evaluation")
+            if ((previous_key == key or (revised and same_measurement)) and evaluation
+                    and evaluation['failure'] in (None, 'broken')
+                    and not any(g['status'] == 'infra' for g in evaluation['gates'])):
                 evidence = previous["evaluation"]
                 evidence_source = str(path)
                 break
     if evidence is None:
-        engine.hard_check()
         ws = engine.workspaces("delivery")
         try:
             ev, meas, tree = engine.evaluate_commit(ws, selected, "", out / "eval", "selected", fresh=True, delivery=True)
@@ -230,6 +246,8 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
     claimed = (acceptance.relative_gain(task.acceptance, base["metrics"]["values"][m], values[m])
                if m and m in values and m in base["metrics"]["values"] else None)
     confirm = None
+    confirmation_failed = confirmation_rejected = False
+    reproduction_sources = []
     if m and claimed is not None and confirm_repeats > 1:
         ws = engine.workspaces("promotion")
         samples: dict[str, list[float]] = {"baseline": [], "champion": []}
@@ -237,16 +255,35 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
             for label, commit in (("baseline", base["commit_sha"]), ("champion",
                                                                      best["commit_sha"])):
                 for i in range(confirm_repeats):
-                    engine.hard_check()
-                    ev, meas, tree = engine.evaluate_commit(ws, commit, "", out / "confirm" /
-                                                            ("%s-%d" % (label, i)), label, fresh=True, delivery=True)
-                    ws.drop(tree)
-                    covered = {g.gate_id for g in ev.gates if g.status.value == "passed"}
-                    if ev.failure is not None or expected - covered or meas is None or m not in meas.values:
+                    directory = out / "confirm" / ("%s-%d" % (label, i))
+                    sample = None
+                    source = None
+                    if retry_confirm:
+                        previous = retry_confirm[0]
+                        source = next((Path(row['source']) for row in previous.get('reproduction_sources', [])
+                                       if row['role'] == label and row['repeat'] == i + 1), None)
+                        if source is not None and source.is_file():
+                            saved = json.loads(source.read_text(encoding='utf-8'))
+                            if saved['commit'] == commit and saved['failure'] in (None, 'broken'):
+                                sample = saved
+                    if sample is None:
+                        ev, meas, tree = engine.evaluate_commit(ws, commit, "", directory, label, fresh=True, delivery=True)
+                        ws.drop(tree)
+                        sample = dict(failure=ev.failure.value if ev.failure else None, reason=ev.reason,
+                                      gates=[gate.as_dict() for gate in ev.gates], metrics=meas.as_dict() if meas else None)
+                        source, mode = directory / 'evaluation.json', 'executed'
+                    else:
+                        mode = 'referenced'
+                    reproduction_sources.append(dict(role=label, repeat=i + 1, source=str(source), mode=mode))
+                    covered = {gate['gate_id'] for gate in sample['gates'] if gate['status'] == 'passed'}
+                    metrics = (sample.get('metrics') or {}).get('values', {})
+                    if sample['failure'] is not None or expected - covered or m not in metrics:
+                        confirmation_failed = confirmation_failed or sample['failure'] not in (None, 'broken')
+                        confirmation_rejected = confirmation_rejected or sample['failure'] == 'broken'
                         finding("reproduce", "block", "%s failed on repeat %d: %s"
-                                % (label, i, ev.reason))
+                                % (label, i, sample['reason']))
                         break
-                    samples[label].append(meas.values[m])
+                    samples[label].append(metrics[m])
         finally:
             _drop_finished_workspaces(engine, ws)
         if samples["baseline"] and samples["champion"]:
@@ -273,6 +310,11 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
         finding("target", "block" if policy == "required" else "warn", "target %s not met (selected %s=%g)" % (
             task.acceptance.target.describe(), task.acceptance.target.metric,
             champ_values.get(task.acceptance.target.metric, float("nan"))))
+    program_rejected = (evidence['failure'] == 'broken' or
+        any(c.metric in champ_values and acceptance.check(c, champ_values, base['metrics']['values'])
+            for c in task.acceptance.constraints) or
+        (task.acceptance.target is not None and policy == 'required' and
+         task.acceptance.target.metric in champ_values and not acceptance.target_met(task.acceptance, champ_values)))
     coverage = []
     for req in task.requirements:
         severity = "block" if req.get("required", True) else "warn"
@@ -283,6 +325,7 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
             why = acceptance.check(c, champ_values, None)
             status = "met" if why is None else "not_met: " + why
             if why is not None:
+                program_rejected = program_rejected or (req.get('required', True) and chk['metric'] in champ_values)
                 finding("requirements", severity, "%s not met: %s" % (req.get("id"), why))
         elif how == "automated" and req.get("gates"):
             passed = {g["gate_id"].split("#")[0] for g in evidence["gates"] if g["status"] == "passed"}
@@ -303,15 +346,15 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
     reviewer = None
     reviewed_items = {}
     from .results import delivery_material
-    candidate = engine.delivery_candidate()
     task_results = delivery_material(engine, candidate)
     changes = task_results["basis_changes"]
     review_basis = candidate.get("basis_review") or {}
     unreviewed_changes = changes and review_basis.get("changes") != changes
     if unreviewed_changes:
         finding("candidate", "block", "selected claim basis changed; Expert must reconsider before acceptance")
-    if review and not unreviewed_changes:
-        engine.hard_check()
+    primary_evaluation_failed = evidence['failure'] not in (None, 'broken') or any(g['status'] == 'infra' for g in evidence['gates'])
+    evaluation_failed = primary_evaluation_failed or confirmation_failed
+    if review and not unreviewed_changes and not evaluation_failed:
         reviewer = run_reviewer(engine, review, out, patch, base, best, coverage, task_results)
         # Fail closed on every path that is not a positive verdict. A reviewer
         # reply carrying no verdict once read as "nothing blocked", which let a
@@ -347,17 +390,40 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
             finding("requirements", "block" if row["required"] else "warn", "%s %s: %s" %
                     (row["id"], judgment["status"], judgment["gap"]))
     blocked = any(f["severity"] == "block" for f in findings)
+    action = 'complete'
+    if blocked:
+        if any(f['check'] in ('scope', 'evaluator') and f['severity'] == 'block' for f in findings):
+            action = 'revise_contract'
+        elif ((not primary_evaluation_failed and program_rejected) or confirmation_rejected or
+              (reviewer and reviewer.get('ok') and reviewer.get('verdict') in ('accept', 'accept_with_conditions', 'reject') and
+               (reviewer['verdict'] == 'reject' or any(row['required'] and row['status'] == 'not_met' for row in coverage)))):
+            action = 'repair_candidate'
+        elif evaluation_failed:
+            action = 'retry_evaluation'
+        elif reviewer and (not reviewer.get('ok') or reviewer.get('verdict') not in ('accept', 'accept_with_conditions', 'reject')):
+            action = 'retry_review'
+        elif any(row['required'] and row['verification'] != 'automated' for row in coverage) and reviewer is None and not unreviewed_changes:
+            action = 'retry_review'
+        elif (unreviewed_changes or any(row['required'] and row['status'] in ('insufficient_evidence', 'not_covered') for row in coverage)
+              or any(f['check'] == 'metrics' and f['severity'] == 'block' for f in findings)):
+            action = 'supplement_evidence'
+        else:
+            action = 'repair_candidate'
     report = {"promotion_id": pid, "run_id": engine.run_id, "task": task.task_id,
               "execution_revision": run["revision"], "execution_task_digest": run["task_digest"],
               "acceptance_revision": task.revision, "acceptance_task_digest": task.digest,
               "standards_confirmation": confirmation, "reassessed": revised,
               "baseline": base["commit_sha"], "selected_version": selected,
               "candidate": candidate,
+              "review_kind": review, "confirm_repeats": confirm_repeats,
+              "next_step": dict(action=action, gaps=[f for f in findings if f['severity'] == 'block']),
               "champion": champs[-1]["commit_sha"] if champs else None, "files": files,
               "evidence_key": key, "evaluation": evidence, "evidence_source": evidence_source,
+              "evaluation_mode": "referenced" if evidence_source else "executed",
               "stop_reason": run["stop_reason"], "complete": not blocked,
               "target_met": acceptance.target_met(task.acceptance, champ_values), "target_policy": policy,
               "objective": m, "claimed_gain": claimed, "confirm": confirm,
+              "confirmation_execution_failed": confirmation_failed, "reproduction_sources": reproduction_sources,
               "baseline_metrics": base["metrics"]["values"],
               "selected_metrics": best["metrics"]["values"],
               "champion_metrics": champs[-1]["metrics"]["values"] if champs else None, "requirements": coverage,
@@ -522,6 +588,8 @@ def render(r: dict[str, Any]) -> str:
              "- run: `%s`, task `%s`" % (r["run_id"], r["task"]),
              "- baseline `%s` -> selected `%s`" % (r["baseline"][:12], r["selected_version"][:12]),
              "- delivery candidate: %s" % json.dumps(r.get("candidate"), ensure_ascii=False),
+             "- evaluation: %s; source: %s" % (r.get('evaluation_mode'), r.get('evidence_source')),
+             "- next step: %s" % (r.get('next_step') or {}).get('action'),
              "- objective `%s`: claimed gain %+.2f%%" % (r["objective"], 100 * (r["claimed_gain"] or 0)),
              "- files: %s" % ", ".join(r["files"]),
              "- target met: %s (policy: %s)" % (r.get("target_met", False), r.get("target_policy", "advisory")),
@@ -537,6 +605,10 @@ def render(r: dict[str, Any]) -> str:
     if r.get("confirm"):
         lines += ["", "## Reproduction", "", "worst-case gain %+.2f%%" %
                   (100 * r["confirm"]["worst_case_gain"])]
+    if r.get('reproduction_sources'):
+        lines += ["", "## Reproduction sources", ""]
+        lines += ['- %s #%s: %s [evaluation](<%s>)' % (row['role'], row['repeat'], row['mode'], row['source'])
+                  for row in r['reproduction_sources']]
     lines += ["", "The decision to merge is the user's. This report does not merge anything "
               "unless --apply was given."]
     lines += ["", "## Acceptance revision history", "",

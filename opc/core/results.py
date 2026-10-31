@@ -26,6 +26,23 @@ DATA = re.compile(r'<!-- archa-results:data (.*?) -->', re.S)
 LINK = re.compile(r'\[[^\]]*\]\((?:<([^>]+)>|([^\s)]+))(?:\s+[^)]*)?\)')
 
 
+def delivery_status(events: list[dict], task_digest: str, candidate: dict) -> dict | None:
+    """Read the latest registered report applicable to this exact candidate and standard."""
+    for event in reversed(events):
+        body = event['body']
+        if body.get('selected_commit') != candidate['commit']:
+            continue
+        path = body['report_path']
+        report = json.loads(Path(path).read_text(encoding='utf-8'))
+        if report.get('acceptance_task_digest') != task_digest:
+            continue
+        if report.get('candidate', candidate) != candidate:
+            continue
+        return {key: report.get(key) for key in ('promotion_id', 'complete', 'acceptance_revision',
+                'selected_version', 'candidate', 'next_step', 'findings', 'requirements')} | {'report_path': path}
+    return None
+
+
 def acceptance_history(revisions: dict[str, str], reports: list[tuple[dict, str]]) -> list[dict]:
     """Project the latest recorded acceptance per revision; never execute old work."""
     latest = {}

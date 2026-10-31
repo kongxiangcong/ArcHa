@@ -132,7 +132,7 @@ class Ledger:
     # -------------------------------------------------------------------- runs
     def create_run(self, *, task_id: str, revision: str, task_digest: str, component: str,
                    base_commit: str, evaluator_digest: str, toolchain_digest: str,
-                   champion_ref: str, direction: str) -> str:
+                   champion_ref: str, direction: str, repair: dict | None = None) -> str:
         run_id = "run-" + uuid.uuid4().hex[:12]
         with self.tx() as db:
             db.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -143,6 +143,8 @@ class Ledger:
                         {"task": task_id, "revision": revision, "base": base_commit,
                          "evaluator_digest": evaluator_digest,
                          "toolchain_digest": toolchain_digest})
+            if repair is not None:
+                self._event(db, run_id, "delivery_repair", None, repair)
         return run_id
 
     def run(self, run_id: str) -> sqlite3.Row:
