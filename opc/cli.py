@@ -131,6 +131,7 @@ def cmd_status(a) -> int:
                      "state": r["state"], "stop_reason": r["stop_reason"],
                      "preparation": preparation,
                      "control": ledger.control(r["run_id"]), "attempts": len(attempts),
+                     "inflight_calls": [c["call_id"] for c in ledger.calls(r["run_id"]) if c["result"] is None],
                      "last": [{"n": x["attempt_no"], "outcome": x["outcome"] or x["state"],
                                "reason": (x["reason"] or "")[:100]} for x in attempts[-5:]],
                      "champion": champ[0][:12] if champ else None,

@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — 持久化 Call 与结果，恢复不重复执行或记账。
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 **Spec:** [S2 实现规格](../spec.md)
 

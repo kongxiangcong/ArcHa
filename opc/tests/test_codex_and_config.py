@@ -323,3 +323,22 @@ def test_nested_usage_is_not_assumed_to_be_in_parent_total():
     info = parse_events(events)
     assert info['tokens'] == 120  # cached input is already part of input_tokens
     assert not info['usage_complete']
+
+
+def test_codex_reliable_completion_survives_cancel_race(tmp_path):
+    from opc.adapters.codex import CodexWorker
+    from opc.core.platform import execution_control
+    marker = tmp_path / 'terminal-saved'
+    script = tmp_path / 'race.py'
+    script.write_text('import json,sys,time\nfrom pathlib import Path\n'
+        'sys.stdin.read()\n'
+        'plan={"title":"saved plan","changes":"one step"}\n'
+        'print(json.dumps({"type":"thread.started","thread_id":"race-session"}),flush=True)\n'
+        'print(json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(plan)}}),flush=True)\n'
+        'print(json.dumps({"type":"turn.completed","usage":{"input_tokens":2,"output_tokens":3}}),flush=True)\n'
+        'Path(' + repr(str(marker)) + ').touch()\ntime.sleep(30)\n')
+    worker = CodexWorker({'binary': str(script)})
+    with execution_control(lambda: 'stopped by user' if marker.exists() else None, tmp_path / 'logs'):
+        call = worker.propose({}, tmp_path, tmp_path / 'logs')
+    assert call.ok and call.output['title'] == 'saved plan'
+    assert call.extra['terminal_completed'] and call.cost.tokens == 5

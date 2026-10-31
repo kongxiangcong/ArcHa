@@ -13,6 +13,11 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from typing import Callable
 from pathlib import Path
 
 
@@ -55,11 +60,46 @@ def command_prefix(binary: str | list[str]) -> list[str]:
     raise ValueError("worker binary must be a nonempty string or argv list")
 
 
+@dataclass
+class ExecutionControl:
+    """One call's process boundary; each concurrent worker installs its own scope."""
+    check: Callable[[], str | None]
+    log_dir: Path
+    cancelled: str | None = None
+    unknown: str | None = None
+
+    def record(self, process, state: str) -> None:
+        from .model import write_json
+        write_json(self.log_dir / "process.json", {
+            "pid": process.pid, "state": state, "returncode": process.returncode,
+            "cancel_reason": process.cancel_reason, "termination_error": self.unknown})
+
+
+_EXECUTION: ContextVar[ExecutionControl | None] = ContextVar("opc_execution", default=None)
+
+
+@contextmanager
+def execution_control(check: Callable[[], str | None], log_dir: Path):
+    scope = ExecutionControl(check, log_dir)
+    token = _EXECUTION.set(scope)
+    try:
+        yield scope
+    finally:
+        _EXECUTION.reset(token)
+
+
 class Process(subprocess.Popen):
     """Popen with tree ownership; use as a context manager even on success."""
 
     def __init__(self, argv, **kwargs):
         self._job = None
+        self._control = _EXECUTION.get()
+        self.cancel_reason = None
+        if self._control is not None:
+            reason = self._control.check()
+            if reason:
+                self._control.cancelled = reason
+                raise OSError("execution cancelled before process startup: " + reason)
         if os.name == "nt":
             executable = shutil.which(argv[0]) or argv[0]
             if executable.lower().endswith((".cmd", ".bat")):
@@ -74,6 +114,8 @@ class Process(subprocess.Popen):
             super().__init__(argv, **kwargs)
             if self._job is not None:
                 self._job.attach_and_resume(self)
+            if self._control is not None:
+                self._control.record(self, "running")
         except BaseException:
             if getattr(self, "pid", None) is not None:
                 self.kill()
@@ -82,15 +124,74 @@ class Process(subprocess.Popen):
                 self._job.close()
             raise
 
-    def kill_tree(self):
-        if self._job is not None:
-            self._job.terminate()
-        else:
+    def wait(self, timeout=None):
+        if self._control is None:
+            return super().wait(timeout=timeout)
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        while self.poll() is None:
+            reason = self._control.check()
+            if reason:
+                self.cancel_reason = self._control.cancelled = reason
+                if self._job is not None:
+                    self._job.terminate()
+                else:
+                    try:
+                        os.killpg(self.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                try:
+                    super().wait(timeout=.2)
+                except subprocess.TimeoutExpired:
+                    self.kill_tree()
+                self._control.record(self, "cancelled")
+                return self.returncode
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                raise subprocess.TimeoutExpired(self.args, timeout)
             try:
-                os.killpg(self.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        self.wait()
+                super().wait(timeout=min(.05, remaining) if remaining is not None else .05)
+            except subprocess.TimeoutExpired:
+                continue
+        self._control.record(self, "completed")
+        return self.returncode
+
+    def communicate(self, input=None, timeout=None):
+        # Popen's file-output communicate delegates to wait; PIPE output needs
+        # bounded communicate retries as well, preserving its buffered bytes.
+        if self._control is None or (self.stdout is None and self.stderr is None):
+            return super().communicate(input, timeout=timeout)
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        while True:
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                raise subprocess.TimeoutExpired(self.args, timeout)
+            try:
+                return super().communicate(input, timeout=min(.05, remaining) if remaining is not None else .05)
+            except subprocess.TimeoutExpired:
+                input = None
+                if self._control.check():
+                    self.wait()
+                    return super().communicate(timeout=2)
+
+    def kill_tree(self):
+        try:
+            if self._job is not None:
+                self._job.terminate()
+            else:
+                try:
+                    os.killpg(self.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            # A bounded wait leaves an unverifiable termination without a Call
+            # receipt, so recovery keeps its workspace and blocks redispatch.
+            super().wait(timeout=2)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            if self._control is not None:
+                self._control.unknown = str(exc)
+                self._control.record(self, "unknown")
+            raise
+        if self._control is not None:
+            self._control.record(self, "cancelled" if self.cancel_reason else "completed")
 
     def __exit__(self, *args):
         try:

@@ -20,6 +20,8 @@ import hashlib
 import json
 import math
 import time
+import sqlite3
+from contextlib import closing
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
@@ -29,8 +31,9 @@ from ..domain import DomainAdapter, Evaluation, bounded_data, experimental_data,
 from . import accept as acceptance
 from .config import Bindings, Budget, ComponentConfig, ProjectConfig, TaskSpec, WorkerSpec
 from .ledger import Ledger
+from .platform import execution_control
 from .worker_config import load_worker_config, worker_options
-from .model import (BudgetExhausted, Cost, GateResult, Measurements, OPCError, Outcome, Verdict,
+from .model import (BudgetExhausted, DispatchStopped, Cost, GateResult, Measurements, OPCError, Outcome, Verdict,
                     canonical_json, write_json, write_text)
 from .workspace import (Workspaces, apply_patch, cas_update_ref, commit_tree, dirty_paths, git,
                         extract_patch, patch_digest, read_ref, rev_parse, sandbox, tracked_digest)
@@ -183,9 +186,30 @@ class Engine:
                               call_id=record["call_id"], output=result.get("output"),
                               error=result.get("error", ""), exhausted=result.get("exhausted", False),
                               log_dir=result.get("log_dir", str(log_dir)), extra=result.get("extra", {}))
+        self.hard_check()
         call_id = self.ledger.begin_call(self.run_id, attempt, role,
                     {**inputs, "tree": str(tree), "owner_pid": __import__("os").getpid()}, str(receipt))
-        call = invoke()
+        remaining = self.budget_left()["wall_seconds"]
+        started = time.monotonic()
+        def cancellation():
+            row = reader.execute("SELECT command FROM control WHERE run_id=?", (self.run_id,)).fetchone()
+            if row and row[0] == "stop":
+                return "stopped by user"
+            if remaining is not None and time.monotonic() - started >= remaining:
+                return "budget_exhausted: max_wall_seconds"
+            return None
+        # The read connection belongs to this execution thread; only the Engine
+        # writes the ledger. Polling never touches its writer connection.
+        with closing(sqlite3.connect("file:%s?mode=ro" % self.ledger.path, uri=True)) as reader:
+            with execution_control(cancellation, log_dir) as control:
+                call = invoke()
+        if control.unknown:
+            raise OPCError("cannot confirm execution termination: " + control.unknown)
+        if control.cancelled and not call.extra.get("terminal_completed"):
+            call.ok = False
+            call.extra.update(cancelled=True, cancel_reason=control.cancelled)
+            call.error = control.cancelled
+
         session_id = call.extra.get("session_id") or (call.call_id if call.call_id != "scripted" else None)
         call.call_id = call_id
         if session_id:
@@ -196,9 +220,14 @@ class Engine:
                       output=call.output, error=call.error, exhausted=call.exhausted,
                       log_dir=call.log_dir or str(log_dir), extra=call.extra,
                       usage_complete=usage_complete,
-                      state="not_started" if call.extra.get("not_started") else "completed")
+                      state=("not_started" if call.extra.get("not_started") else
+                             "cancelled" if call.extra.get("cancelled") else "completed"))
         write_json(receipt, result)
         self.ledger.finish_call(call_id, result)
+        if control.cancelled and not call.extra.get("terminal_completed"):
+            if control.cancelled.startswith("budget_exhausted"):
+                raise BudgetExhausted("max_wall_seconds", "cancelled in-flight execution")
+            raise DispatchStopped("closed", control.cancelled)
         return call
 
     def reconcile_calls(self) -> None:
@@ -768,15 +797,22 @@ class Engine:
             if s["usd"] >= b.max_usd:
                 raise BudgetExhausted("max_usd", "spent %.4f of %.4f" % (s["usd"], b.max_usd))
 
+    def dispatch_boundary(self) -> None:
+        if self.run_id:
+            command = self.ledger.control(self.run_id)
+            if command == "pause":
+                raise DispatchStopped("paused", "paused by user at call boundary")
+            if command == "stop":
+                raise DispatchStopped("closed", "stopped by user at call boundary")
+
     def hard_check(self) -> None:
         """Between steps of one attempt: stop as soon as a cap is crossed."""
+        self.dispatch_boundary()
         b, s = self.effective_budget(), self.spent()
         if self.accounting_required() and any(self.ledger.unresolved_accounting(r["run_id"])
                 for r in self.ledger.runs() if r["task_id"] == self.task.task_id):
             raise OPCError("usage accounting incomplete; no new dispatch")
         if self.delivery_accounting():
-            if self.ledger.control(self.run_id) in ("pause", "stop"):
-                raise OPCError("user paused/stopped delivery")
             if b.max_usd is not None and (not s["usd_known"] or s["usd"] >= b.max_usd):
                 raise BudgetExhausted("max_usd", "delivery budget unavailable")
         if self.preparation and not self.run_id:
@@ -1348,6 +1384,8 @@ class Engine:
                         break
             except BudgetExhausted as exc:
                 stop = StopDecision("closed", "budget_exhausted: %s" % exc)
+            except DispatchStopped as exc:
+                stop = StopDecision(exc.state, str(exc))
             except KeyboardInterrupt:
                 stop = StopDecision("paused", "interrupted by user")
             except Exception as exc:
@@ -1419,6 +1457,8 @@ class Engine:
                 "objective": m, "objective_gain": gain, "outcomes": outcomes,
                 "pending_conclusions": [a["attempt_no"] for a in self.attempt_records()
                                         if a["plan"] and a["outcome"] and a["conclusion"] is None],
+                "control": self.ledger.control(self.run_id),
+                "inflight_calls": [c["call_id"] for c in self.ledger.calls(self.run_id) if c["result"] is None],
                 "calls": self.ledger.calls(self.run_id),
                 "unresolved_accounting": self.ledger.unresolved_accounting(self.run_id),
                 "spent": self.spent(), "budget_left": self.budget_left(),

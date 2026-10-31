@@ -78,7 +78,10 @@ def test_infra_failures_block_without_consuming_search_budget(make_project, engi
     e = engine_for(make_project(evaluate=evaluate))
     s = e.run()
     assert s["state"] == "blocked"
-    assert outcomes(e) == [Outcome.INFRA.value, Outcome.INFRA.value]
+    attempts = e.ledger.attempts(e.run_id)
+    assert len(attempts) == 1 and attempts[0]['outcome'] is None
+    assert attempts[0]['state'] == 'designed'
+    assert attempts[0]['gates'][0]['status'] == 'infra'
     assert s["spent"]["search_attempts"] == 0
 
 
@@ -102,7 +105,9 @@ def test_skipped_gate_is_rejected_by_default(make_project, engine_for):
     e = engine_for(make_project(comp=comp, extra={".opc/eval/perf.py": perf}))
     s = e.run()
     assert s["state"] == "blocked"
-    assert all(o == Outcome.INFRA.value for o in outcomes(e))
+    attempts = e.ledger.attempts(e.run_id)
+    assert len(attempts) == 1 and attempts[0]['outcome'] is None
+    assert any(g['status'] == 'skipped' for g in attempts[0]['gates'])
 
 
 def test_degraded_evidence_is_not_compared_with_full_evidence(make_project, engine_for):
@@ -506,7 +511,7 @@ def test_closed_run_reports_original_result_without_reopening(make_project, engi
     first.ledger.set_control(first.run_id, 'stop')
     event_count = len(first.ledger.events(first.run_id))
     repeated = engine_for(root).run()
-    assert repeated == original
+    assert repeated == {**original, 'control': 'stop'}
     assert len(first.ledger.events(first.run_id)) == event_count
     assert first.ledger.control(first.run_id) == 'stop'
 
@@ -740,3 +745,177 @@ def test_saved_baseline_receipt_is_reused_before_champion_registration(make_proj
     assert len(e2.ledger.calls(e2.run_id)) == 1
     assert e2.ledger.totals(e2.run_id) == used
     assert e2.ledger.champion(e2.run_id) is not None
+
+
+CONTROLLED_DESIGN = STRATEGY.replace(
+    '    def implement(self, plan, tree):',
+    """    def implement(self, plan, tree):
+        import os, sys
+        from opc.core.platform import Process
+        from pathlib import Path
+        with Process([sys.executable, '-c',
+            'import time; from pathlib import Path; '
+            'p=Path(' + repr(os.environ['CONTROL_RELEASE']) + '); '
+            'Path(' + repr(os.environ['CONTROL_READY']) + ').touch(); '
+            'exec("while not p.exists(): time.sleep(.02)")']) as child:
+            child.wait(timeout=30)
+""")
+
+
+def control_during_design(e, tmp_path, monkeypatch, command):
+    import threading
+    import time
+    from opc.core.ledger import Ledger
+    ready, release = tmp_path / 'ready', tmp_path / 'release'
+    monkeypatch.setenv('CONTROL_READY', str(ready))
+    monkeypatch.setenv('CONTROL_RELEASE', str(release))
+    observed = []
+    def request():
+        deadline = time.monotonic() + 10
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        if not ready.exists():
+            observed.append('designer never started')
+            return
+        other = Ledger(e.ledger.path)
+        other.set_control(e.run_id, command)
+        time.sleep(.15)
+        observed.append((other.run(e.run_id)['state'],
+                         [c['role'] for c in other.calls(e.run_id) if c['result'] is None]))
+        if command == 'pause':
+            release.touch()
+        other.db.close()
+    worker = threading.Thread(target=request)
+    worker.start()
+    return worker, observed, release
+
+
+def test_pause_drains_call_without_dispatching_evaluation(make_project, engine_for, tmp_path, monkeypatch):
+    e = engine_for(make_project(strategy=CONTROLLED_DESIGN))
+    e.run(max_attempts_now=0)
+    worker, observed, release = control_during_design(e, tmp_path, monkeypatch, 'pause')
+    try:
+        result = e.run(max_attempts_now=1)
+    finally:
+        release.touch()
+        worker.join(timeout=10)
+    assert observed == [('active', ['designer'])]
+    assert result['state'] == 'paused'
+    calls = e.ledger.calls(e.run_id)
+    assert [c['role'] for c in calls].count('evaluator') == 1  # baseline only
+    assert [c['role'] for c in calls].count('designer') == 1
+    resumed = engine_for(e.root)
+    resumed.run(max_attempts_now=0)
+    assert [c['role'] for c in resumed.ledger.calls(e.run_id)].count('designer') == 1
+    assert resumed.ledger.attempts(e.run_id)[0]['outcome'] == Outcome.IMPROVEMENT.value
+
+
+def test_stop_cancels_owned_process_without_followup_dispatch(make_project, engine_for, tmp_path, monkeypatch):
+    import threading
+    import time
+    e = engine_for(make_project(strategy=CONTROLLED_DESIGN))
+    e.run(max_attempts_now=0)
+    worker, observed, release = control_during_design(e, tmp_path, monkeypatch, 'stop')
+    fallback = threading.Timer(2, release.touch)
+    fallback.start()
+    started = time.monotonic()
+    try:
+        result = e.run(max_attempts_now=1)
+    finally:
+        fallback.cancel()
+        release.touch()
+        worker.join(timeout=10)
+    assert time.monotonic() - started < 1.5
+    assert result['state'] == 'closed'
+    designer = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer']
+    assert len(designer) == 1 and designer[0]['state'] == 'cancelled'
+    assert not designer[0]['result']['ok']
+    assert len([c for c in e.ledger.calls(e.run_id) if c['role'] == 'evaluator']) == 1
+    before = e.ledger.calls(e.run_id)
+    engine_for(e.root).run()
+    assert e.ledger.calls(e.run_id) == before
+
+
+def test_wall_budget_cancels_current_process_and_keeps_partial_work(make_project, engine_for, tmp_path, monkeypatch):
+    import threading
+    t = task()
+    t['budget']['max_wall_seconds'] = .6
+    e = engine_for(make_project(strategy=CONTROLLED_DESIGN, tsk=t))
+    e.run(max_attempts_now=0)
+    ready, release = tmp_path / 'ready', tmp_path / 'release'
+    monkeypatch.setenv('CONTROL_READY', str(ready))
+    monkeypatch.setenv('CONTROL_RELEASE', str(release))
+    fallback = threading.Timer(2, release.touch)
+    fallback.start()
+    try:
+        result = e.run(max_attempts_now=1)
+    finally:
+        fallback.cancel()
+        release.touch()
+    assert result['state'] == 'closed' and result['stop_reason'].startswith('budget_exhausted')
+    designer = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer']
+    assert len(designer) == 1 and designer[0]['state'] == 'cancelled'
+    assert Path(designer[0]['input']['tree']).is_dir()
+    assert e.ledger.attempts(e.run_id)[0]['outcome'] is None
+
+
+CONTROLLED_EVALUATE = EVALUATE + '''
+if x != 3:
+    import os, time
+    Path(os.environ['CONTROL_READY']).touch()
+    while not Path(os.environ['CONTROL_RELEASE']).exists():
+        time.sleep(.02)
+'''
+
+
+def test_pause_during_evaluation_saves_result_without_expert_dispatch(make_project, engine_for, tmp_path, monkeypatch):
+    e = engine_for(make_project(evaluate=CONTROLLED_EVALUATE))
+    e.run(max_attempts_now=0)
+    worker, observed, release = control_during_design(e, tmp_path, monkeypatch, 'pause')
+    try:
+        result = e.run(max_attempts_now=1)
+    finally:
+        release.touch()
+        worker.join(timeout=10)
+    assert observed == [('active', ['evaluator'])]
+    assert result['state'] == 'paused'
+    assert e.ledger.attempts(e.run_id)[0]['outcome'] == Outcome.IMPROVEMENT.value
+    assert len([c for c in e.ledger.calls(e.run_id) if c['role'] == 'expert']) == 1
+    assert result['pending_conclusions'] == [1]
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='POSIX signal failure injection')
+def test_unconfirmed_stop_retains_unknown_call_and_workspace(make_project, engine_for, tmp_path, monkeypatch):
+    import os
+    import signal
+    resistant = CONTROLLED_DESIGN.replace('import time; from pathlib',
+        'import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); from pathlib')
+    e = engine_for(make_project(strategy=resistant))
+    e.run(max_attempts_now=0)
+    worker, observed, release = control_during_design(e, tmp_path, monkeypatch, 'stop')
+    killpg = os.killpg
+    def cannot_confirm(pid, sig):
+        if sig == signal.SIGKILL and (tmp_path / 'ready').exists():
+            raise PermissionError('cannot confirm process tree termination')
+        killpg(pid, sig)
+    monkeypatch.setattr(os, 'killpg', cannot_confirm)
+    try:
+        with pytest.raises(OPCError, match='cannot confirm'):
+            e.run(max_attempts_now=1)
+        record = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer'][0]
+        assert record['result'] is None
+        assert e.ledger.run(e.run_id)['state'] == 'blocked'
+        assert Path(record['input']['tree']).is_dir()
+    finally:
+        release.touch()
+        worker.join(timeout=10)
+        for record in e.ledger.calls(e.run_id):
+            if record['role'] == 'designer':
+                evidence = Path(record['receipt_path']).parent / 'process.json'
+                if evidence.exists():
+                    pid = json.loads(evidence.read_text())['pid']
+                    try:
+                        killpg(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    os.waitpid(pid, 0)
