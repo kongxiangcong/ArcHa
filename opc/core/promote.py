@@ -26,6 +26,15 @@ def checked_out_branches(repo: Path) -> set[str]:
     return {l.split(" ", 1)[1] for l in out.splitlines() if l.startswith("branch ")}
 
 
+def _drop_finished_workspaces(engine: Engine, ws) -> None:
+    # An unreceipted or explicitly unknown Call may still own its checkout.
+    if any(c["state"] in ("dispatched", "unknown") and
+           Path(c["input"]["tree"]).is_relative_to(ws.root)
+           for c in engine.ledger.calls(engine.run_id)):
+        return
+    ws.drop_all()
+
+
 def validate_standards_confirmation(engine: Engine, run: dict, confirmation: dict) -> None:
     """Validate only acceptance changes against the source's immutable contract."""
     frozen = json.loads((engine.artifact_dir() / "frozen/task.json").read_text(encoding="utf-8"))
@@ -142,7 +151,7 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
             evidence = {"failure": ev.failure.value if ev.failure else None, "reason": ev.reason,
                         "gates": [g.as_dict() for g in ev.gates], "metrics": meas.as_dict() if meas else None}
         finally:
-            ws.drop_all()
+            _drop_finished_workspaces(engine, ws)
     diagnostic_gates = engine.diagnostic_gates()
     expected = {g.gate_id if not g.repeat or task.acceptance.repeats <= 1 else
                 "%s#%d" % (g.gate_id, r + 1)
@@ -185,7 +194,7 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
                         break
                     samples[label].append(meas.values[m])
         finally:
-            ws.drop_all()
+            _drop_finished_workspaces(engine, ws)
         if samples["baseline"] and samples["champion"]:
             worst = acceptance.relative_gain(task.acceptance,
                                              min(samples["baseline"]) if task.acceptance.direction

@@ -959,3 +959,44 @@ def test_delivery_requires_project_writer_before_any_execution(make_project, eng
     assert e.ledger.events(e.run_id) == events
     assert e.ledger.calls(e.run_id) == calls
     assert not (e.artifact_dir() / 'promotion').exists()
+
+
+
+def test_delivery_unknown_evaluation_retains_workspace_and_is_not_repeated(make_project, engine_for, monkeypatch):
+    from opc.core.promote import promote
+    from opc.domains.command import CommandDomain
+    e = engine_for(make_project())
+    e.run(max_attempts_now=0)
+    original = CommandDomain.evaluate
+    evaluations = []
+    def lost_terminal(self, tree, out, repeats, **kwargs):
+        original(self, tree, out, repeats, **kwargs)
+        evaluations.append(str(tree))
+        raise RuntimeError('controller lost evaluator terminal before receipt')
+    monkeypatch.setattr(CommandDomain, 'evaluate', lost_terminal)
+    with pytest.raises(RuntimeError, match='lost evaluator terminal'):
+        promote(e)
+    pending = [c for c in e.ledger.calls(e.run_id) if c['result'] is None]
+    assert len(pending) == 1 and pending[0]['role'] == 'evaluator'
+    assert pending[0]['state'] == 'dispatched'
+    tree = Path(pending[0]['input']['tree'])
+    assert (tree / 'params.json').is_file()
+    assert not Path(pending[0]['receipt_path']).exists()
+    calls = e.ledger.calls(e.run_id)
+    with pytest.raises(OPCError, match='execution unknown'):
+        promote(e)
+    assert e.ledger.calls(e.run_id) == calls
+    assert evaluations == [str(tree)]
+    assert (tree / 'params.json').is_file()
+
+
+def test_delivery_completed_evaluation_releases_its_workspace(make_project, engine_for):
+    from opc.core.promote import promote
+    e = engine_for(make_project())
+    e.run(max_attempts_now=0)
+    report = promote(e)
+    assert report['evaluation']['failure'] is None
+    calls = [c for c in e.ledger.calls(e.run_id)
+             if c['role'] == 'evaluator' and c['input'].get('delivery')]
+    assert len(calls) == 1 and calls[0]['state'] == 'completed'
+    assert not Path(calls[0]['input']['tree']).exists()
