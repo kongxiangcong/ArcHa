@@ -60,7 +60,12 @@ def cmd_run(a) -> int:
                   base_ref=a.base)
     if a.deliver:
         s["complete"] = False
-        if s["state"] == "closed" and e.ledger.control(e.run_id) not in ("pause", "stop") and "by user" not in (s["stop_reason"] or ""):
+        if getattr(e, "_returned_closed", False):
+            reports = e.ledger.events(e.run_id, "promotion_report")
+            if reports:
+                s["delivery"] = reports[-1]["body"]
+                s["complete"] = s["delivery"].get("complete", False)
+        elif s["state"] == "closed" and e.ledger.control(e.run_id) not in ("pause", "stop") and "by user" not in (s["stop_reason"] or ""):
             from .core.promote import promote
             review = a.review
             if review is None and any(r.get("verification", "automated") != "automated" and r.get("required", True) for r in e.task.requirements):

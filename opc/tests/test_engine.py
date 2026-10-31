@@ -446,6 +446,8 @@ def test_resume_keeps_original_run_with_unready_new_revision(make_project, engin
     observed = json.loads(capsys.readouterr().out)
     assert observed[0]['run_id'] == first.run_id and observed[0]['control'] == 'pause'
     assert observed[0]['attempts'] == original_attempts
+    automatic = Engine(root, 't-toy', log=lambda _: None)
+    assert automatic.task.revision == 'r0001'
     resumed = Engine(root, 't-toy', run_id=first.run_id, log=lambda _: None)
     result = resumed.run()
     assert result['run_id'] == paused['run_id'] and result['revision'] == 'r0001'
@@ -478,6 +480,10 @@ def test_closed_run_reports_original_result_without_reopening(make_project, engi
     root = make_project()
     first = engine_for(root)
     original = first.run()
+    from opc.cli import main
+    original_event_count = len(first.ledger.events(first.run_id))
+    assert main(['run', '-p', str(root), '--task', 't-toy', '--run-id', first.run_id, '--deliver']) == 1
+    assert len(first.ledger.events(first.run_id)) == original_event_count
     first.ledger.set_control(first.run_id, 'stop')
     event_count = len(first.ledger.events(first.run_id))
     repeated = engine_for(root).run()

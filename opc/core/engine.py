@@ -356,6 +356,9 @@ class Engine:
         if new_run:
             self.task = TaskSpec.load(self.root, self.task.task_id, self.requested_revision)
             self.worker_config = load_worker_config(self.root)
+            self.task.configuration_sources.update({
+                "workers.%s.%s" % (role, key): ".opc/local/workers.json"
+                for role, values in self.worker_config.items() for key in values})
             self.comp = ComponentConfig.load(self.root, self.task.component)
         last = None if new_run else self.ledger.select_run(
             self.task.task_id, self.requested_revision, self.requested_run_id)
@@ -1134,6 +1137,7 @@ class Engine:
         with self.ledger.writer():
             self.open_run(new_run, direction, base_ref)
             if self.ledger.run(self.run_id)["state"] == "closed":
+                self._returned_closed = True
                 return self.summary()
             if self.ledger.control(self.run_id) != "run":
                 self.ledger.set_control(self.run_id, "run")
