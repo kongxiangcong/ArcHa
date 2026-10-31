@@ -264,3 +264,66 @@ def test_status_displays_preparation_budget_without_fake_run(make_project, capsy
     assert rows[0]['budget']['used']['tokens'] == 4
     assert rows[0]['budget']['limits']['wall_seconds'] == 7200
     assert 'files' not in rows[0]['preparation'][0]
+
+
+def test_profile_defaults_task_and_local_sources_are_frozen(make_project, engine_for):
+    t = task(profile={'name': 'development', 'version': 2})
+    del t['budget']['max_wall_seconds']
+    root = make_project(tsk=t, extra={'.opc/profiles/development/v2.json': json.dumps({
+        'name': 'development', 'version': 2,
+        'budget': {'max_wall_seconds': 120},
+        'workers': {'expert': {'model': 'profile-model', 'reasoning_effort': 'low'}}})})
+    settings(root, {'max_wall_seconds': None})
+    write(root / CONFIG_PATH, json.dumps({'budget': {'max_wall_seconds': None},
+          'expert': {'model': 'local-model'}}))
+    e = engine_for(root)
+    e.open_run()
+    assert e.task.budget.max_wall_seconds == 120
+    frozen = json.loads((e.artifact_dir() / 'frozen/baseline.json').read_text())
+    assert frozen['execution']['configuration_sources']['profile']['version'] == 2
+    assert frozen['execution']['configuration_sources']['workers.expert.model'] == '.opc/local/workers.json'
+    assert frozen['execution']['workers']['expert']['model'] == 'local-model'
+    assert frozen['execution']['workers']['expert']['reasoning_effort'] == 'low'
+
+
+def test_project_hard_limit_survives_null_and_budget_extension(make_project, engine_for):
+    root = make_project(tsk=task(hard_limits={'max_tokens': 30}))
+    project = root / '.opc/project.json'
+    raw = json.loads(project.read_text())
+    raw['hard_limits'] = {'max_tokens': 20, 'max_wall_seconds': 100}
+    write(project, json.dumps(raw))
+    from opc.tests.conftest import git
+    git(root, 'add', '.opc/project.json')
+    git(root, 'commit', '-qm', 'project hard limits')
+    settings(root, {'max_tokens': None, 'max_wall_seconds': None})
+    e = engine_for(root)
+    e.open_run()
+    scope = e.ledger.preparation_scope('t-toy')
+    e.ledger.event(scope, 'task_budget_authorized', max_tokens=1000, max_wall_seconds=1000)
+    assert e.effective_budget().max_tokens == 20
+    assert e.effective_budget().max_wall_seconds == 100
+    e.ledger.charge(e.run_id, None, 'expert', Cost(1, 21, 0))
+    with pytest.raises(BudgetExhausted, match='max_tokens'):
+        e.hard_check()
+
+
+@pytest.mark.parametrize('profile,reason', [('tuning', 'objective'), ('exploration', 'materials')])
+def test_profile_cannot_release_unimplemented_capabilities(make_project, engine_for, profile, reason):
+    root = make_project(tsk=task(profile={'name': profile, 'version': 1}, acceptance={}))
+    e = engine_for(root)
+    with pytest.raises(OPCError, match=reason):
+        e.run(max_attempts_now=1)
+    assert not e.ledger.runs()
+
+
+def test_inline_credentials_and_local_scope_overrides_are_rejected(make_project, engine_for):
+    from opc.tests.conftest import component
+    root = make_project(comp=component(env={'SERVICE_API_KEY': 'must-not-freeze'}))
+    with pytest.raises(OPCError, match='credential.*inherit'):
+        engine_for(root)
+    path = root / '.opc/components/toy.json'
+    raw = json.loads(path.read_text()); raw['env'] = {}
+    write(path, json.dumps(raw))
+    write(root / '.opc/local/bindings.json', json.dumps({'goal': 'replace task'}))
+    with pytest.raises(OPCError, match='unknown field.*goal'):
+        engine_for(root)

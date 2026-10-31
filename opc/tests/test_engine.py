@@ -407,9 +407,30 @@ def test_explicit_work_startpoint_is_checked_before_worker_dispatch(make_project
     assert not engine.ledger.runs()
 
 
-def test_resume_keeps_original_run_with_unready_new_revision(make_project, engine_for):
+def test_resume_keeps_original_run_with_unready_new_revision(make_project, engine_for, monkeypatch, capsys):
+    from opc.adapters.worker import WorkerCall
+    from opc.cli import main
     from opc.core.engine import Engine
-    root = make_project()
+    from opc.core.model import Cost
+    from opc.scaffold.onboard import onboard
+    root = make_project(tsk=task(profile={'name': 'development', 'version': 2}),
+                        extra={'.opc/profiles/development/v2.json': json.dumps({
+                            'name': 'development', 'version': 2,
+                            'workers': {'expert': {'reasoning_effort': 'low'}}})})
+
+    def preparation(self, role, prompt, tree, log, sandbox, schema):
+        log.mkdir(parents=True)
+        evidence = log / 'checks.txt'
+        evidence.write_text('Local toy evaluator and strategy are available; no formal experiment.', encoding='utf-8')
+        return WorkerCall(role, True, Cost(0, 0, None), extra={'usage_complete': True}), json.dumps({
+            'state': 'ready', 'reason': 'local toy capabilities checked',
+            'evidence': [evidence.relative_to(root).as_posix()]})
+
+    monkeypatch.setattr('opc.adapters.codex.CodexWorker._run', preparation)
+    ready = onboard(root, 'codex', task_id='t-toy', revision='r0001',
+                    prior_tokens=0, prior_wall_seconds=0)
+    assert ready['ok'] and ready['revision'] == 'r0001'
+    assert not Engine(root, 't-toy', 'r0001', log=lambda _: None).ledger.runs()
     first = engine_for(root)
     paused = first.run(max_attempts_now=1)
     original_attempts = len(first.ledger.attempts(first.run_id))
@@ -417,14 +438,25 @@ def test_resume_keeps_original_run_with_unready_new_revision(make_project, engin
     write(root / '.opc/tasks/t-toy/revisions/r0002/task.json', json.dumps(revised))
     first.ledger.event(first.ledger.preparation_scope('t-toy'), 'preparation',
                        task_id='t-toy', revision='r0002', state='pending', reason='not prepared')
-    # Later machine defaults must not alter the original Run.
+    # Later profile/machine defaults must not alter the original Run.
     write(root / '.opc/local/workers.json', json.dumps({'budget': {'max_wall_seconds': 1}}))
+    write(root / '.opc/profiles/development/v2.json', '{invalid later profile')
+    first.ledger.set_control(first.run_id, 'pause')
+    assert main(['status', '-p', str(root), '--task', 't-toy', '--run-id', first.run_id]) == 0
+    observed = json.loads(capsys.readouterr().out)
+    assert observed[0]['run_id'] == first.run_id and observed[0]['control'] == 'pause'
+    assert observed[0]['attempts'] == original_attempts
     resumed = Engine(root, 't-toy', run_id=first.run_id, log=lambda _: None)
     result = resumed.run()
     assert result['run_id'] == paused['run_id'] and result['revision'] == 'r0001'
     assert result['result'] == 'target_met'
     assert len(resumed.ledger.attempts(first.run_id)) > original_attempts
     assert result['spent']['wall_seconds'] >= paused['spent']['wall_seconds']
+    assert resumed.task.configuration_sources['profile']['version'] == 2
+    assert main(['status', '-p', str(root), '--task', 't-toy', '--run-id', first.run_id, '--details']) == 0
+    detail = json.loads(capsys.readouterr().out)[0]
+    assert detail['state'] == 'closed' and detail['revision'] == 'r0001'
+    assert detail['execution']['configuration_sources']['profile']['version'] == 2
 
 
 def test_multiple_runs_require_explicit_identity_and_resume_per_run_champion(make_project):
