@@ -24,4 +24,4 @@ Run 层 Expert 使用独立 Call 和稳定 `materials/research.json`，先事务
 
 待反馈包含窗口外结果的原件引用；仅“已读”不会清除。正常停止要求最终结果已解释，控制/预算退出保留待反馈。观察入口增加反馈与决策关联，并修正 ArcHa Call 与原生 session 的日志归属。内置参数搜索也返回实际测量解释。旧 Attempt 内 Expert 路径已移除。
 
-验证：Engine + research 相关回归 **114 passed**；三个恢复断点补充复跑 **3 passed**，多结果纯复盘与观察贯通 **1 passed**；既有 observer 回归 **65 passed**（既有 AnyIO 弃用警告）。DSH 未新增专用测试、未安装或运行验证；未启动正式考试。
+验证：Engine + research 相关回归 **114 passed**；三个恢复断点补充复跑 **3 passed**，多结果纯复盘与观察贯通 **1 passed**；既有 observer 回归 **65 passed**（既有 AnyIO 弃用警告）。合入 01 配置冻结后，恢复/反馈/参数策略重点复跑 **10 passed**；测试经公开 Worker 获取边界注入，避免依赖可失效的内部缓存。DSH 未新增专用测试、未安装或运行验证；未启动正式考试。
