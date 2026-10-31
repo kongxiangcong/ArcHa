@@ -421,13 +421,27 @@ class ObserverAdapter:
                 flush()
             block[key] = match[2].strip().strip('`')
         flush()
+        # Task-authored append records supersede earlier versions of the same relation.
+        # Legacy prose remains independently visible when its provenance conflicts.
+        handoffs = {}
+        for raw in re.findall(r'<!-- archa-handoff (.*?) -->', decisions):
+            try:
+                row = json.loads(raw)
+                key = (row['task_id'], row['revision'], row['brief'])
+                if row['revision'] is not None:
+                    handoffs[key] = dict(task=row['task_id'], revision=row['revision'],
+                                         brief=row['brief'], sha256=row['sha256'], change=row.get('change'), conflict=False)
+            except (ValueError, TypeError, KeyError):
+                self.issues.append(issue('invalid_handoff', 'DECISIONS 中的任务交接无法读取'))
+        bindings.extend(handoffs.values())
         for task in self.tasks.values():
             task['revision_refs'] = []
         for revision in self.revisions.values():
             explicit = [b for b in bindings if b['task'] == revision['execution_task_id'] and b['revision'] == revision['revision']]
             uses_decisions = bool(explicit)
             source = mapping(revision['_raw'].get('_source'))
-            if isinstance(source.get('brief'), str):
+            refreshed = any(b.get('change') in ('editorial', 'material') and b['brief'] == source.get('brief') for b in explicit)
+            if isinstance(source.get('brief'), str) and not refreshed:
                 explicit.append(dict(brief=source['brief'], sha256=source.get('sha256'), conflict=False))
             # Preserve recorded facts, normalizing paths only for comparisons.
             facts = {(b['brief'], b.get('sha256')) for b in explicit}

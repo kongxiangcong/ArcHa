@@ -36,7 +36,7 @@ sub-agent 只调查本任务，不改项目实现、地图状态或执行合同�
 
 目标和验收条件可以暂定，但必须写出来；“怎么做”的细节不必在大纲里定。
 
-把大纲、依据和合理假设保存到 discussion.md 后，直接生成或更新 task-brief.md 并自动 onboard，无需停下来等待大纲确认。用户已给出的约束优先；新需求与冻结验收冲突时保留旧 revision，按修订流程处理。
+把大纲、依据和合理假设保存到已有讨论位置后，直接生成或更新 task-brief.md，无需停下来等待大纲确认。用户已给出的约束优先；没有地图的工程任务沿用任务目录。
 
 ## 生成与交接
 
@@ -50,6 +50,16 @@ python3 /absolute/project/.opc/archa.py brief-check -p /absolute/project --brief
 
 有地图时，通过后在地图勾选该项并设为 `ready-for-onboard`，链接简报；该状态仅表示简报就绪，不表示合同或执行就绪。检查失败则保持未勾选并修复。结构通过不证明研究设计正确。
 
+## Brief 修改与合同选择
+
+修改已有 Brief 时，Task 入口结合实际文字和用户要求判断含义，摘要只用于核对来源：
+
+- 明确的错字、排版、导航整理：核对目标、范围、权限和验收含义不变后，运行下述 `record` 命令并加 `--change editorial`，更新既有来源关联，沿用 revision 和 Run，无需重新起草或审批。
+- 实质改变目标、范围、权限或验收：先核对用户已有授权；缺少所需授权时才询问。未冻结候选沿用编号；冻结后使用 `TaskSpec.save_revision` 保存为未占用的新 revision，保留历史合同。交接时加 `--change material --authorized`，该标记引用已有授权，不生成授权。
+- 含义不清且影响执行：先明确这一处含义，再交接。不能把字节变化或测试通过当成语义结论。
+
+`record` 核对实际合同路径和内容身份；这些判断写入既有 DECISIONS 交接，无独立语义审核文件。Engine 只检查来源关联，不再判断文字含义。
+
 ## 自动完成 onboard
 
 简报检查通过后运行相邻 archa-map 技能的辅助脚本：
@@ -58,17 +68,17 @@ python3 /absolute/project/.opc/archa.py brief-check -p /absolute/project --brief
 python3 /absolute/path/to/archa-map/scripts/research.py resolve --project /absolute/project --directory "<任务绝对目录>" --prepare
 ```
 
-先读取旧合同/context 的明确来源关系；旧式关系存在但脚本无法解析时先核对并 record 补记，不能当作新任务。再按简报项目相对路径定位 DECISIONS 关系，再核对摘要与实际合同。复用返回的 task_id（包括旧 ID）；摘要变化仍沿同一身份走现有 revision 流程，不新建任务。无关系时脚本生成不冲突的可读 ID；若提示存在旧式交接，先读取其明确来源关系，核对合同后用 record 补记，不能绕过歧义。脚本先在 DECISIONS 预留身份，重试仍复用；全新项目先用既有 init 创建该 ID 的合同骨架，再记录预留。骨架不等于已核对合同。使用返回的 task_id 显式执行 onboard，绝不能省略 --task 落入 t-main。新任务在已有项目中由 onboard worker 起草新合同；已有关系不修改其他任务。同一路径、摘要与已核对合同均未变化时直接复用并核对，不重复起草；仅新任务或需要更新时执行下列 onboard。无需用户手动分配 ID 或再次发起 onboard：
+先读取旧合同/context 的明确来源关系；旧式关系存在但脚本无法解析时先核对并 record 补记，不能当作新任务。再按简报项目相对路径定位 DECISIONS 关系，再核对摘要与实际合同。复用返回的 task_id（包括旧 ID）；摘要变化仍沿同一身份走现有 revision 流程，不新建任务。无关系时脚本生成不冲突的可读 ID；若提示存在旧式交接，先读取其明确来源关系，核对合同后用 record 补记，不能绕过歧义。脚本先在 DECISIONS 预留身份，重试仍复用；全新项目先用既有 init 创建该 ID 的合同骨架，再记录预留。骨架不等于已核对合同。使用返回的 task_id 和核对后的候选 revision 显式执行 onboard；新候选使用 r0001，冻结后的实质修订先分配新 revision。新任务在已有项目中由 onboard worker 起草新合同；已有关系不修改其他任务。同一路径、摘要与已核对合同均未变化时直接复用并核对，不重复起草；仅新任务或需要更新时执行下列 onboard。无需用户手动分配 ID 或再次发起 onboard：
 
 ```bash
-python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --brief <brief> --prepare --task <task-id>
+python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --brief <brief> --prepare --task <task-id> --revision <revision>
 ```
 
 使用项目已有的起草 worker 配置（CLI 默认 codex，需要 dsh 时加 `--agent dsh`）。核对返回的 `ok`、越界修改和受保护输入变化；失败时保留诊断，修复明确原因后再继续，不把 worker 返回成功当作合同完成。
 
 依据消费链核对目标、交付物、验收条件、评价器、范围、基线、预算与 worker。自动解决已确认范围内能从证据确定的事项；只将超出已授权范围的事项或有实际证据的外部条件列为 external_blocked；必要评价器接入、关键失败路径、证据采集和未知设备能力列为 pending，由当前 agent 在预算内开发核验，不要求另建任务。保持 `execution_enabled=false`，用项目入口运行 `check -p <project> --task <task-id> --revision <revision>`。执行关闭、接入文件尚未提交以及因此尚未进入基线的评价器属于待 loop 完成的准备项；其他问题修复或列为阻塞，不把所有非零退出都当作预期。不运行 preflight 或 run。
 
-核对完成后运行 `research.py record --project <project> --directory "<任务绝对目录>" --task <实际task-id> --revision <实际revision>`，在 `.opc/context/DECISIONS.md` 追加可解析交接（不另建映射文件）。仅在已核对合同后执行 record；旧式明确关系补记同样需要核对。记录内容包括：简报的项目相对路径及当前 SHA-256、对应 task ID、revision、合同路径、已定执行预算和剩余阻塞项。从实际生成的合同核对 ID，不把地图 ID 当作引擎 ID。保留其他任务记录。已投入执行的合同修改沿用新 revision/run 流程。
+核对完成后运行 `research.py record --project <project> --directory "<任务绝对目录>" --task <实际task-id> --revision <实际revision>`，在 `.opc/context/DECISIONS.md` 追加可解析交接（不另建映射文件）。仅在已核对合同后执行 record；旧式明确关系补记同样需要核对。交接记录保留简报路径及摘要、task ID、revision、合同路径和内容身份；预算与阻塞以实际合同和准备回执为准。从实际生成的合同核对 ID，不把地图 ID 当作引擎 ID。保留其他任务记录。已投入执行的合同修改沿用新 revision/run 流程。
 
 最后给出简报、合同位置和准备状态；有阻塞时说明缺项，无阻塞时给出 `$archa-loop "<任务绝对目录>"`。本次结束于本任务的合同准备，不自动启动 loop 或处理下一个任务。
 
@@ -79,10 +89,10 @@ python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --brief <br
 
 发现准备待办时使用已有 onboard 命令的 `--prepare --task <task-id> --brief <brief>`。有可靠计量时附加 --prior-tokens / --prior-wall-seconds 更新累计主流程用量（包含 cached input），不重复计算 ledger 已记录的 worker/reviewer。无记录时保留 unknown，不填猜测的 0。显式上限下准备与正式 run 共用累计消耗，不能新建 run 重置。
 准备 agent 可在 .opc 内完成必要评价器、关键失败路径与原件采集接入，进行授权的有界设备能力探测；不自动开展正式手机实验。未探测不是外部阻塞，失败须保留命令、权限错误与原始回执。pending 表示 agent 继续准备；ready 只表示必要接入检查完成，正式实验尚未开始；external_blocked 必须给出观测证据、缺失外部条件、责任人与下一步。
-准备默认不调用 reviewer；合同 preparation_review=true 时进行针对性独立审核。当前任务及实际共享评价依赖摘要在 ledger 中冻结。提交被审文件，check/preflight 通过且用户允许正式执行才进入 run。“本步只准备”时到此结束，不能自动启动设备实验。产品未实现的功能失败是未完成基线，不能变造评分过门。
+准备默认不调用 reviewer；合同 preparation_review=true 时进行针对性独立审核。准备回执关联当前候选与实际共享评价依赖摘要，首次绑定执行 Run 才冻结合同。提交被审文件，check/preflight 通过且用户允许正式执行才进入 run。“本步只准备”时到此结束，不能自动启动设备实验。产品未实现的功能失败是未完成基线，不能变造评分过门。
 已有正式 run 时不原地改冻结合同/评价器：保留旧 revision/run，准备新 revision 并重新审阅冻结；预算账本沿用。旧部署 runtime/全局技能不会自动更新，先核对入口 --help 是否支持 --prepare，不以仓库源码代替已安装行为。
 
 每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用当前候选的准备回执。缺失计量按上述预算策略处理。
 
 
-准备默认仅执行与本次接入改动对应的必要检查，不固定建设全套负控或通用监控工具。ready 表示必要接入完成，不代表研究结论成立。合同显式设置 `preparation_review: true` 时保留独立准备审核；旧 ready 回执继续有效。冻结仅覆盖当前 task、component 及 evaluator_files（显式共享依赖也在这些 glob 中登记）。
+准备默认仅执行与本次接入改动对应的必要检查，不固定建设全套负控或通用监控工具。ready 表示必要接入完成，不代表研究结论成立。合同显式设置 `preparation_review: true` 时保留独立准备审核；旧回执只证明检查时的内容。执行冻结覆盖当前 task、component 及 evaluator_files（共享依赖通过既有 glob 登记）。

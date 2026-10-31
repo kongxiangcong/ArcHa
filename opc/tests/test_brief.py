@@ -135,3 +135,65 @@ def test_direct_task_source_without_map(tmp_path):
     assert report['ok'] and report['map'] is None and report['task_source'] == 'TASK.md'
     (tmp_path / 'TASK.md').unlink()
     assert not load_brief(tmp_path, 'task-brief.md')[0]['ok']
+
+
+def test_editorial_brief_update_keeps_frozen_contract_and_run(make_project, engine_for):
+    import importlib.util
+    module = importlib.util.spec_from_file_location('task_handoff', Path(__file__).resolve().parents[2] / 'skills/archa-map/scripts/research.py')
+    handoff = importlib.util.module_from_spec(module)
+    module.loader.exec_module(handoff)
+    root = make_project()
+    directory = root / 'engineering-task'
+    directory.mkdir()
+    (directory / 'task.md').write_text('Direct engineering task')
+    brief_project(directory)
+    handoff.record(root, str(directory), 't-toy', 'r0001')
+    first = engine_for(root).run(max_attempts_now=1)
+    brief = directory / 'task-brief.md'
+    brief.write_text(brief.read_text() + '\nNavigation: [task](task.md)\n')
+    with pytest.raises(ValueError, match='classif|含义'):
+        handoff.record(root, str(directory), 't-toy', 'r0001')
+    handoff.record(root, str(directory), 't-toy', 'r0001', change='editorial')
+    assert handoff.resolve(root, str(directory))['revision'] == 'r0001'
+    continued = engine_for(root).run(max_attempts_now=1)
+    assert continued['run_id'] == first['run_id']
+    assert len(engine_for(root).ledger.runs()) == 1
+
+
+@pytest.mark.parametrize("frozen", [False, True])
+def test_material_brief_change_requires_authorized_contract_handoff(make_project, engine_for, frozen):
+    import importlib.util
+    from opc.core.config import TaskSpec
+    from opc.tests.conftest import git
+    module = importlib.util.spec_from_file_location('task_handoff', Path(__file__).resolve().parents[2] / 'skills/archa-map/scripts/research.py')
+    handoff = importlib.util.module_from_spec(module)
+    module.loader.exec_module(handoff)
+    root = make_project()
+    directory = root / 'engineering-task'
+    directory.mkdir()
+    (directory / 'task.md').write_text('Direct engineering task')
+    brief_project(directory)
+    handoff.record(root, str(directory), 't-toy', 'r0001')
+    if frozen:
+        engine_for(root).run(max_attempts_now=1)
+    brief = directory / 'task-brief.md'
+    brief.write_text(brief.read_text().replace('报告完成', '报告完成并通过新增验收'))
+    assert not engine_for(root).static_check()['ok']
+    with pytest.raises(ValueError, match='authorization'):
+        handoff.record(root, str(directory), 't-toy', 'r0001', change='material')
+    with pytest.raises(ValueError, match='updated contract'):
+        handoff.record(root, str(directory), 't-toy', 'r0001', change='material', authorized=True)
+    values = json.loads((root / '.opc/tasks/t-toy/revisions/r0001/task.json').read_text())
+    values['acceptance']['target']['value'] = 0.5
+    values['requirements'][0]['check']['value'] = 0.5
+    saved = TaskSpec.save_revision(root, 't-toy', 'r0001', values)
+    assert saved.revision == ('r0002' if frozen else 'r0001')
+    with pytest.raises(ValueError, match='editorial'):
+        handoff.record(root, str(directory), 't-toy', saved.revision, change='editorial')
+    handoff.record(root, str(directory), 't-toy', saved.revision, change='material', authorized=True)
+    git(root, 'add', saved.path.relative_to(root).as_posix())
+    git(root, 'commit', '-qm', 'authorized goal')
+    from opc.core.engine import Engine
+    selected = Engine(root, 't-toy', saved.revision, log=lambda _: None)
+    assert selected.static_check()['ok']
+    assert selected.run(max_attempts_now=1)['revision'] == saved.revision
