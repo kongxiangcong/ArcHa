@@ -1,6 +1,6 @@
 # S2：Attempt、Worker 交接与恢复
 
-**Status:** claimed
+**Status:** resolved
 
 ## Problem Statement
 
@@ -118,39 +118,21 @@
 
 ## 交付验证
 
-实施中，集成分支 `feat/s2-attempts-and-worker-handoffs`。01–05 合入后的完整回归：`/tmp/archa-results-venv/bin/python -m pytest -q`，**447 passed、5 skipped、12 subtests passed**（149.34 秒）；仅既有 AnyIO 弃用警告。06、07 的增量交付与验证见下文；最终集成复核进行中，未启动正式四题考试。
+七票已按依赖集成到 `feat/s2-attempts-and-worker-handoffs`，状态均为 resolved。实现与审查修正集成至 `34f19f2`；最终完整回归 `/tmp/archa-results-venv/bin/python -m pytest -q`：**503 passed、5 existing skipped、12 subtests passed**（178.37 秒），仅既有 AnyIO 弃用警告。本阶段没有启动正式四题考试。逐票实现、检查与修正见各事项的 Answer，真实证据与能力边界见下文。
 
-- 02：Call 派发、原子回执、事务内幂等扣费及恢复已实现；不再统一 abandoned。已保存成果复用、未知执行保留阻塞、评价失败沿原 Attempt 新 Call 补测；普通 Run 计量可补齐。Engine/计量恢复/研究循环首轮 127 通过，唯一过时中断断言更新后，新增交接与中断用例重跑通过；具体见 [02 交付](issues/02-call-result-recovery.md#answer)。DSH 未新增专用测试、未运行验证。
-
-- 03：Run 层 Expert 决策、原子反馈与选定工作交接已实现，停止/复盘/失败不制造 Attempt；支持纯测量、独立分析及最后结果解释。相关 Engine/research **114 passed**，三个恢复断点 **3 passed**，多结果复盘与只读观察贯通 **1 passed**，既有 observer **65 passed**，合入 01 后重点复跑 **10 passed**；见 [03 交付](issues/03-run-expert-feedback.md#answer)。DSH 未新增专用或真实验证。
-
-### 01：CLI 配置选择与冻结
-
-已统一四角色后端配置解析，冻结实际安装路径/argv、模型参数和来源；恢复不重新套用本机默认值，显式合同后端冲突拒绝启动。Reviewer 只共用安装定位，模型参数独立。观察入口提供只读安全投影；模板允许环境选择后端。
-
-必要检查：相关配置/引擎/预算/计量回归 126 passed；最终配置 21 passed；独立观察测试 1 passed；合入 02 后配置/计量回归 42 passed，diff 检查通过。组合 observer 检查在 AnyIO 测试客户端 fixture 进入时阻塞并已取消，未宣称通过。DSH 无新增专用测试或真实运行；真实 CLI 和工具边界仍待 05/07。
-
-- 04：调用边界暂停、受控进程有限取消及预算退出已实现；Reviewer 已接入同一持久派发/取消，公开交付持项目单写锁，交付评价/复测未知时保留工作区，补充研究/交付与角色配置回归 100 passed、交付相关重点 32 passed；未知终止保留工作区并阻塞，可靠完成与取消竞争保留可核对结果。已合入 01/03 并完成必要公共/Codex 回归，状态与具体检查见 [04 交付](issues/04-pause-stop-inflight.md#answer)。DSH 仅复用实现，未新增专用或真实验证。
-
-- 03 集成回归修订：六项旧空 Attempt 断言已改为核对 Run 失败 Call/计量及真实成果关联；无效计划保持既有成果与原始拒绝依据。完整结果模块及既有 DSH 假 CLI 回归 **39 passed**，无新增 DSH 测试或真实 DSH 运行；见 [03 交付](issues/03-run-expert-feedback.md#answer)。
-
-- 05：显式原生 Expert 会话续接及有原因的新 Call 材料重建、当前调用终态、CLI 切换额度起点已交付；普通恢复/新 Run 不重置，迟到旧用量不占新额度，项目生命周期硬限制保留。公共目标回归 77 通过，补充后最终目标回归 42 通过、Observer 新字段 2 通过。真实 Codex `0.165.0` 两独立进程以同一 session 续接成功（17811 / 35655 token），真实工具启动后取消 5.89 秒收住、无未知终止；[原件](../../work/s2-smoke/codex-05/)与 [05 明细](issues/05-cli-sessions-and-switch-budget.md#answer)。DSH 已实现、未运行验证；完整真实 Engine/并行/工具隔离留在 07，不以适配器探针替代。
-
-- 06：Attempt DAG 与默认三并发已实现；固定输入/独立工作区、声明产物归档、成果依赖放行及拒环、主线程写账本、正式计时排他、节点预算预留、并行控制与未知执行阻塞均通过夹具验证。新增 DAG **23 passed**；DAG/既有观察/提示词合批 **91 passed**，最后控制与恢复复跑 **5 passed**。既有核心相关 **179 passed**，唯一旧提示词长度失败经精简后原断言复验通过。细节见 [06 交付](issues/06-attempt-dag-concurrency.md#answer)。未进行真实 CLI 隔离/并行验收，留给 07；无新增 DSH 专用或真实验证。
-
-
-01 集成补查已修复原生默认漂移与同路径工具修复：Codex 从所选 native profile/配置解析并固定模型及受支持的非秘密 provider 路由，派发忽略可变用户配置；旧的未固定 native 选择只读保留，执行恢复明确阻塞。认证通过原 home/环境，不复制凭据；特殊 provider/歧义额外选择参数/未知模型明确报告能力限制，显式角色模型仍覆盖旧额外模型选项。DSH 原生默认解析不可用时要求显式 provider/model，原生路由与认证未实测。Python 3.10 使用条件 tomli 依赖；当前 3.12 未安装依赖。
-
-补查检查：模型/profile/provider 与同路径修复三项公开回归由红转绿；配置/计量/Codex 76 passed；切换预算与既有 DSH 35 passed；最终配置 31 passed，配置/计量/预算 56 passed，diff 检查通过。未知执行断言仅修正精确词序。观察公开投影及只读核对通过；HTTP fixture 的 AnyIO 等待已取消，未计为通过。无新增 DSH 专用测试或真实运行。
-
-01 缺工具补查：无法解析的裸命令同样冻结绝对定位，不因后来 PATH 安装同名工具改变旧 Run；同路径修复正例与 PATH 替换负例 2 passed，diff 检查通过。无适配器改动或额外 DSH 验证。
-
+- [01：CLI 选择与冻结](issues/01-cli-selection-and-freeze.md#answer)：统一四角色配置及来源，固定原生模型/profile/provider，保留同路径工具修复，拒绝默认值和 PATH 漂移。
+- [02：Call 与结果恢复](issues/02-call-result-recovery.md#answer)：派发前身份、原子回执与幂等记账；复用已有成果，未知执行保留阻塞，可靠未启动沿原 Attempt 新 Call 补完。
+- [03：Run 专家与反馈](issues/03-run-expert-feedback.md#answer)：选定工作后才建 Attempt，支持代码、测量及分析，持久反馈与批量解释，不制造停止/失败空轮。
+- [04：调用边界控制](issues/04-pause-stop-inflight.md#answer)：暂停收尾、有限取消和预算退出；Reviewer 复用持久调用，交付持单写锁，未知评价保留工作区。
+- [05：会话与切换额度](issues/05-cli-sessions-and-switch-budget.md#answer)：明确会话续接或有原因重建，显式换 CLI 才取得新额度起点，历史及项目硬限制保留；[适配器原件](../../work/s2-smoke/codex-05/)。
+- [06：DAG 与有界并行](issues/06-attempt-dag-concurrency.md#answer)：默认三并发、固定输入、产物依赖、计时排他、单写汇集、并行预算及中断恢复。
+- [07：工具边界与贯通](issues/07-tool-boundaries-and-delivery.md#answer)：实际读写/执行限制、配置与交付资产、真实 Codex 贯通；DSH 已实现、未运行验证。
 
 ### 07：工具边界与真实轻量贯通
 
 按调用保存 `tool-policy.json`，Codex 的原生权限配置、DSH 的单调拒绝 guard 与公共前台工具 runner 复用固定输入、独立工作区及授权成果路径；模型通信留在可信外层。工具环境不继承传输凭据，冻结评价/`.opc` 不可被 Designer 修改。准备仅写候选集成子目录、宿主自行验证合同/维护账本，避免将工具看不到宿主 runtime 误报为外部阻塞。符号链接越界、保护规则冲突和宽松 CLI 参数在派发前拒绝或明确报告能力限制；不为新文件 glob 放大父目录权限。观察 Call 可展开实际请求与工具权限。基准启动器已复用公共边界并清理重复内核实现。
 
-真实原件与复现脚本保存在现有忽略路径 [work/s2-smoke/codex-07](../../work/s2-smoke/codex-07/)；版本为 `codex-cli 0.165.0`，角色显式使用 `gpt-6.1-sol` / low，配置来源、预算与逐次 Call 原件沿该 toy 项目的单账本保存。`engine.py`、`control.py`、`observe.py`、`boundary.py` 是复现入口，`ARCHA_S2_SMOKE_ROOT` 可指定新的证据目录，setup 拒绝覆盖已有项目。
+真实原件与复现脚本保存在现有忽略路径 [work/s2-smoke/codex-07](../../work/s2-smoke/codex-07/)；版本为 `codex-cli 0.165.0`，角色显式使用 `gpt-6.1-sol` / low，配置来源、预算与逐次 Call 原件沿该 toy 项目的单账本保存。`engine.py`、`control.py`、`observe.py`、`boundary.py` 是复现入口；先将 `PYTHONPATH` 指向本集成源码根目录、`ARCHA_S2_SMOKE_ROOT` 指向新的证据目录，再用已具备项目依赖的 Python 运行。setup 拒绝覆盖已有项目。
 
 - [工具命令事件](../../work/s2-smoke/codex-07/boundary-directory-call/designer-events.jsonl)：`src/**` 的有效读写成功，冻结写入返回 EROFS，宿主确实存在的兄弟文件在工具视图不可见，socket 被拒绝，模拟传输凭据变量不存在。判断依据是实际工具 stdout/退出码，非模型自报。
 - 主 Run `run-c253403a1d8c`：真实 Expert 选定 left/right，两 Designer 使用同一父提交及不同工作区并行执行；pause 收住当前调用且没有新增评价/反馈调用。独立进程继续时复用两份 Designer 回执，最终 Expert 以同一 session `01a1917b-f047-7231-9436-e66bfc17d5f6` 分别解释两结果后停止。四个独立 Call ID、两份未隐式合并的候选内容、只读 Observer 核对见 [checks.stdout](../../work/s2-smoke/codex-07/checks.stdout)、[paused-status.json](../../work/s2-smoke/codex-07/paused-status.json)、[observer.json](../../work/s2-smoke/codex-07/observer.json)。暂停时尚待 Engine 登记节点结果，明确保留两份已完成调用；继续后补交接，不重复实施。
@@ -161,18 +143,16 @@
 
 能力限制：当前 Codex 0.165.0 Linux 对直接“可写单个文件”原生权限在 thread/start 前失败，错误为把文件当作目录创建 `.git/.aws` 挂载点；[原始失败](../../work/s2-smoke/codex-07/boundary-call/designer-stderr.txt)保留。适配器如实报告启动前能力失败，不改授父目录；真实有效写入仅验证明确的 `src/**` 子树。保护 glob 与子树权限相交时保守拒绝该目录写入，新 glob 路径和准备根文件可能需要显式可写子目录。公共 runner 当前要求 Linux x86_64 / Landlock ABI≥3，其他平台失败关闭。
 
-公共检查：边界/观察/参数拒绝 **11 passed**；配置/计量/边界 **56 passed**；边界与材料 **20 passed、12 subtests passed**；先前相关引擎回归的旧机制提示词断言已恢复并复验。`node --check` 与本地 `setuptools.build_meta.build_wheel` 的 DSH guard/公共 runner 资产包含检查通过，临时 wheel/build/egg-info 已清理。组合 HTTP Observer 检查在既有 AnyIO 等待处取消，未算通过；真实公开 Observer 核对保持账本次数、用量和控制不变。DSH **已实现、未运行验证**：只静态核查固定官方源码、JS 语法与公共隔离逻辑，没有新增 DSH 专用测试、安装、登录或真实运行。最终全量回归及双轴审查由集成分支收尾。
-
-07 合入原生配置与 Reviewer 公共控制修正后，相关配置/Codex/计量/边界 **95 passed**，Reviewer/交付/边界重点 **17 passed**，未知评价工作区恢复 **1 passed**；无新增真实调用。
+公共检查覆盖内核边界、只读观察、配置/计量、材料和交付控制。`node --check` 与本地 wheel 的 guard/runner 资产检查通过，临时构建产物已清理；个别子代理的组合 HTTP 检查因 AnyIO 等待取消，未计为通过，全量结果以集成分支复验为准。DSH **已实现、未运行验证**：仅固定源码核查、JS 语法与公共隔离验证，没有新增专用测试、安装、登录或真实运行。原生选择无法可靠解析时要求显式角色参数，旧的未固定 native 选择只读保留、不执行；详细条件见 01。
 
 ### 最终审查修正
 
 Standards 轴没有阻塞项；Spec 轴的两项问题与随后恢复审计的一个问题已集中修正：
 
 - 便携部署补入公共工具边界 Python 模块与现有 DSH guard 资产，继续复用原 allowlist/完整性清单；部署测试夹具的源码 helper 在收集期加载，避免历史快照缓存遮蔽测试包，原接入与历史断言保留。
-- 显式换 CLI 的新 Run 及同额度后续普通 Run 提供前序结果/决策回执与只读原件引用；不复制 trace、不复用旧会话、不合并当前待反馈。公共 Engine 与 Landlock 子进程证明可读旧原件、拒绝覆盖，旧 Run 保持原记录与待反馈。
+- 显式换 CLI 的新 Run 及同额度后续普通 Run 提供前序结果/决策回执与只读原件引用；不复制 trace、不复用旧会话、不合并当前待反馈。公共 Engine 与 Landlock 子进程证明可读旧原件、拒绝覆盖；原件迁移后按当前 bindings 重建引用，保留账本原始路径，旧 Run 的记录与待反馈不变。
 - Designer 的可靠未启动/基础设施失败保留原 Attempt，显式恢复以新 Call 和新原件目录补完；未知执行继续阻塞，独立就绪分支继续，累计成本来自既有账本而非另设累加状态。
 
-相关部署/切换材料/原工作恢复/独立分支检查 **22 passed、1 existing skipped**，未新增跳过或 DSH 专用测试；未追加真实模型调用。Python 3.10 便携 runtime 的 TOML 依赖边界见 [跨平台文档](../../docs/cross-platform.md)。集成分支最终全量复验后再关闭本规格。
+修正后的部署、前序只读材料、目录迁移及原工作补完检查通过；未新增跳过、DSH 专用测试或真实模型调用。Python 3.10 便携 runtime 的 TOML 依赖条件见 [跨平台文档](../../docs/cross-platform.md)。Standards 与 Spec 修正复查均无未解决项，最终全量复验通过；本规格关闭。
 
-P2 搬迁补查：前序决策回执引用与结果引用统一绑定当前 source Run 原件根，相对位置取自原 Call 材料 cwd；保留账本原始绝对路径。普通/搬迁两种公开场景及原工作补完、部署入口重点检查 **6 passed**，未追加真实模型或 DSH 验证。
+本次八个实现/修复工作树及已合并临时分支已清理，提交保留在集成分支；真实复现原件保留在 `work/s2-smoke/`。原有五份未提交文档修改保持原样，无平行状态报告或无用途构建产物。
