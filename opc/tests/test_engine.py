@@ -654,6 +654,9 @@ def test_resume_rejects_changed_frozen_permissions_without_rewriting_history(mak
         engine_for(root).run(max_attempts_now=0)
     assert e.ledger.run(first['run_id'])['revision'] == 'r0001'
     assert len(e.ledger.runs()) == 1
+    repeated = use_sequence(Engine(root, 't-toy', 'r0001'), Sequence([stop]))
+    repeated.run(new_run=True)
+    assert promote(repeated, source_run=repeated.run_id)['target_policy'] == 'advisory'
 
 
 def test_saved_call_receipt_recovers_without_reexecution_or_double_charge(make_project, engine_for, monkeypatch):
@@ -925,3 +928,100 @@ def test_unconfirmed_stop_retains_unknown_call_and_workspace(make_project, engin
                     except ProcessLookupError:
                         pass
                     os.waitpid(pid, 0)
+
+
+def test_numeric_target_alone_blocks_delivery_but_preserves_valid_progress(make_project, engine_for):
+    from opc.core.promote import promote
+    from opc.observer.adapter import ObserverAdapter
+    from opc.tests.test_research_loop import Sequence, plan, stop, use_sequence
+
+    evaluate = EVALUATE.replace('(x - 7) ** 2 + 1', '{3: 100, 4: 94, 5: 80, 6: 98}[x]').replace(
+        '"correct": 1', '"correct": int(x != 5)')
+    t = task(requirements=[])
+    t['acceptance']['target']['value'] = 90
+    t['acceptance']['objective']['min_rel_gain'] = .02
+    root = make_project(tsk=t, evaluate=evaluate)
+    e = use_sequence(engine_for(root), Sequence([plan(1), plan(2), plan(3), stop], [4, 5, 6]))
+    assert e.preflight()['ok']  # baseline need not meet the delivery target
+    summary = e.run()
+    assert summary['champion_metrics'] == {'loss': 94, 'correct': 1}
+    assert summary['target_met'] is False
+    assert outcomes(e) == ['improvement', 'no_gain', 'no_gain']
+    assert len(e.attempt_records()) == 3
+    rep = promote(e)
+    assert rep['complete'] is False and rep['promotable'] is False
+    assert rep['target_met'] is False
+    assert any(f['check'] == 'target' and f['severity'] == 'block' and '94' in f['text']
+               and '90' in f['text'] for f in rep['findings'])
+    observer = ObserverAdapter(root)
+    before = e.ledger.path.read_bytes()
+    assert observer.run(observer._id('run', e.run_id))['data']['acceptance']['value'] == 'failed'
+    assert e.ledger.path.read_bytes() == before
+
+
+@pytest.mark.parametrize('with_target', [False, True])
+def test_delivery_does_not_promote_optional_requirements_to_required(make_project, engine_for, with_target):
+    from opc.core.promote import promote
+    from opc.observer.adapter import ObserverAdapter
+    from opc.tests.test_research_loop import Sequence, stop, use_sequence
+
+    t = task(requirements=[{'id': 'OPTIONAL', 'text': 'extra discussion', 'verification': 'review', 'required': False}])
+    if with_target:
+        t['acceptance']['target']['value'] = 17
+    else:
+        t['acceptance'] = {}
+    e = use_sequence(engine_for(make_project(tsk=t)), Sequence([stop]))
+    e.run()
+    rep = promote(e)
+    assert rep['complete'] is True
+    assert rep['target_met'] is with_target
+    observer = ObserverAdapter(e.root)
+    assert observer.run(observer._id('run', e.run_id))['data']['acceptance']['value'] == 'passed'
+
+
+def test_target_met_does_not_skip_required_evidence(make_project, engine_for):
+    from opc.core.promote import promote
+    from opc.tests.test_research_loop import Sequence, stop, use_sequence
+
+    t = task(requirements=[{'id': 'REQUIRED', 'text': 'explain boundary', 'verification': 'review'}])
+    t['acceptance']['target']['value'] = 17
+    e = use_sequence(engine_for(make_project(tsk=t)), Sequence([stop]))
+    e.run()
+    rep = promote(e)
+    assert rep['target_met'] is True and rep['complete'] is False
+    assert rep['requirements'][0]['status'] == 'needs_review'
+
+
+def test_legacy_target_requires_explicit_semantic_revision_without_rewriting_history(make_project, engine_for):
+    from opc.core.engine import Engine
+    from opc.core.promote import promote
+    from opc.tests.test_research_loop import Sequence, stop, use_sequence
+
+    root = make_project(tsk=task(requirements=[]))
+    e = use_sequence(engine_for(root), Sequence([stop]))
+    e.run()
+    # Simulate a historical frozen Run written before hard target semantics.
+    snapshot = e.artifact_dir() / 'frozen/baseline.json'
+    legacy = json.loads(snapshot.read_text())
+    del legacy['target_policy']
+    snapshot.write_text(json.dumps(legacy))
+    first = promote(e)
+    assert first['complete'] is True and first['target_met'] is False
+    assert first['target_policy'] == 'advisory'
+    original_report = Path(first['report_dir']) / 'report.json'
+    original_bytes = original_report.read_bytes()
+    original_snapshot = snapshot.read_bytes()
+    revised = task(revision='r0002', requirements=[])
+    write(root / '.opc/tasks/t-toy/revisions/r0002/task.json', json.dumps(revised))
+    confirmation = dict(confirmed_by='user', source_run=e.run_id, from_revision='r0001', to_revision='r0002',
+                        changes={'target_policy': {'old': 'advisory', 'new': 'required'}})
+    receipt = root / '.opc/standards-confirmation.json'
+    receipt.write_text(json.dumps(confirmation))
+    second = promote(Engine(root, 't-toy', 'r0002'), source_run=e.run_id, standards_confirmation=receipt)
+    assert second['complete'] is False and second['target_policy'] == 'required'
+    assert second['execution_revision'] == 'r0001' and second['acceptance_revision'] == 'r0002'
+    assert original_report.read_bytes() == original_bytes and snapshot.read_bytes() == original_snapshot
+    assert len(e.ledger.runs()) == 1
+    repeated = use_sequence(Engine(root, 't-toy', 'r0001'), Sequence([stop]))
+    repeated.run(new_run=True)
+    assert promote(repeated, source_run=repeated.run_id)['target_policy'] == 'advisory'

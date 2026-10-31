@@ -222,7 +222,7 @@ class ObserverAdapter:
             self.issues.append(issue('source_invalid_shape', 'requirements 应为列表；未使用损坏字段作为完成条件'))
             return []
         return [dict(id=str(r.get('id') or ''), text=str(r.get('text') or ''), verification=r.get('verification') if isinstance(r.get('verification'), str) else None,
-                     result='unverified', tested_commit=None, evidence_refs=[], report_artifact_id=None)
+                     required=r.get('required', True), result='unverified', tested_commit=None, evidence_refs=[], report_artifact_id=None)
                 for r in rows or [] if isinstance(r, dict)]
 
     def _discover(self):
@@ -686,7 +686,7 @@ class ObserverAdapter:
                     raw_status = str(result.get('status') or '')
                     req.update(result='met' if raw_status in ('met', 'met_by_gates', 'met_by_review') else 'not_met' if raw_status.startswith('not_met') else 'pending_review' if raw_status == 'needs_review' else 'unverified',
                                tested_commit=selected, evidence_refs=[self._source(art)], report_artifact_id=art['id'])
-                if acceptance['value'] == 'passed' and any(r['result'] != 'met' for r in requirements):
+                if acceptance['value'] == 'passed' and any(r['required'] and r['result'] != 'met' for r in requirements):
                     acceptance = state('unknown', raw='complete=true', basis='recorded', note='总体结论与逐项证据不一致；无法确认验收通过')
                     self.issues.append(issue('report_inconsistent', '终验总体结论与逐项证据不一致'))
             prep = state('unknown', note='准备记录未明确关联此运行')
