@@ -78,7 +78,8 @@ def test_infra_failures_block_without_consuming_search_budget(make_project, engi
     e = engine_for(make_project(evaluate=evaluate))
     s = e.run()
     assert s["state"] == "blocked"
-    assert outcomes(e) == [Outcome.INFRA.value, Outcome.INFRA.value]
+    assert outcomes(e) == [None]  # incomplete evaluation resumes the same selected work
+    assert e.ledger.attempts(e.run_id)[0]["gates"][0]["status"] == "infra"
     assert s["spent"]["search_attempts"] == 0
 
 
@@ -102,7 +103,8 @@ def test_skipped_gate_is_rejected_by_default(make_project, engine_for):
     e = engine_for(make_project(comp=comp, extra={".opc/eval/perf.py": perf}))
     s = e.run()
     assert s["state"] == "blocked"
-    assert all(o == Outcome.INFRA.value for o in outcomes(e))
+    assert outcomes(e) == [None]
+    assert any(g["status"] == "skipped" for g in e.ledger.attempts(e.run_id)[0]["gates"])
 
 
 def test_degraded_evidence_is_not_compared_with_full_evidence(make_project, engine_for):
@@ -692,7 +694,7 @@ def test_dispatch_without_terminal_receipt_is_not_reissued(make_project, engine_
     with pytest.raises(OPCError, match='execution unknown'):
         e2.run()
     assert len(e2.ledger.calls(e2.run_id)) == 2
-    assert e2.ledger.attempts(e2.run_id)[0]['outcome'] is None
+    assert e2.ledger.attempts(e2.run_id) == []  # unknown Expert selected no work
 
 
 def test_evaluator_start_failure_retries_same_attempt_with_new_call(make_project, engine_for, monkeypatch):

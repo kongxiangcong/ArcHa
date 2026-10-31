@@ -638,7 +638,8 @@ class Engine:
                                                "champion move recovered on resume",
                                                a["gain"] or 0.0, Cost())
                     continue
-            if not any(c["attempt_no"] == n for c in self.ledger.calls(self.run_id)):
+            if (not any(c["attempt_no"] == n for c in self.ledger.calls(self.run_id))
+                    and not any(e["attempt"] == n for e in self.ledger.events(self.run_id, "work_selected"))):
                 raise OPCError("Attempt %d cannot resume: missing reliable Call/input records; "
                                "existing artifacts remain readable" % n)
         current = self.toolchain_digest(run["base_commit"])
@@ -975,6 +976,9 @@ class Engine:
                          if self.task.expert.kind == "scripted" else None} if acc.objective_metric else None,
             "baseline": {"commit": base["commit_sha"], "values": metric_view(base["metrics"]["values"])},
             "history": history, "background": background, "budget_left": self.budget_left(),
+            "pending_feedback": [{"attempt": a["attempt_no"], "evidence": str(self.attempt_dir(a["attempt_no"]))}
+                                 for a in decided if a["conclusion"] is None],
+            "evidence_root": str(self.artifact_dir()),
             "progress": {"target_met": acceptance.target_met(acc, champ[1].values),
                          "no_gain_streak": streak, "stagnation_hint": self.task.budget.max_stagnation},
             "candidates": [{"attempt": a["attempt_no"], "commit": a["candidate"],
@@ -1004,7 +1008,7 @@ class Engine:
         self._results_error = None
         return None
 
-    def save_conclusions(self, output: dict[str, Any], ctx: dict[str, Any], n: int) -> str | None:
+    def validate_conclusions(self, output: dict[str, Any]) -> str | None:
         pending = {a["attempt_no"] for a in self.attempt_records()
                    if a["plan"] and a["outcome"] and a["conclusion"] is None}
         conclusions = output.get("conclusions", [])
@@ -1015,14 +1019,85 @@ class Engine:
             if (not isinstance(row, dict) or type(row.get("attempt")) is not int
                     or row["attempt"] not in pending or row["attempt"] in seen
                     or not isinstance(row.get("conclusion"), str) or not row["conclusion"].strip()):
-                return "conclusions must identify pending attempts with nonempty text"
+                return "conclusions must identify pending attempts with an interpretation or follow-up"
+            if row["conclusion"].strip().rstrip(".!。！").casefold() in {
+                    "read", "reviewed", "acknowledged", "noted", "已读", "已阅读", "已阅"}:
+                return "conclusions require an interpretation or follow-up, not a read acknowledgment"
             seen.add(row["attempt"])
-        for row in conclusions:
-            self.ledger.event(self.run_id, "conclusion", row["attempt"],
-                              text=row["conclusion"], reviewed_by_attempt=n)
-        if conclusions:
-            self.sync_results()
         return None
+
+    def choose_work(self, ws: Workspaces) -> tuple[int | None, StopDecision | None]:
+        """Run-level decisions select work; receipt/decision replay never calls the expert twice."""
+        while True:
+            champ = self.ledger.champion(self.run_id) or (self.working_commit(), Measurements())
+            decisions = self.ledger.events(self.run_id, "expert_decision")
+            consumed = {e["body"]["decision_call"] for e in self.ledger.events(self.run_id, "work_selected")}
+            consumed.update(e["body"]["call_id"] for e in self.ledger.events(self.run_id, "decision_applied"))
+            decision = next((e["body"] for e in decisions if e["body"]["call_id"] not in consumed), None)
+            if decision is None:
+                loader = ws.checkout("expert-source", champ[0])
+                try:
+                    expert, _ = self.workers(loader)
+                    ctx = self.context(self.ledger.next_attempt_no(self.run_id), champ, None, loader)
+                finally:
+                    ws.drop(loader)
+                tree = self.artifact_dir() / "materials"
+                tree.mkdir(parents=True, exist_ok=True)
+                processed = {e["body"]["call_id"] for e in decisions}
+                processed.update(e["body"]["call_id"] for e in self.ledger.events(self.run_id, "expert_rejected"))
+                calls = [c for c in self.ledger.calls(self.run_id)
+                         if c["role"] == "expert" and c["attempt_no"] is None]
+                replay = next((c for c in calls if c["call_id"] not in processed), None)
+                log_dir = Path(replay["receipt_path"]).parent if replay else self.artifact_dir() / "expert" / ("decision-%06d" % (len(calls) + 1))
+                if replay:
+                    ctx = replay["input"]["context"]
+                write_json(tree / "research.json", ctx)
+                call = self.dispatch_call("expert", None, {"context": ctx}, tree, log_dir,
+                                          lambda: expert.propose(ctx, tree, log_dir))
+                if not call.ok:
+                    self.ledger.event(self.run_id, "expert_rejected", call_id=call.call_id, reason=call.error)
+                    return None, StopDecision("blocked", "expert worker unavailable: " + call.error[:200])
+                output = call.output or {} if call.exhausted else call.output
+                why = self.validate_conclusions(output) if isinstance(output, dict) else "expert reply is not an object"
+                if why is None and not (call.exhausted or output.get("exhausted") or output.get("select_work") is False):
+                    why = validate_plan(output)
+                    if why is None and any(not self.comp.is_editable(f) for f in output.get("files") or []):
+                        why = "plan names non-editable paths"
+                if why:
+                    self.ledger.event(self.run_id, "expert_rejected", call_id=call.call_id, reason=why)
+                    return None, StopDecision("blocked", "expert decision: " + why)
+                if call.exhausted:
+                    output = {**output, "exhausted": True}
+                self.ledger.record_decision(self.run_id, call.call_id, output)
+                decision = dict(call_id=call.call_id, output=output)
+            output, call_id = decision["output"], decision["call_id"]
+            if output.get("exhausted"):
+                pending = [a["attempt_no"] for a in self.attempt_records()
+                           if a["outcome"] and a["conclusion"] is None]
+                if pending:
+                    self.ledger.event(self.run_id, "decision_applied", call_id=call_id)
+                    return None, StopDecision("blocked", "expert stopped with pending feedback: " + str(pending))
+                selected = self.development_parent(output, champ[0], ws)
+                reason = output.get("stop_reason") or "expert has no further worthwhile work"
+                if not isinstance(reason, str):
+                    return None, StopDecision("blocked", "expert stop_reason must be text")
+                self.ledger.event(self.run_id, "selected_version", commit=selected)
+                self.ledger.event(self.run_id, "expert_stop", call_id=call_id, reason=reason)
+                self.ledger.event(self.run_id, "decision_applied", call_id=call_id)
+                return None, StopDecision("closed", "expert_exhausted: " + reason)
+            if output.get("select_work") is False:
+                self.ledger.event(self.run_id, "decision_applied", call_id=call_id)
+                self.hard_check()
+                continue
+            try:
+                parent = self.development_parent(output, champ[0], ws)
+            except OPCError as exc:
+                self.ledger.event(self.run_id, "decision_applied", call_id=call_id)
+                return None, StopDecision("blocked", "selected work input: " + str(exc))
+            focus = (self.comp.focus_areas[(self.ledger.next_attempt_no(self.run_id) - 1)
+                                         % len(self.comp.focus_areas)] if self.comp.focus_areas else None)
+            n = self.ledger.begin_selected_attempt(self.run_id, call_id, output, parent, champ[0], focus)
+            return n, None
 
     def save_candidate(self, ws: Workspaces, n: int, parent: str, patch: str, title: str) -> str:
         saved = [e for e in self.ledger.events(self.run_id, "candidate_saved") if e["attempt"] == n]
@@ -1078,12 +1153,16 @@ class Engine:
         champ = self.ledger.champion(self.run_id)
         if champ is None:
             champ = (self.working_commit(), Measurements())
-        focus = None
-        if self.comp.focus_areas:
-            focus = self.comp.focus_areas[(self.ledger.next_attempt_no(self.run_id) - 1)
-                                          % len(self.comp.focus_areas)]
         pending = self.ledger.open_attempts(self.run_id)
-        n = pending[0]["attempt_no"] if pending else self.ledger.begin_attempt(self.run_id, champ[0], focus)
+        if pending:
+            n = pending[0]["attempt_no"]
+        else:
+            n, stop = self.choose_work(ws)
+            if stop:
+                return Outcome.NO_CHANGE, stop
+        selected = next(a for a in self.ledger.attempts(self.run_id) if a["attempt_no"] == n)
+        plan = selected["plan"]
+        focus = selected["focus"]
         adir = self.attempt_dir(n)
         total = Cost(0.0, 0, 0.0)
         trees: list[Path] = []
@@ -1108,83 +1187,42 @@ class Engine:
             return outcome, None
 
         try:
-            loader = ws.checkout("a%06d/material-source" % n, champ[0])
-            trees.append(loader)
-            expert, designer = self.workers(loader)
-            ctx = self.context(n, champ, focus, loader)
-            ws.drop(loader)
-            trees.remove(loader)
-            expert_tree = ws.root / ("a%06d/material" % n)
-            expert_tree.mkdir(parents=True, exist_ok=True)
-            trees.append(expert_tree)
-            write_json(expert_tree / "research.json", ctx)
-            context_path = adir / "context.json"
-            if context_path.is_file():
-                ctx = json.loads(context_path.read_text(encoding="utf-8"))
-            else:
-                write_json(context_path, ctx)
-            call = self.dispatch_call("expert", n, {"context": ctx}, expert_tree, adir / "expert",
-                                      lambda: expert.propose(ctx, expert_tree, adir / "expert"))
-            charge("expert", call.cost, call)
-            if not call.ok:
-                out = self._worker_outcome(call)
-                finish(out, "expert: %s" % call.error)
-                if out is Outcome.INFRA:
-                    return out, StopDecision("blocked", "expert worker unavailable: %s"
-                                             % call.error[:200])
-                return out, None
-            plan = (call.output or {}) if call.exhausted else call.output
-            why = self.save_conclusions(plan, ctx, n) if isinstance(plan, dict) else "plan is not an object"
-            if why:
-                return finish(Outcome.WORKER_FAILED, "expert review: " + why)
-            if call.exhausted or plan.get("exhausted") is True:
-                reason = plan.get("stop_reason") or "expert has no further worthwhile work"
-                if not isinstance(reason, str):
-                    return finish(Outcome.WORKER_FAILED, "stop_reason must be text")
-                try:
-                    selected = self.development_parent(plan, champ[0], ws)
-                except OPCError as exc:
-                    return finish(Outcome.WORKER_FAILED, str(exc))
-                self.ledger.event(self.run_id, "selected_version", n, commit=selected)
-                self.ledger.event(self.run_id, "expert_stop", n, reason=reason)
-                finish(Outcome.NO_CHANGE, reason)
-                return Outcome.NO_CHANGE, StopDecision("closed", "expert_exhausted: " + reason)
-            why = validate_plan(plan)
-            if why is None:
-                outside = [f for f in plan.get("files") or [] if not self.comp.is_editable(f)]
-                if outside:
-                    why = "plan names non-editable paths: %s" % ", ".join(outside)
-            write_json(adir / "plan.json", plan)
-            self.ledger.update_attempt(self.run_id, n, "planned", plan=plan)
-            self.sync_results()
-            if why:
-                return finish(Outcome.WORKER_FAILED, "plan check: " + why)
-            self.hard_check()
-
+            parent_event = next(e for e in self.ledger.events(self.run_id, "development_parent")
+                                if e["attempt"] == n)
+            parent = parent_event["body"]["commit"]
+            loader = ws.checkout("a%06d/material-source" % n, parent)
             try:
-                parent = self.development_parent(plan, champ[0], ws)
-            except OPCError as exc:
-                return finish(Outcome.WORKER_FAILED, "plan check: " + str(exc))
-            self.ledger.event(self.run_id, "development_parent", n, commit=parent,
-                              base_attempt=plan.get("base_attempt"))
-            ctx["parent"] = {"commit": parent, "base_attempt": plan.get("base_attempt")}
+                _, designer = self.workers(loader)
+                context_path = adir / "context.json"
+                if context_path.is_file():
+                    ctx = json.loads(context_path.read_text(encoding="utf-8"))
+                else:
+                    ctx = self.context(n, champ, focus, loader)
+                    ctx["parent"] = {"commit": parent, "base_attempt": plan.get("base_attempt")}
+                    ctx["handoff"] = {"purpose": plan["changes"], "deliverables": plan.get("deliverables", []),
+                                      "inputs": plan.get("inputs", []), "evidence": str(self.artifact_dir())}
+                    write_json(context_path, ctx)
+            finally:
+                ws.drop(loader)
+            write_json(adir / "plan.json", plan)
+            self.hard_check()
             design_tree = ws.root / ("a%06d/designer" % n)
             if not design_tree.exists():
                 design_tree = ws.checkout("a%06d/designer" % n, parent)
             trees.append(design_tree)
-            call = self.dispatch_call("designer", n, {"plan": plan, "context": ctx, "parent": parent},
-                                      design_tree, adir / "designer",
-                                      lambda: designer.implement(plan, ctx, design_tree, adir / "designer"))
-            charge("designer", call.cost, call)
-            self.ledger.event(self.run_id, "execution", n, completed=call.ok,
-                              summary=(call.output or {}).get("summary", ""))
-            if not call.ok:
-                out = self._worker_outcome(call)
-                finish(out, "designer: %s" % call.error)
-                if out is Outcome.INFRA:
-                    return out, StopDecision("blocked", "designer worker unavailable: %s"
-                                             % call.error[:200])
-                return out, None
+            if plan.get("designer") is not False:
+                call = self.dispatch_call("designer", n, {"plan": plan, "context": ctx, "parent": parent},
+                                          design_tree, adir / "designer",
+                                          lambda: designer.implement(plan, ctx, design_tree, adir / "designer"))
+                charge("designer", call.cost, call)
+                self.ledger.event(self.run_id, "execution", n,
+                                  **{**(call.output or {}), "completed": call.ok, "error": call.error})
+                if not call.ok:
+                    out = self._worker_outcome(call)
+                    finish(out, "designer: %s" % call.error)
+                    if out is Outcome.INFRA:
+                        return out, StopDecision("blocked", "designer worker unavailable: %s" % call.error[:200])
+                    return out, None
             rep = sandbox(self.comp, design_tree, parent)
             write_json(adir / "sandbox.json", rep.as_dict())
             if not rep.ok:
@@ -1419,6 +1457,8 @@ class Engine:
                 "objective": m, "objective_gain": gain, "outcomes": outcomes,
                 "pending_conclusions": [a["attempt_no"] for a in self.attempt_records()
                                         if a["plan"] and a["outcome"] and a["conclusion"] is None],
+                "decisions": self.ledger.events(self.run_id, "expert_decision"),
+                "materials": str(self.artifact_dir() / "materials"),
                 "calls": self.ledger.calls(self.run_id),
                 "unresolved_accounting": self.ledger.unresolved_accounting(self.run_id),
                 "spent": self.spent(), "budget_left": self.budget_left(),

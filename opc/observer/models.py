@@ -166,6 +166,8 @@ class Run(Entity):
     calls: list[Ref] = Field(default_factory=list)
     artifacts: list[Ref] = Field(default_factory=list)
     report_refs: list[Ref] = Field(default_factory=list)
+    pending_feedback: list[int] = Field(default_factory=list)
+    decisions: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class Attempt(Entity):
@@ -183,6 +185,9 @@ class Attempt(Entity):
     next_step: TextFact | None = None
     parent_commit: str | None = None
     candidate_commit: str | None = None
+    feedback_state: str = "pending"
+    selected_by_call: str | None = None
+    reviewed_by_call: str | None = None
     calls: list[Ref] = Field(default_factory=list)
     artifacts: list[Ref] = Field(default_factory=list)
     usage: UsageView | None = None

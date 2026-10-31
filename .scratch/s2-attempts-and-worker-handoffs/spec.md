@@ -119,3 +119,5 @@
 ## 交付验证
 
 - 02：Call 派发、原子回执、事务内幂等扣费及恢复已实现；不再统一 abandoned。已保存成果复用、未知执行保留阻塞、评价失败沿原 Attempt 新 Call 补测；普通 Run 计量可补齐。Engine/计量恢复/研究循环首轮 127 通过，唯一过时中断断言更新后，新增交接与中断用例重跑通过；具体见 [02 交付](issues/02-call-result-recovery.md#answer)。DSH 未新增专用测试、未运行验证。
+
+- 03：Run 层 Expert 决策、原子反馈与选定工作交接已实现，停止/复盘/失败不制造 Attempt；支持纯测量、独立分析及最后结果解释。相关 Engine/research **114 passed**，三个恢复断点 **3 passed**，多结果复盘与只读观察贯通 **1 passed**，既有 observer **65 passed**；见 [03 交付](issues/03-run-expert-feedback.md#answer)。DSH 未新增专用或真实验证。

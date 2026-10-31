@@ -46,7 +46,7 @@ class Sequence:
 def stop(ctx):
     return {'exhausted': True, 'stop_reason': 'No worthwhile work remains for this task',
             'conclusions': [{'attempt': a['attempt'], 'conclusion': f"a{a['attempt']}: evidence supports capability; objective still uncertain"}
-                            for a in ctx['history'] if a['conclusion'] is None]}
+                            for a in ctx['pending_feedback']]}
 
 
 def use_sequence(e, seq):
@@ -128,9 +128,9 @@ def test_no_patch_measurements_are_fresh_and_different_from_not_executed(make_pr
         assert row['experiment']['status'] == 'completed'
         assert row['experiment']['cached'] is False
         assert row['experiment']['data'][0]['data']['metrics']['loss'] == 17
-    assert rows[2]['outcome'] == Outcome.WORKER_FAILED.value
-    assert rows[2]['experiment'] is None and rows[2]['execution'] is None
-    assert e.summary()['pending_conclusions'] == [1, 2, 3]  # resource cap: no extra call
+    assert len(rows) == 2  # invalid input selection is a Run decision failure, not work
+    assert e.summary()['state'] == 'blocked'
+    assert e.summary()['pending_conclusions'] == [1, 2]
     assert len(seq.contexts) == 3
 
 
@@ -150,7 +150,9 @@ def test_conclusions_cannot_be_attached_to_a_different_attempt(make_project, eng
     e = use_sequence(engine_for(make_project()), seq)
     e.run(max_attempts_now=2)
     assert e.attempt_records()[0]['conclusion'] is None
-    assert e.attempt_records()[1]['outcome'] == Outcome.WORKER_FAILED.value
+    assert len(e.attempt_records()) == 1
+    assert e.summary()['state'] == 'blocked'
+    assert e.ledger.events(e.run_id, 'expert_rejected')
     assert not e.ledger.events(e.run_id, 'conclusion')
 
 
@@ -279,7 +281,7 @@ def test_selected_delivery_and_review_reuses_exact_evidence(make_project, engine
     from opc.core.engine import Engine
     root = make_project(tsk=task(acceptance={}, requirements=[
         {'id': 'R1', 'text': 'usable', 'verification': 'review'}]))
-    e = use_sequence(engine_for(root), Sequence([plan(1), {'exhausted': True, 'base_attempt': 1}], [4]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), lambda ctx: {**stop(ctx), 'base_attempt': 1}], [4]))
     s = e.run()
     count = []
     original = Engine.evaluate_commit
@@ -294,7 +296,7 @@ def test_selected_delivery_and_review_reuses_exact_evidence(make_project, engine
     assert second['complete'] and second['evidence_source']
     assert len(count) == 1
     assert second['champion'] is None
-    assert len(e.attempt_records()) == 2
+    assert len(e.attempt_records()) == 1  # stop decision creates no execution node
     # A different selected version cannot borrow that receipt.
     e.ledger.event(e.run_id, 'selected_version', None, commit=s['baseline'])
     promote(e, review='codex')
@@ -318,8 +320,9 @@ def test_context_bounds_machine_data_and_history(make_project, engine_for):
     assert data['cases']['last'][-1]['latency'] == 1002
     raw = json.loads((e.attempt_dir(15) / 'eval/evaluation.json').read_text())
     assert len(raw['metrics']['values']) == 2158 and len(raw['data'][0]['data']['cases']) == 1000
-    assert len(expert_prompt(ctx)) < 2000
-    assert e.save_conclusions({'conclusions': []}, ctx, 17) is None
+    assert len(expert_prompt(ctx)) < 2600
+    assert len(ctx['pending_feedback']) == 15
+    assert len(e.ledger.events(e.run_id, 'conclusion')) == 15
 
 
 def test_development_local_steps_and_explicit_measurement(make_project, engine_for):
@@ -347,7 +350,7 @@ def test_direct_task_to_delivery_and_environment_invalidation(make_project, engi
     git(root, 'add', '-A'); git(root, 'commit', '-qm', 'confirmed direct task')
     e = use_sequence(engine_for(root), Sequence([plan(1)], [4]))
     e.run(max_attempts_now=1)
-    seq = Sequence([plan(2), {'exhausted': True, 'base_attempt': 2}], [7])
+    seq = Sequence([plan(2), lambda ctx: {**stop(ctx), 'base_attempt': 2}], [7])
     resumed = use_sequence(engine_for(root), seq)
     s = resumed.run()
     assert resumed.attempt_records()[1]['parent'] == resumed.attempt_records()[0]['candidate']
@@ -363,7 +366,7 @@ def test_direct_task_to_delivery_and_environment_invalidation(make_project, engi
 def test_selected_nonchampion_reports_its_own_measurement(make_project, engine_for):
     from opc.core.promote import promote
     e = use_sequence(engine_for(make_project()), Sequence([
-        plan(1), plan(2), {'exhausted': True, 'base_attempt': 2}], [7, 6]))
+        plan(1), plan(2), lambda ctx: {**stop(ctx), 'base_attempt': 2}], [7, 6]))
     e.run()
     r = promote(e)
     assert r['selected_metrics']['loss'] == 2
@@ -380,7 +383,7 @@ def test_delivery_missing_evidence_blocks(make_project, engine_for, monkeypatch,
     acc = {'constraints': [{'metric': 'missing', 'op': '==', 'value': 1}]} if case == 'metrics' else {}
     ev = EVALUATE+'\nraise SystemExit(1)\n' if case == 'gates' else EVALUATE
     e = use_sequence(engine_for(make_project(evaluate=ev, tsk=task(acceptance=acc, requirements=requirements))),
-                     Sequence([plan(1), {'exhausted': True, 'base_attempt': 0}], [4]))
+                     Sequence([plan(1), lambda ctx: {**stop(ctx), 'base_attempt': 0}], [4]))
     if case == 'metrics':
         with pytest.raises(OPCError, match='required metrics: missing'):
             e.run()
@@ -696,7 +699,7 @@ def test_delivery_confirmation_repeats_allow_diagnostic_failure(make_project, en
         'import json; exit(1 if json.load(open("params.json"))["x"] == 7 else 0)']})
     root = make_project(comp=comp, tsk=task(requirements=[
         {'id': 'D', 'text': 'diagnostic', 'gates': ['diagnostic'], 'required': False}]))
-    e = use_sequence(engine_for(root), Sequence([plan(1), {'exhausted': True, 'base_attempt': 1}], [7]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), lambda ctx: {**stop(ctx), 'base_attempt': 1}], [7]))
     s = e.run()
     report = promote(e, source_run=s['run_id'], confirm_repeats=2)
     assert report['complete'], report['findings']
@@ -721,3 +724,92 @@ def test_delivery_rejects_incomplete_hard_gate_receipts(make_project, engine_for
     report = promote(e, source_run=s['run_id'])
     assert not report['complete']
     assert any(f['check'] == 'gates' and 'not passed' in f['text'] for f in report['findings'])
+
+
+def test_run_expert_stop_does_not_create_attempt(make_project, engine_for):
+    e = use_sequence(engine_for(make_project()), Sequence([stop]))
+    result = e.run()
+    assert result['state'] == 'closed'
+    assert e.ledger.attempts(e.run_id) == []
+    expert_calls = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'expert']
+    assert len(expert_calls) == 1 and expert_calls[0]['attempt_no'] is None
+
+
+def test_measurement_can_skip_designer_and_last_result_is_interpreted(make_project, engine_for):
+    seq = Sequence([plan(1, designer=False, evaluate=True), stop])
+    e = use_sequence(engine_for(make_project()), seq)
+    result = e.run()
+    assert result['state'] == 'closed' and result['pending_conclusions'] == []
+    assert len(e.ledger.attempts(e.run_id)) == 1
+    assert not [c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer']
+    assert e.attempt_records()[0]['experiment']['cached'] is False
+    assert len({str(c['input']['tree']) for c in e.ledger.calls(e.run_id) if c['role'] == 'expert'}) == 1
+
+
+@pytest.mark.parametrize('handoff', ['receipt', 'decision', 'selection'])
+def test_run_decision_recovery_does_not_repeat_expert_or_selected_work(make_project, engine_for, monkeypatch, handoff):
+    root = make_project()
+    seq = Sequence([plan(1, evaluate=False)], [4])
+    e = use_sequence(engine_for(root), seq)
+    target = 'record_decision' if handoff == 'receipt' else 'begin_selected_attempt'
+    original = getattr(e.ledger, target)
+    def interrupt(*args, **kwargs):
+        if handoff == 'selection':
+            original(*args, **kwargs)
+        raise RuntimeError('handoff interrupted')
+    monkeypatch.setattr(e.ledger, target, interrupt)
+    with pytest.raises(RuntimeError, match='handoff interrupted'):
+        e.run(max_attempts_now=1)
+    assert len(seq.contexts) == 1
+    assert len(e.ledger.attempts(e.run_id)) == (1 if handoff == 'selection' else 0)
+    seq2 = Sequence([stop], [4])
+    resumed = use_sequence(engine_for(root), seq2)
+    result = resumed.run(max_attempts_now=1)
+    assert result['state'] == 'paused' and len(resumed.ledger.attempts(resumed.run_id)) == 1
+    assert seq2.contexts == []
+    assert len([c for c in resumed.ledger.calls(resumed.run_id) if c['role'] == 'expert']) == 1
+    assert len(resumed.ledger.events(resumed.run_id, 'expert_decision')) == 1
+    result = resumed.run(max_attempts_now=0)
+    assert len(resumed.ledger.attempts(resumed.run_id)) == 1
+
+
+def test_read_acknowledgment_does_not_clear_pending_feedback(make_project, engine_for):
+    seq = Sequence([plan(1, evaluate=False), {'exhausted': True,
+        'conclusions': [{'attempt': 1, 'conclusion': '已读。'}]}], [4])
+    e = use_sequence(engine_for(make_project()), seq)
+    result = e.run()
+    assert result['state'] == 'blocked' and result['pending_conclusions'] == [1]
+    assert len(e.ledger.attempts(e.run_id)) == 1
+    assert len(e.ledger.events(e.run_id, 'expert_decision')) == 1
+
+
+def test_review_only_decision_can_interpret_multiple_results_without_work(make_project, engine_for):
+    e = use_sequence(engine_for(make_project()), Sequence([plan(1, evaluate=False), plan(2, evaluate=False)], [4, 5]))
+    first = e.run(max_attempts_now=2)
+    assert first['pending_conclusions'] == [1, 2]
+    seq = Sequence([lambda ctx: {**stop(ctx), 'exhausted': False, 'select_work': False}, stop])
+    e._workers = (seq, seq)
+    result = e.run()
+    assert result['state'] == 'closed' and result['pending_conclusions'] == []
+    assert len(e.ledger.attempts(e.run_id)) == 2
+    conclusions = e.ledger.events(e.run_id, 'conclusion')
+    assert len(conclusions) == 2 and len({c['body']['reviewed_by_call'] for c in conclusions}) == 1
+    from opc.observer.adapter import ObserverAdapter
+    observer = ObserverAdapter(e.root)
+    ref = next(r for r in observer.overview()['data']['unlinked_runs'] if r['source_run_id'] == e.run_id)
+    run = observer.run(ref['id'])['data']
+    assert run['pending_feedback'] == []
+    assert len(run['decisions']) == 4
+
+
+def test_failed_run_expert_is_charged_without_creating_attempt(make_project, engine_for):
+    class FailedExpert:
+        def propose(self, ctx, tree, log_dir):
+            return WorkerCall('expert', False, Cost(1, 3, None), error='provider unavailable',
+                              extra={'infra': True, 'usage_complete': True})
+    failed = FailedExpert()
+    e = use_sequence(engine_for(make_project()), failed)
+    result = e.run()
+    assert result['state'] == 'blocked' and result['spent']['tokens'] == 3
+    assert e.ledger.attempts(e.run_id) == []
+    assert e.ledger.calls(e.run_id)[-1]['attempt_no'] is None

@@ -772,6 +772,9 @@ class ObserverAdapter:
                           phase='onboard' if row.get('revision') == 'preparation' else 'loop', last_activity_at=self.source_at,
                           versions=versions, requirements=requirements, metrics=metrics, usage=self._usage(row, data['charges'], events, contract),
                           task_usage=self._task_usage(row, contract),
+                          pending_feedback=[a['attempt_no'] for a in data['attempts']
+                                            if a.get('outcome') and not any(e['kind'] == 'conclusion' and e.get('attempt_no') == a['attempt_no'] for e in events)],
+                          decisions=[e['body'] for e in events if e['kind'] == 'expert_decision'],
                           attempts=attempts, calls=call_refs, artifacts=[ref(a) for a in {a['id']: a for a in artifacts}.values()], report_refs=report_refs,
                           meta=run_meta)
             self._attempt_cache = getattr(self, '_attempt_cache', {})
@@ -819,6 +822,9 @@ class ObserverAdapter:
                    conclusion=fact(conclusion.get('text'), 'conclusion'), gaps=fact(conclusion.get('gaps'), 'conclusion'), next_step=fact(conclusion.get('next_step'), 'conclusion'),
                    parent_commit=(projected.get('development_parent') or {}).get('commit') or row.get('champion_before'),
                    candidate_commit=(projected.get('candidate_saved') or {}).get('commit'),
+                   feedback_state='interpreted' if conclusion.get('text') else 'pending' if outcome else 'awaiting_result',
+                   selected_by_call=(projected.get('work_selected') or {}).get('decision_call'),
+                   reviewed_by_call=conclusion.get('reviewed_by_call'),
                    calls=[ref(c, c['role']) for c in self.calls.values() if c.get('run_id') == rid and c.get('attempt_id') == ident],
                    artifacts=attempt_artifacts + event_artifacts, usage=None, meta=meta([self._source(plan_art)]))
         if not hasattr(self, '_attempt_cache'):
@@ -855,7 +861,7 @@ class ObserverAdapter:
         body = event['body']
         ident = self._id('call', row['run_id'] + ':' + str(event['seq']))
         role = body.get('role') if isinstance(body.get('role'), str) else 'unknown'
-        provider_id = body.get('call_id') if isinstance(body.get('call_id'), str) else None
+        provider_id = body.get('session_id') or (body.get('call_id') if isinstance(body.get('call_id'), str) else None)
         log_dir = body.get('log_dir') if isinstance(body.get('log_dir'), str) else None
         provider = None
         log_path = None
