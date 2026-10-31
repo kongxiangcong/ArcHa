@@ -322,3 +322,29 @@ def test_explicit_role_model_still_outranks_legacy_extra_args(make_project, engi
     argv = json.loads(request.read_text())["argv"]
     assert "--model=legacy-model" not in argv
     assert argv[argv.index("-m") + 1] == "role-model"
+
+
+def test_missing_executable_is_frozen_without_later_path_substitution(make_project, engine_for, fake_codex, monkeypatch):
+    import os
+    name = "codex-unavailable-s2"
+    root = make_project(tsk=task(workers={"expert": {"kind": "codex", "binary": name},
+                                        "designer": {"kind": "codex", "binary": name}}))
+    monkeypatch.chdir(root)
+    first = engine_for(root)
+    paused = first.run(max_attempts_now=0)
+    frozen = paused["workers"]["expert"]["binary"]
+    assert Path(frozen).is_absolute()
+    assert frozen == str(root / name)
+    replacement_dir = Path(fake_codex).parent / "changed-path"
+    replacement_dir.mkdir()
+    marker = replacement_dir / "started"
+    replacement = replacement_dir / name
+    replacement.write_text('#!/usr/bin/env python3\nfrom pathlib import Path\nPath(%r).touch()\n' % str(marker))
+    replacement.chmod(0o755)
+    monkeypatch.setenv("PATH", str(replacement_dir) + os.pathsep + os.environ["PATH"])
+    resumed = engine_for(root)
+    result = resumed.run()
+    assert result["run_id"] == paused["run_id"]
+    assert result["workers"]["expert"]["binary"] == frozen
+    assert result["state"] == "blocked"
+    assert not marker.exists()
