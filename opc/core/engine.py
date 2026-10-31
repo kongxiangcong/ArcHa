@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import time
 import sqlite3
 import threading
@@ -786,6 +787,12 @@ class Engine:
         finally:
             ws.drop_all()
 
+    def delivery_evidence_key(self, commit: str, evaluator: str, toolchain: str) -> dict:
+        return dict(delivery_policy=2, diagnostic_gates=sorted(self.diagnostic_gates()),
+                    commit=commit, evaluator=evaluator, toolchain=toolchain, task=self.task.digest,
+                    environment=hashlib.sha256(json.dumps(dict(process=dict(os.environ), component=self.comp.env,
+                        gates=[gate.env for gate in self.comp.gates]), sort_keys=True).encode()).hexdigest())
+
     def measure_champion(self, ws: Workspaces, commit: str, attempt: int | None,
                          reason: str, *, fresh: bool = False) -> Measurements:
         out = self.artifact_dir() / "champion" / ("%s-%d" % (commit[:12], time.time_ns()))
@@ -849,8 +856,24 @@ class Engine:
             return
         champ = self.ledger.champion(self.run_id)
         if champ is None:
-            self.log("measuring baseline %s" % run["base_commit"][:12])
-            meas = self.measure_champion(ws, run["base_commit"], None, "baseline")
+            meas = None
+            origins = self.ledger.events(self.run_id, 'delivery_repair')
+            source = origins[-1]['body'].get('source_report') if origins else None
+            if source:
+                report = json.loads(Path(source).read_text(encoding='utf-8'))
+                evaluation = report.get('evaluation') or {}
+                key = self.delivery_evidence_key(run['base_commit'], run['evaluator_digest'], current)
+                if (report.get('evidence_key') == key and evaluation.get('failure') is None and evaluation.get('metrics')
+                        and not any(f['severity'] == 'block' and f['check'] in ('gates', 'metrics') for f in report['findings'])):
+                    saved = Measurements.from_dict(evaluation['metrics'])
+                    if saved.source_commit == run['base_commit']:
+                        meas = saved
+                        self.ledger.event(self.run_id, 'measurement_baseline', commit=run['base_commit'],
+                                          metrics=meas.as_dict(), evidence_source=source, mode='referenced')
+                        self.ledger.set_champion(self.run_id, run['base_commit'], meas, None, 'baseline referenced from ' + source)
+            if meas is None:
+                self.log("measuring baseline %s" % run["base_commit"][:12])
+                meas = self.measure_champion(ws, run["base_commit"], None, "baseline")
             self.move_champion_ref(run["base_commit"], read_ref(self.root, self.ref))
             self.log("baseline metrics %s" % json.dumps(meas.values))
             return
@@ -2264,8 +2287,9 @@ class Engine:
             return self.run()
         # Every repair uses task-wide accounting, including projects without preparation.
         used = self.ledger.task_totals(self.task.task_id)
-        if (self.task.budget.max_wall_seconds is not None and used["wall_seconds"] >= self.task.budget.max_wall_seconds) or (
-            self.task.budget.max_tokens is not None and used["tokens"] >= self.task.budget.max_tokens):
+        budget = self.effective_budget()
+        if (budget.max_wall_seconds is not None and used["wall_seconds"] >= budget.max_wall_seconds) or (
+            budget.max_tokens is not None and used["tokens"] >= budget.max_tokens):
             raise OPCError("task budget exhausted; no repair dispatch")
         self.hard_check()
         with self.ledger.writer():

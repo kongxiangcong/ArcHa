@@ -244,7 +244,8 @@ def test_confirmed_target_defect_is_not_hidden_by_reviewer_execution_failure(mak
     assert {f['check'] for f in failed['next_step']['gaps']} >= {'target', 'review'}
 
 
-def test_exploration_repairs_explanation_on_same_code_without_remeasuring(make_project, engine_for, monkeypatch, capsys):
+@pytest.mark.parametrize('objective', [None, dict(metric='loss', direction='minimize', min_rel_gain=0.0)])
+def test_exploration_repairs_explanation_on_same_code_without_remeasuring(make_project, engine_for, monkeypatch, capsys, objective):
     from opc.core.engine import Engine
     from opc.cli import main
     from opc.observer.adapter import ObserverAdapter
@@ -255,12 +256,12 @@ def test_exploration_repairs_explanation_on_same_code_without_remeasuring(make_p
         evaluations.append((self.run_id, args[1]))
         return evaluate(self, *args, **kwargs)
     monkeypatch.setattr(Engine, 'evaluate_commit', measured)
-    root = make_project(tsk=task(acceptance={}, requirements=[
+    root = make_project(tsk=task(acceptance={'objective': objective}, requirements=[
         dict(id='TRUTH', text='Decide universal speedup', verification='review'),
         dict(id='BOUNDARY', text='Explain boundary; core unknown blocks completion', verification='review')]))
     c = dict(claim(), status='refuted', reason='Valid short-field counterexample')
-    initial = use_sequence(engine_for(root), Sequence([lambda ctx: dict(request(ctx), claims=[c],
-        delivery_claims=[dict(claim_id='copy', version=1)])]))
+    initial = use_sequence(engine_for(root), Sequence(([plan(1)] if objective else []) + [lambda ctx: dict(request(ctx), claims=[c],
+        delivery_claims=[dict(claim_id='copy', version=1)])], [4] if objective else []))
     chosen = initial.run()
     reviews = []
     def review(self, role, prompt, *args):
@@ -291,7 +292,13 @@ def test_exploration_repairs_explanation_on_same_code_without_remeasuring(make_p
     assert accepted['evidence_source'] == str(report_path)
     assert len(evaluations) == count  # includes preflight: repair must not repeat it
     assert len(reviews) == 2 and len(repaired.ledger.runs()) == 2
-    assert all(c['role'] != 'designer' for run in repaired.ledger.runs() for c in repaired.ledger.calls(run['run_id']))
+    assert not [call for call in repaired.ledger.calls(repaired.run_id) if call['role'] in ('designer', 'evaluator')]
+    if objective:
+        assert failed['baseline_metrics']['loss'] == 17 and failed['selected_metrics']['loss'] == 10
+        assert result['baseline_metrics']['loss'] == 10
+        assert accepted['baseline_source'] == str(report_path) and accepted['baseline_mode'] == 'referenced'
+    else:
+        assert accepted['baseline_source'] is None and accepted['baseline_mode'] == 'not_applicable'
     assert accepted['candidate']['claims'][0]['version'] == 2
     assert report_path.read_bytes() == original
     monkeypatch.setattr('opc.cli._engine', lambda *a, **k: repaired)
@@ -378,3 +385,60 @@ def test_reproduction_start_failure_retries_only_missing_confirmations(make_proj
     comparison = promote(later, source_run=later.run_id, confirm_repeats=2)
     assert comparison['confirm']['samples']['baseline'] == [1, 1]
     assert comparison['confirm']['worst_case_gain'] == 0
+
+
+@pytest.mark.parametrize('authorized, hard_limit, allowed', [(20, None, True), (10, None, False), (20, 10, False)])
+def test_repair_respects_authorized_effective_budget_without_resetting_usage(make_project, engine_for, authorized, hard_limit, allowed):
+    contract = task(acceptance={}, requirements=[dict(id='R', text='loss one', check=dict(metric='loss', op='<=', value=1))])
+    contract['budget']['max_tokens'] = 10
+    if hard_limit is not None:
+        contract['hard_limits'] = dict(max_tokens=hard_limit)
+    root = make_project(tsk=contract)
+    initial = use_sequence(engine_for(root), Sequence([request]))
+    from opc.tests.conftest import git
+    base = git(root, 'rev-parse', 'HEAD').strip()
+    files = initial.evaluator_digest(base)[1] + ['.opc/tasks/t-toy/revisions/r0001/task.json']
+    scope = initial.ledger.preparation_scope('t-toy')
+    initial.ledger.event(scope, 'preparation', task_id='t-toy', revision='r0001', state='ready',
+                         files={rel: 'git-blob:' + git(root, 'rev-parse', base + ':' + rel).strip() for rel in files})
+    initial.run()
+    failed = promote(initial)
+    initial.ledger.charge(initial.run_id, None, 'expert', Cost(0, 10, 0))
+    scope = initial.ledger.preparation_scope('t-toy')
+    initial.ledger.event(scope, 'task_budget_authorized', max_tokens=authorized)
+    repair = use_sequence(engine_for(root), Sequence([plan(1), request], [7]))
+    if allowed:
+        result = repair.repair_delivery(Path(failed['report_dir']) / 'report.json')
+        assert result['spent']['tokens'] == 10 and result['budget_left']['tokens'] == 10
+        assert len(repair.ledger.runs()) == 2
+        assert promote(repair, source_run=repair.run_id)['complete']
+    else:
+        with pytest.raises((OPCError, BudgetExhausted), match='budget exhausted|max_tokens'):
+            repair.repair_delivery(Path(failed['report_dir']) / 'report.json')
+        assert len(repair.ledger.runs()) == 1
+    assert repair.ledger.task_totals('t-toy')['tokens'] == 10
+
+
+@pytest.mark.parametrize('broken', [False, True])
+def test_repair_baseline_environment_drift_measures_or_exposes_failure(make_project, engine_for, monkeypatch, broken):
+    flag = 'ARCHA_REVIEW_BASELINE_DRIFT'
+    evaluate = 'import os\n' + EVALUATE.replace('(x - 7) ** 2 + 1', '(19 if os.environ.get(' + repr(flag) + ') else (x - 7) ** 2 + 1)')
+    if broken:
+        evaluate += '\nif os.environ.get(' + repr(flag) + '): raise SystemExit(75)\n'
+    root = make_project(tsk=task(acceptance=dict(objective=dict(metric='loss', direction='minimize')),
+        requirements=[dict(id='R', text='loss one', check=dict(metric='loss', op='<=', value=1))]), evaluate=evaluate)
+    initial = use_sequence(engine_for(root), Sequence([request]))
+    initial.run()
+    failed = promote(initial)
+    assert failed['selected_metrics']['loss'] == 17
+    monkeypatch.setenv(flag, 'changed')
+    repair = use_sequence(engine_for(root), Sequence([stop]))
+    if broken:
+        with pytest.raises(OPCError, match='fails its own gates.*infra'):
+            repair.repair_delivery(Path(failed['report_dir']) / 'report.json')
+        assert repair.summary()['champion_metrics'] is None
+    else:
+        result = repair.repair_delivery(Path(failed['report_dir']) / 'report.json')
+        assert result['baseline_metrics']['loss'] == 19
+        assert not repair.ledger.events(repair.run_id, 'measurement_baseline')
+    assert len([call for call in repair.ledger.calls(repair.run_id) if call['role'] == 'evaluator']) == 1
