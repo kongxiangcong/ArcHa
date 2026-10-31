@@ -64,6 +64,12 @@ def current_claims(bodies) -> list[dict]:
     return list(current.values())
 
 
+class ClaimConflict(OPCError):
+    def __init__(self, conflicts):
+        super().__init__('claim revision conflicts: ' + json.dumps(conflicts))
+        self.conflicts = conflicts
+
+
 class Ledger:
     def __init__(self, path: Path):
         self.path = path
@@ -308,22 +314,35 @@ class Ledger:
                             dict(call_id=call_id, reason="usage unavailable", charged=cost,
                                  log_dir=result.get("log_dir", ""), error=result.get("error", "")))
 
-    def claims(self, task_id: str, claim_id: str | None = None) -> list[dict]:
-        """Current claim revisions; the event journal remains the authority."""
+    def claims(self, task_id: str, claim_id: str | None = None, *,
+               version: int | None = None, history: bool = False) -> list[dict]:
+        """Current or historical revisions from the authoritative event journal."""
         rows = self.db.execute(
             "SELECT e.body FROM events e JOIN runs r ON r.run_id=e.run_id "
             "WHERE r.task_id=? AND e.kind='claim_registered' ORDER BY e.seq", (task_id,))
-        return [c for c in current_claims(json.loads(row[0]) for row in rows)
-                if claim_id is None or c["claim_id"] == claim_id]
+        bodies = [json.loads(row[0]) for row in rows]
+        selected = bodies if history or version is not None else current_claims(bodies)
+        return [c for c in selected if (claim_id is None or c["claim_id"] == claim_id)
+                and (version is None or c["version"] == version)]
 
     def record_decision(self, run_id: str, call_id: str, output: dict) -> None:
         """A decision and its feedback acknowledgments are one durable handoff."""
         with self.tx() as db:
-            self._event(db, run_id, "expert_decision", None, dict(call_id=call_id, output=output))
+            if any(e["body"]["call_id"] == call_id for e in self.events(run_id, "expert_decision")):
+                return
             task_id = self.run(run_id)["task_id"]
+            current = {c["claim_id"]: c for c in self.claims(task_id)} if output.get("claims") else {}
+            conflicts = [dict(claim_id=row["claim_id"], base_version=row.get("base_version"),
+                              current_version=current.get(row["claim_id"], {}).get("version"))
+                         for row in output.get("claims", [])
+                         if row.get("base_version") != current.get(row["claim_id"], {}).get("version")]
+            if conflicts:
+                raise ClaimConflict(conflicts)
+            self._event(db, run_id, "expert_decision", None, dict(call_id=call_id, output=output))
             for row in output.get("claims", []):
                 self._event(db, run_id, "claim_registered", None,
-                            dict(row, task_id=task_id, run_id=run_id, version=1,
+                            dict(row, task_id=task_id, run_id=run_id,
+                                 version=(row.get("base_version") or 0) + 1,
                                  registered_by_call=call_id))
             for row in output.get("conclusions", []):
                 self._event(db, run_id, "conclusion", row["attempt"],

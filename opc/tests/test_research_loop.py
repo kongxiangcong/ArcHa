@@ -1112,3 +1112,130 @@ def test_multiple_claims_share_observation_and_observer_is_read_only(make_projec
         ('general', 'unresolved'), ('long', 'supported')]
     assert observed['claims'][1]['counterevidence'][0]['attempt'] == 1
     assert ledger_path.read_bytes() == before
+
+
+
+def test_claim_revision_preserves_broad_identity_and_supported_limited_claim(make_project, engine_for):
+    broad = dict(claim_id='copy-all', statement='Reducing copying always improves speed',
+                 scope='Comparable long and short fields', status='unresolved',
+                 reason='Short fields not tested', evidence=[], unresolved=['Short fields'])
+    limited = dict(claim_id='copy-long', statement='Reducing copying helps long fields',
+                   scope='Long fields', status='supported', reason='Long field observation improved',
+                   evidence=[], related_claims=['copy-all'])
+    def initial(ctx):
+        return dict(plan(2), claims=[broad, limited], conclusions=[
+            dict(attempt=1, conclusion='Long fields improve; broad proposition remains uncertain')])
+    def revise(ctx):
+        assert ctx['claims'][0]['status'] == 'unresolved'
+        return dict(stop(ctx), claims=[dict(broad, base_version=1, status='refuted',
+            reason='Valid comparable short field counterexample is within scope', unresolved=[],
+            counterevidence=[dict(run_id=e.run_id, attempt=2, artifact='eval/evaluation.json')])])
+    e = use_sequence(engine_for(make_project()), Sequence([plan(1), initial, revise], [4, 0]))
+    result = e.run()
+    assert result['state'] == 'closed'
+    assert [(c['claim_id'], c['version'], c['status']) for c in result['claims']] == [
+        ('copy-all', 2, 'refuted'), ('copy-long', 1, 'supported')]
+    assert e.claims('copy-all', version=1)[0]['status'] == 'unresolved'
+    assert [c['version'] for c in e.claims('copy-all', history=True)] == [1, 2]
+    assert e.claims('copy-all', version=2)[0]['reason'].startswith('Valid comparable')
+    assert result['pending_conclusions'] == []
+    assert not e.ledger.events(e.run_id, 'promotion_report')
+
+
+def test_claim_conflict_rejects_entire_reply_and_reconsiders_latest_evidence(make_project, engine_for):
+    broad = dict(claim_id='copy-all', statement='Reducing copying always improves speed',
+                 scope='Comparable long and short fields', status='unresolved', reason='Need evidence', evidence=[])
+    limited = dict(claim_id='copy-long', statement='Reducing copying helps long fields',
+                   scope='Long fields', status='supported', reason='Long field improved', evidence=[])
+    def first(ctx):
+        return dict(plan(2), claims=[broad, limited], conclusions=[dict(attempt=1,
+                    conclusion='Long fields support only the limited claim')])
+    def updated(ctx):
+        return dict(select_work=False, claims=[dict(broad, base_version=1,
+                    reason='Short field validity requires analysis')])
+    def stale(ctx):
+        return dict(plan(3), claims=[dict(broad, base_version=1, status='refuted'),
+                                   dict(limited, base_version=1, status='unresolved')],
+                    conclusions=[dict(attempt=2, conclusion='Short field regression refutes broad claim')])
+    def reconsider(ctx):
+        assert [(c['version'], c['status']) for c in ctx['claims']] == [(2, 'unresolved'), (1, 'supported')]
+        assert [a['attempt'] for a in ctx['pending_feedback']] == [2]
+        assert ctx['decision_conflicts'][-1]['conflicts'] == [dict(
+            claim_id='copy-all', base_version=1, current_version=2)]
+        assert len(e.attempt_records()) == 2
+        assert (e.attempt_dir(2) / 'eval/evaluation.json').is_file()
+        replies = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'expert']
+        rejected_call = ctx['decision_conflicts'][-1]['call_id']
+        assert any(c['call_id'] == rejected_call and c['result']['output']['claims'][0]['base_version'] == 1
+                   for c in replies)
+        return dict(stop(ctx), claims=[dict(broad, base_version=2, status='refuted',
+                    reason='Valid short field counterexample; latest validity concern resolved')])
+    seq = Sequence([plan(1), first, updated, stale, reconsider], [4, 0])
+    e = use_sequence(engine_for(make_project()), seq)
+    result = e.run()
+    assert result['state'] == 'closed'
+    assert [(c['version'], c['status']) for c in result['claims']] == [(3, 'refuted'), (1, 'supported')]
+    assert len(seq.parents) == 2 and len(e.attempt_records()) == 2
+    assert result['pending_conclusions'] == []
+    assert len(e.claims('copy-long', history=True)) == 1
+    assert len(result['decision_conflicts']) == 1
+    from opc.observer.adapter import ObserverAdapter
+    observer = ObserverAdapter(e.root)
+    observed = observer.run(observer._id('run', e.run_id))['data']
+    assert [(c['version'], c['status']) for c in observed['claim_history'] if c['claim_id'] == 'copy-all'] == [
+        (1, 'unresolved'), (2, 'unresolved'), (3, 'refuted')]
+
+
+@pytest.mark.parametrize('after_selection', [False, True])
+def test_claim_revision_recovery_keeps_one_revision_and_one_selected_work(make_project, engine_for, monkeypatch, after_selection):
+    claim = dict(claim_id='copy-all', statement='Reducing copying always improves speed',
+                 scope='Comparable long and short fields', status='unresolved', reason='Need short fields', evidence=[])
+    def initial(ctx):
+        return dict(plan(2), claims=[claim], conclusions=[dict(attempt=1,
+                    conclusion='Long field observation is not yet sufficient')])
+    root = make_project()
+    e = use_sequence(engine_for(root), Sequence([plan(1), initial], [4, 0]))
+    e.run(max_attempts_now=2)
+    revised = dict(plan(3, evaluate=False), claims=[dict(claim, base_version=1, status='refuted',
+                reason='Valid short field counterexample')], conclusions=[dict(attempt=2,
+                conclusion='Comparable short field result refutes broad proposition')])
+    seq = Sequence([revised])
+    e.workers = lambda tree: (seq, seq)
+    original = e.ledger.begin_selected_attempt
+    def interrupt(*args, **kwargs):
+        if after_selection:
+            original(*args, **kwargs)
+        raise RuntimeError('revision handoff interrupted')
+    monkeypatch.setattr(e.ledger, 'begin_selected_attempt', interrupt)
+    with pytest.raises(RuntimeError, match='revision handoff interrupted'):
+        e.run()
+    assert e.claims('copy-all')[0]['version'] == 2
+    assert len(e.claims('copy-all', history=True)) == 2
+    expert_calls = [c['call_id'] for c in e.ledger.calls(e.run_id) if c['role'] == 'expert']
+    seq2 = Sequence([stop], [5])
+    restored = use_sequence(engine_for(root), seq2)
+    result = restored.run(max_attempts_now=1)
+    assert result['state'] == 'paused'
+    assert len(restored.attempt_records()) == 3 and len(seq2.parents) == 1
+    assert seq2.contexts == []
+    assert [c['call_id'] for c in restored.ledger.calls(restored.run_id) if c['role'] == 'expert'] == expert_calls
+    assert [c['version'] for c in restored.claims('copy-all', history=True)] == [1, 2]
+    assert restored.summary()['pending_conclusions'] == [3]
+    before = restored.ledger.totals(restored.run_id)
+    restored.run(max_attempts_now=0)
+    assert restored.ledger.totals(restored.run_id) == before
+
+
+def test_revision_requires_basis_but_allows_expert_editorial_wording(make_project, engine_for):
+    claim = dict(claim_id='copy-all', statement='Reducing copying always improves speed',
+                 scope='Comparable long and short fields', status='unresolved', reason='Need evidence', evidence=[])
+    editorial = dict(claim, base_version=1, statement='Reducing copying always speeds execution',
+                     reason='Editorial wording; proposition and scope unchanged')
+    seq = Sequence([dict(plan(1), claims=[claim]), dict(select_work=False, claims=[editorial]),
+                    dict(stop_reason='done', exhausted=True, claims=[dict(editorial, base_version=None)])])
+    e = use_sequence(engine_for(make_project()), seq)
+    result = e.run()
+    assert result['state'] == 'blocked' and 'base_version' in result['stop_reason']
+    assert e.claims('copy-all')[0]['version'] == 2
+    assert e.claims('copy-all', version=1)[0]['statement'] == claim['statement']
+    assert result['pending_conclusions'] == [1]
