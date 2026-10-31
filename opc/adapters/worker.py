@@ -76,6 +76,15 @@ PLAN_SCHEMA["properties"]["works"] = {"type": ["array", "null"], "items": {
 PLAN_SCHEMA["required"].append("works")
 
 
+PLAN_SCHEMA["properties"].update({
+    "finish": {"type": ["string", "null"], "enum": [None, "request_acceptance", "close_incomplete"],
+               "description": "null continues; request_acceptance selects a candidate for contract checks; close_incomplete stops without acceptance"},
+    "gaps": {"type": "array", "items": {"type": "string"}, "description": "remaining requirements or evidence gaps at incomplete closeout"},
+    "reopen_conditions": {"type": "array", "items": {"type": "string"}, "description": "grounded conditions for resuming; empty when none is known"},
+})
+PLAN_SCHEMA["required"] += ["finish", "gaps", "reopen_conditions"]
+
+
 _SOURCE_SCHEMA = {"type": "object", "additionalProperties": False,
                   "required": ["run_id", "attempt", "artifact"], "properties": {
                       "run_id": {"type": "string"}, "attempt": {"type": "integer"},

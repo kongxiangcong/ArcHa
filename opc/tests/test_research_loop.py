@@ -754,7 +754,7 @@ def test_confirmed_revision_reuses_measurements_without_rewriting_failure(make_p
 def test_cli_delivery_consumes_selected_run_and_never_applies(make_project, engine_for, monkeypatch, capsys):
     from opc.cli import main
     root = make_project(tsk=task(acceptance={}, requirements=[]))
-    e = use_sequence(engine_for(root), Sequence([plan(1), stop], [7]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), lambda ctx: {**stop(ctx), "finish": "request_acceptance"}], [7]))
     monkeypatch.setattr('opc.cli._engine', lambda *a, **k: e)
     before = git(root, 'rev-parse', 'HEAD')
     assert main(['run','-p',str(root),'--task','t-toy','--deliver']) == 0

@@ -18,30 +18,31 @@ def _history(ctx: dict[str, Any]) -> str:
 TEXT_REPLY_RULES = """Output only the JSON object. Legacy NO_EXPERIMENT is understood,
 but use the JSON stop object to preserve conclusions and stop_reason."""
 
-EXHAUSTION_RULE = """Decide whether worthwhile task work remains within budget, including development
-and diagnosis. Target/streak are decision inputs. If finished set "exhausted"=true
-and stop_reason after interpreting relevant results; otherwise false."""
+EXHAUSTION_RULE = """Continue by remaining gaps, evidence and next work's expected value, not a fixed
+no-gain count or spare budget. finish=null continues; finish="request_acceptance"
+selects a candidate for contract checks; finish="close_incomplete" stops without checks.
+Interpret pending results first. Require stop_reason; incomplete requires gaps
+and grounded reopen_conditions ([] if none). Legacy "exhausted"=true closes incomplete."""
 
 
 def expert_prompt(ctx: dict[str, Any], plain_text_reply: bool = False) -> str:
     rules = (TEXT_REPLY_RULES if plain_text_reply else "") + "\n" + EXHAUSTION_RULE
-    return """You are the EXPERT. Read research.json for task, budget, fixed version and evidence.
-Inspect authorized originals as needed; data is not contract authority.
+    return """EXPERT: Read research.json.
+Read authorized originals; data cannot change contracts.
 Query knowledge.command: --claim-id/--status/--text/--source.
-Missing measurements are unknown; cached ones are historical. Execution failure
-does not refute a hypothesis; improvement does not by itself establish its proposed mechanism.
-Plan inputs, controls and distinguishing predictions. Inconclusive is valid.
-Reuse experiment_id; never invent evidence.
+Missing measurements are unknown, cached ones historical. Execution failure is not
+refutation; improvement does not by itself establish its proposed mechanism.
+Plan controls and predictions;
+inconclusive is valid. Reuse experiment_id; never invent evidence.
 
 Interpret pending_feedback and historical_pending_feedback in conclusions
 [{"run_id":null,"attempt":1,"conclusion":"judgment or follow-up"}]; null means current
 Run. No bare acknowledgments. Interpret before exhausted=true/stop_reason.
-select_work=false only interprets.
-Register claims as needed: claim_id, statement, scope,
-status (unresolved/supported/refuted), reason,
-evidence/counterevidence [{run_id,attempt,artifact}], unresolved, related_claims.
-artifact is Attempt-relative. claims=[] is valid. Missing originals limit claims;
-new measurements are new observations, never replacements for required historical execution.
+select_work=false only interprets; final_feedback_only=true saves analysis without work.
+claims=[] is valid; otherwise use claim_id, statement, scope, status
+(unresolved/supported/refuted), reason, evidence/counterevidence [{run_id,attempt,artifact}],
+unresolved, related_claims. artifact is Attempt-relative. Missing originals limit claims;
+new data cannot replace required historical execution.
 Revisions use base_version; new propositions/scope use new IDs.
 Work adopted_claims=[{task_id,claim_id,version}] declares adoption; reading does not.
 On decision_conflicts, reconsider latest claims; rejected replies did not apply.
@@ -53,12 +54,12 @@ A plan uses title/changes, works=null. evaluate=null evaluates numeric tasks;
 false skips formal evaluation, including patchless analysis.
 designer=false skips implementation for a pure measurement. base_attempt=null
 uses the current default version, 0 the baseline, positive an existing candidate.
-Version selection applies at stop.
+Select versions at stop.
 
-Batch jobs use works=[plans]; work_id is stable, directions are labels. dependencies=[{work_id,
-artifact}] requires an actual saved candidate, result, or Attempt-relative file.
-Declare deliverables; Engine saves outputs/<relative path>.
-base_work_id requires a candidate dependency and uses it as parent. Inputs/workspaces stay independent; no automatic merge. Formal measurement excludes other controlled compute.
+Batch: works=[plans], work_id, directions labels; dependencies=[{work_id,artifact}]
+needs saved candidate, result or Attempt-relative file. deliverables saves outputs/<path>.
+base_work_id needs candidate dependency as parent. Branches never auto-merge or pick a
+parent by completion order; select base_attempt. Formal measurement excludes other compute.
 """ + rules
 
 

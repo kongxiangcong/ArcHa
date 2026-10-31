@@ -373,6 +373,15 @@ class Ledger:
                 self._event(db, row.get('run_id') or run_id, "conclusion", row["attempt"],
                             dict(text=row["conclusion"], reviewed_by_call=call_id))
 
+    def finish_decision(self, run_id: str, call_id: str, commit: str, closure: dict) -> None:
+        """Persist selected candidate and terminal intent in one replayable handoff."""
+        with self.tx() as db:
+            if self.events(run_id, "expert_stop"):
+                return
+            self._event(db, run_id, "selected_version", None, dict(commit=commit))
+            self._event(db, run_id, "expert_stop", None, dict(closure, call_id=call_id))
+            self._event(db, run_id, "decision_applied", None, dict(call_id=call_id))
+
     def begin_selected_attempt(self, run_id: str, decision_call: str, plan: dict,
                                parent: str, champion: str, focus: str | None) -> int:
         return self.begin_selected_works(run_id, decision_call, [(plan, parent)], champion, focus)[0]
@@ -396,7 +405,7 @@ class Ledger:
                            (run_id, n, "planned", champion, focus, json.dumps(plan), now()))
                 self._event(db, run_id, "attempt_started", n, dict(champion=champion, focus=focus))
                 self._event(db, run_id, "work_selected", n,
-                            dict(decision_call=decision_call, parent=parent, work_id=plan["work_id"],
+                            dict(decision_call=decision_call, parent=parent, work_id=plan["work_id"], batch_size=len(works),
                                  dependencies=plan.get("dependencies") or [], directions=plan.get("directions") or []))
                 self._event(db, run_id, "development_parent", n,
                             dict(commit=parent, base_attempt=plan.get("base_attempt")))
