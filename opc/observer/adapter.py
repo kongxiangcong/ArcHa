@@ -700,8 +700,14 @@ class ObserverAdapter:
                               '记录中运行，实时状态未确认' if execution_raw == 'active' else None)
             attempts = []
             call_refs = []
+            completed_calls = {e['body'].get('call_id') for e in events
+                               if e['kind'] in ('worker_call', 'evaluation_call')}
             for event in events:
-                if event['kind'] == 'worker_call':
+                if event['kind'] in ('worker_call', 'evaluation_call') or (
+                        event['kind'] == 'call_dispatched' and event['body'].get('call_id') not in completed_calls):
+                    if event['kind'] == 'call_dispatched':
+                        event = {**event, 'body': {**event['body'], 'state': 'dispatched',
+                                 'log_dir': str(Path(event['body']['receipt_path']).parent)}}
                     call = self._call_from_event(row, event, events, run_dir)
                     call_refs.append(ref(call, call['role'] + ' · ' + str(call.get('provider') or '未知 provider')))
                     artifacts.extend(self.artifact_registry[x['id']]['dto'] for x in call['artifacts'])
@@ -766,12 +772,14 @@ class ObserverAdapter:
                              dict(record=dict(state='readable', reason='ledger record available'),
                                   execution=dict(state='blocked', reason='legacy: artifact source unavailable'),
                                   measurement=dict(state='unknown', reason='measurement sources unavailable')))
+            control_events = [e for e in events if e['kind'] in ('control_run', 'control_pause', 'control_stop')]
             frozen_baseline = self._read(run_dir / 'frozen/baseline.json', json_file=True, default={}) if run_dir else {}
             worker_execution = mapping(mapping(frozen_baseline).get('execution'))
             worker_selection = {role: {key: value for key, value in mapping(spec).items()
                                       if key in ('kind', 'model', 'provider', 'reasoning_effort')}
                                 for role, spec in mapping(worker_execution.get('workers')).items()}
-            result = dict(id=ident, compatibility=compatibility, source_run_id=row['run_id'], kind='preparation' if row.get('revision') == 'preparation' else 'execution',
+            result = dict(id=ident, compatibility=compatibility, control_request=control_events[-1]['kind'].removeprefix('control_') if control_events else 'run', source_run_id=row['run_id'], kind='preparation' if row.get('revision') == 'preparation' else 'execution',
+
                           task_revision_id=revision['id'] if revision and not revision.get('_contract_mismatch') else None, execution_task_id=row.get('task_id'),
                           workers=worker_selection, configuration_sources=worker_execution.get('configuration_sources', {}),
                           preparation=prep, execution=execution, acceptance=acceptance, stop_reason=row.get('stop_reason'),
@@ -865,7 +873,9 @@ class ObserverAdapter:
 
     def _call_from_event(self, row, event, events, run_dir):
         body = event['body']
-        ident = self._id('call', row['run_id'] + ':' + str(event['seq']))
+        dispatch = next((e for e in events if e['kind'] == 'call_dispatched'
+                         and e['body'].get('call_id') == body.get('call_id')), None)
+        ident = self._id('call', row['run_id'] + ':' + str(dispatch['seq'] if dispatch else event['seq']))
         role = body.get('role') if isinstance(body.get('role'), str) else 'unknown'
         provider_id = body.get('session_id') or (body.get('call_id') if isinstance(body.get('call_id'), str) else None)
         log_dir = body.get('log_dir') if isinstance(body.get('log_dir'), str) else None
@@ -906,8 +916,8 @@ class ObserverAdapter:
         obj = dict(id=ident, run_id=self._id('run', row['run_id']), attempt_id=self._id('attempt', row['run_id'] + ':' + str(event['attempt_no'])) if event.get('attempt_no') is not None else None,
                    phase='onboard' if row.get('revision') == 'preparation' else 'loop', role=role, provider=provider,
                    provider_call_id=provider_id, parent_call_id=body.get('parent_call_id'),
-                   state=state('finished' if body.get('ok') is True else 'failed' if body.get('ok') is False else 'unknown', str(body.get('ok')), event.get('at'), 'recorded'),
-                   started_at=None, ended_at=event.get('at'), last_activity_at=None,
+                   state=state('cancelled' if body.get('state') == 'cancelled' else 'running' if body.get('state') == 'dispatched' else 'finished' if body.get('ok') is True else 'failed' if body.get('ok') is False else 'unknown', str(body.get('state', body.get('ok'))), event.get('at'), 'recorded', '派发已记录，终态尚未确认' if body.get('state') == 'dispatched' else None),
+                   started_at=dispatch.get('at') if dispatch else None, ended_at=None if body.get('state') == 'dispatched' else event.get('at'), last_activity_at=None,
                    transcript_availability=availability, artifacts=art_refs, usage=None,
                    meta=meta([self._source(event_art)], [issue('call_start_unrecorded', '未记录调用开始时间', ident)] + log_issue, 'partial'))
         self.calls[ident] = obj

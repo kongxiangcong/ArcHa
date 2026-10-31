@@ -974,6 +974,32 @@ def test_environment_recheck_baseline_uses_its_own_measurement_source(project):
                for source in detail['metrics'][0]['source_refs'])
 
 
+def test_pending_call_and_pause_request_remain_distinct_from_paused_run(project, client):
+    db = sqlite3.connect(project / '.opc/local/ledger.sqlite3')
+    db.execute("UPDATE runs SET state='active' WHERE run_id='old-run'")
+    log = project / '.opc/local/artifacts/test/dma/old-run/attempts/a000002/designer'
+    event(db, 'old-run', 'call_dispatched', 2, call_id='call-current', role='designer',
+          inputs={'tree': 'fixed-worktree'}, receipt_path=str(log / 'receipt.json'))
+    event(db, 'old-run', 'control_pause')
+    db.commit()
+    observed = run(client)
+    assert observed['execution']['value'] == 'running'
+    assert observed['control_request'] == 'pause'
+    pending = [get(client, '/calls/' + ident(c['id']))['data'] for c in observed['calls']]
+    pending = [c for c in pending if c['state']['raw_value'] == 'dispatched']
+    assert len(pending) == 1
+    assert pending[0]['state']['value'] == 'running' and pending[0]['ended_at'] is None
+    ident_before = pending[0]['id']
+    event(db, 'old-run', 'worker_call', 2, call_id='call-current', role='designer',
+          ok=False, state='cancelled', log_dir=str(log), error='stopped by user')
+    db.commit()
+    after = run(client)
+    same_call = [c for c in after['calls'] if c['id'] == ident_before]
+    assert len(same_call) == 1
+    assert get(client, '/calls/' + ident(ident_before))['data']['state']['value'] == 'cancelled'
+    db.close()
+
+
 def test_run_shows_frozen_role_backends_without_exposing_cli_credentials(client, project):
     baseline = project / '.opc/local/artifacts/test/dma/old-run/frozen/baseline.json'
     put(baseline, {'execution': {

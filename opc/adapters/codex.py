@@ -34,6 +34,7 @@ def parse_events(text: str) -> dict[str, Any]:
     unmetered_nested = False
     usage_complete = False
     executed = False
+    completed = False
     for line in text.splitlines():
         try:
             ev = json.loads(line)
@@ -46,6 +47,8 @@ def parse_events(text: str) -> dict[str, Any]:
         if isinstance(usage, dict):
             usage_complete = "input_tokens" in usage and "output_tokens" in usage
             tokens += int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
+        if t == "turn.completed":
+            completed = True
         if t in ("turn.failed", "error"):
             failed = failed or t == "turn.failed"
             msg = ev.get("message") or (ev.get("error") or {}).get("message") or ""
@@ -63,7 +66,7 @@ def parse_events(text: str) -> dict[str, Any]:
         if t == "item.completed" and item.get("type") == "agent_message":
             last_agent = item.get("text", "")
     return {"thread_id": thread, "tokens": tokens, "errors": errors, "failed": failed,
-            "last_agent": last_agent, "executed": executed, "usage_complete": usage_complete and not unmetered_nested}
+            "last_agent": last_agent, "executed": executed, "terminal_completed": completed and not failed, "usage_complete": usage_complete and not unmetered_nested}
 
 
 class CodexWorker:
@@ -147,8 +150,11 @@ class CodexWorker:
         cost = Cost(time.time() - t0, info["tokens"], None)
         text = last.read_text(errors="replace", encoding="utf-8") if last.exists() else info["last_agent"]
         call = WorkerCall(role, ok=False, cost=cost, call_id=info["thread_id"],
-                          log_dir=str(log_dir), extra={"usage_complete": info["usage_complete"]})
-        if timed_out:
+                          log_dir=str(log_dir), extra={"usage_complete": info["usage_complete"],
+                                                    "terminal_completed": info["terminal_completed"]})
+        if p.cancel_reason and info["terminal_completed"]:
+            call.ok = True
+        elif timed_out:
             call.error, call.extra["infra"] = "codex timed out after %ss" % self.timeout, True
         elif info["failed"] or p.returncode != 0:
             stderr = (log_dir / ("%s-stderr.txt" % role)).read_text(
