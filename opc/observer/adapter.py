@@ -593,6 +593,38 @@ class ObserverAdapter:
                                        locator='charges:task_id=' + row['task_id'])])
         return usage
 
+    def _acceptance_history(self, task_id):
+        from ..core.results import acceptance_history
+        data = self._db(tables_to_read=('runs', 'events'))
+        runs = {r['run_id']: r for r in data['runs'] if r['task_id'] == task_id}
+        reports = []
+        for event in sorted(data['events'], key=lambda e: e['seq']):
+            if event['run_id'] not in runs or event['kind'] != 'promotion_report':
+                continue
+            body = parsed(event['body'], {})
+            path = body.get('report_path')
+            report = self._read(path, json_file=True) if isinstance(path, str) else None
+            if not isinstance(report, dict):
+                self.issues.append(issue('source_unreadable', '验收历史报告不可读：' + str(path)))
+                continue
+            if (report.get('run_id') != event['run_id'] or type(report.get('complete')) is not bool
+                    or not isinstance(report.get('selected_version'), str)
+                    or not isinstance(report.get('acceptance_revision', runs[event['run_id']]['revision']), str)):
+                self.issues.append(issue('source_invalid_shape', '验收历史报告身份或结果字段无效：' + path))
+                continue
+            report = dict(report)
+            report.setdefault('acceptance_revision', runs[event['run_id']]['revision'])
+            report.setdefault('acceptance_task_digest', runs[event['run_id']].get('task_digest'))
+            reports.append((report, path))
+        revisions = {r['revision']: r['task_digest'] for r in self.revisions.values()
+                     if r['execution_task_id'] == task_id and
+                     self.artifact_registry[r['contract_artifact_id']]['path'].parent.name != 'frozen'}
+        history = acceptance_history(revisions, reports)
+        for row in history:
+            if row['report_path']:
+                row['report_artifact_id'] = self._register(row['report_path'], phase='acceptance')['id']
+        return history
+
     def run(self, ident):
         with self.lock:
             row = self._find_run(ident)
@@ -809,7 +841,8 @@ class ObserverAdapter:
 
                           task_revision_id=revision['id'] if revision and not revision.get('_contract_mismatch') else None, execution_task_id=row.get('task_id'),
                           workers=worker_selection, configuration_sources=worker_execution.get('configuration_sources', {}),
-                          preparation=prep, execution=execution, acceptance=acceptance, stop_reason=row.get('stop_reason'),
+                          preparation=prep, execution=execution, acceptance=acceptance,
+                          acceptance_history=self._acceptance_history(row['task_id']), stop_reason=row.get('stop_reason'),
                           phase='onboard' if row.get('revision') == 'preparation' else 'loop', last_activity_at=self.source_at,
                           versions=versions, requirements=requirements, metrics=metrics, usage=self._usage(row, data['charges'], events, contract),
                           task_usage=self._task_usage(row, contract),
