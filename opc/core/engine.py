@@ -254,7 +254,7 @@ class Engine:
             "failure": ev.failure.value if ev.failure else None, "reason": ev.reason,
             "data": ev.data})
 
-    def preflight(self) -> dict[str, Any]:
+    def preflight(self, base_ref: str | None = None) -> dict[str, Any]:
         """Static checks, toolchain, and one full evaluation of the base commit."""
         rep = self.static_check()
         if not rep["ok"]:
@@ -265,6 +265,8 @@ class Engine:
             rep["ok"] = False
             rep["problems"].append(str(exc))
             return rep
+        if base_ref is not None:
+            rep["base_commit"] = rev_parse(self.root, base_ref)
         ws = self.workspaces("preflight")
         out = self.root / ".opc" / "local" / "preflight"
         try:
@@ -340,7 +342,7 @@ class Engine:
                 raise OPCError("--base %s carries a different evaluator than the task base"
                                % base_ref)
         if not self.task.acceptance.objective_metric:
-            capability = self.preflight()
+            capability = self.preflight(base_ref=base)
             if not capability["ok"]:
                 raise OPCError("preflight failed:\n  " + "\n  ".join(capability["problems"]))
         tool_digest = self.toolchain_digest(base)

@@ -391,3 +391,17 @@ def test_independent_run_cannot_change_frozen_evaluation_contract(make_project):
     git(root, 'commit', '-qm', 'change frozen execution scope')
     with pytest.raises(OPCError, match='frozen.*revision|revision.*frozen'):
         Engine(root, 't-toy', 'r0001', log=lambda s: None).run(new_run=True)
+
+
+def test_explicit_work_startpoint_is_checked_before_worker_dispatch(make_project):
+    from opc.core.engine import Engine
+    evaluate = EVALUATE + '\nraise SystemExit(75 if x == 3 else 0)\n'
+    root = make_project(evaluate=evaluate, tsk=task(acceptance={}, requirements=[]))
+    original = git(root, 'rev-parse', 'HEAD').strip()
+    (root / 'params.json').write_text('{"x": 4}')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-qm', 'available task baseline')
+    engine = Engine(root, 't-toy', 'r0001', log=lambda s: None)
+    with pytest.raises(OPCError, match='preflight|baseline fails'):
+        engine.run(base_ref=original)
+    assert not engine.ledger.runs()
