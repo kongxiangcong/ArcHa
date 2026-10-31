@@ -365,7 +365,7 @@ def query_claims(context: dict, *, task_id: str | None = None, claim_id: str | N
         raise ValueError('task is outside authorized claim material')
     if status is not None and status not in ('unresolved', 'supported', 'refuted'):
         raise ValueError('claim status must be unresolved, supported or refuted')
-    rows = context['claims']
+    rows = context['claims'] + (context.get('claim_history', []) if version is not None else [])
     selected = [c for c in rows if (task_id is None or c['task_id'] == task_id)
                 and (claim_id is None or c['claim_id'] == claim_id)
                 and (status is None or c['status'] == status)
@@ -374,6 +374,8 @@ def query_claims(context: dict, *, task_id: str | None = None, claim_id: str | N
     result = dict(scope=dict(task_ids=material['task_ids'], claim_id=claim_id,
                              status=status, text=text, version=version),
                   as_of='fixed_call_input', claims=selected, omitted=len(rows) - len(selected),
+                  history_versions=[{k: c[k] for k in ('task_id', 'claim_id', 'version')}
+                                    for c in context.get('claim_history', [])],
                   bodies='not_expanded; use --claim-id and --source INDEX to read a registered source')
     if source is not None:
         if len(selected) != 1:

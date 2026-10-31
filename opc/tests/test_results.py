@@ -396,3 +396,48 @@ def test_claim_source_expansion_distinguishes_missing_and_access_denied(make_pro
     denied = query_claims(context, claim_id='copy', source=0)
     assert denied['source']['availability'] == 'access_denied'
     assert 'content' not in denied['source']
+
+
+@pytest.mark.parametrize('has_results', [False, True])
+def test_claim_review_keeps_exact_revision_after_later_run_updates(make_project, engine_for, monkeypatch, has_results):
+    from opc.core.promote import promote
+    claim = dict(claim_id='copy-all', statement='Reducing copying always improves speed',
+                 scope='Comparable long and short fields', status='unresolved', reason='Need evidence', evidence=[])
+    e = use_sequence(engine_for(make_project(tsk=task(results_path=ENTRY) if has_results else task())),
+                     Sequence([plan(1), lambda ctx: dict(stop(ctx), claims=[claim])], [4]))
+    e.run()
+    supplied = []
+    def reviewer(*args):
+        supplied.append(args[-1])
+        return dict(ok=True, verdict='accept', summary='Only supplied version and scope')
+    monkeypatch.setattr('opc.core.promote.run_reviewer', reviewer)
+    reviewed = promote(e, review='codex')
+    assert supplied[0]['claims'][0]['version'] == 1
+    review_path = Path(reviewed['report_dir']) / 'report.json'
+    old_review = review_path.read_bytes()
+    seq = Sequence([dict(select_work=False, claims=[dict(claim, base_version=1,
+                        status='refuted', reason='Comparable short field counterexample')]), stop])
+    later = use_sequence(engine_for(e.root), seq)
+    later.run(new_run=True)
+    assert later.claims('copy-all')[0]['version'] == 2
+    assert later.summary()['claims'][0]['status'] == 'refuted'
+    assert review_path.read_bytes() == old_review
+    assert json.loads(old_review)['task_results']['claims'][0]['version'] == 1
+    assert not later.ledger.events(later.run_id, 'promotion_report')
+
+
+def test_fixed_claim_query_expands_explicit_historical_revision(make_project, engine_for):
+    from opc.core.results import query_claims
+    claim = dict(claim_id='copy', statement='Less copying always helps', scope='fixed fields',
+                 status='unresolved', reason='Need comparable evidence', evidence=[])
+    e = use_sequence(engine_for(make_project()), Sequence([
+        plan(1), dict(select_work=False, claims=[claim]),
+        dict(select_work=False, claims=[dict(claim, base_version=1, status='refuted', reason='Valid counterexample')]),
+        stop], [4]))
+    e.run()
+    context = [c['input']['context'] for c in e.ledger.calls(e.run_id) if c['role'] == 'expert'][-1]
+    current = query_claims(context, claim_id='copy')
+    assert current['claims'][0]['version'] == 2 and current['claims'][0]['status'] == 'refuted'
+    historical = query_claims(context, claim_id='copy', version=1)
+    assert historical['claims'][0]['status'] == 'unresolved'
+    assert historical['claims'][0]['reason'] == 'Need comparable evidence'

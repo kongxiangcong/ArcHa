@@ -784,17 +784,18 @@ class ObserverAdapter:
             from ..core.ledger import current_claims
             knowledge = self._db(tables_to_read=('runs', 'events'))
             task_runs = {r['run_id'] for r in knowledge['runs'] if r['task_id'] == row['task_id']}
-            claims = current_claims(parsed(e['body']) for e in sorted(knowledge['events'], key=lambda e: e['seq'])
-                                    if e['run_id'] in task_runs and e['kind'] == 'claim_registered')
+            claim_history = [parsed(e['body']) for e in sorted(knowledge['events'], key=lambda e: e['seq'])
+                             if e['run_id'] in task_runs and e['kind'] == 'claim_registered']
             from ..core.results import claim_sources
-            claim_sources(claims, self.artifact_root, self.project.get('source_project_id'))
-            for claim in claims:
+            claim_sources(claim_history, self.artifact_root, self.project.get('source_project_id'))
+            for claim in claim_history:
                 for source in claim.get('evidence', []) + claim.get('counterevidence', []):
                     if source['availability'] != 'access_denied':
                         artifact = self._register(source['source'], phase='loop', title=claim['claim_id'] + ' · source')
                         source['artifact_id'] = artifact['id']
                         artifacts.append(artifact)
-            result = dict(id=ident, claims=claims, compatibility=compatibility, control_request=control_events[-1]['kind'].removeprefix('control_') if control_events else 'run', source_run_id=row['run_id'], kind='preparation' if row.get('revision') == 'preparation' else 'execution',
+            claims = current_claims(claim_history)
+            result = dict(id=ident, claims=claims, claim_history=claim_history, compatibility=compatibility, control_request=control_events[-1]['kind'].removeprefix('control_') if control_events else 'run', source_run_id=row['run_id'], kind='preparation' if row.get('revision') == 'preparation' else 'execution',
 
                           task_revision_id=revision['id'] if revision and not revision.get('_contract_mismatch') else None, execution_task_id=row.get('task_id'),
                           workers=worker_selection, configuration_sources=worker_execution.get('configuration_sources', {}),

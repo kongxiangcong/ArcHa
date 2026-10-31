@@ -247,6 +247,10 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
     # 6. optional independent reviewer: a fresh read-only model session
     reviewer = None
     task_results = engine.results_context() if engine.task.raw.get('results_path') else None
+    if task_results is None:
+        claims = engine.claims()
+        if claims:
+            task_results = {'claims': claims}
     if review:
         engine.hard_check()
         reviewer = run_reviewer(engine, review, out, patch, base, best, coverage, task_results)

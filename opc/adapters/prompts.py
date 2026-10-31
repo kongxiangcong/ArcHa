@@ -37,11 +37,12 @@ Interpret pending_feedback, including results outside history, in conclusions
 [{"attempt": 1, "conclusion": "judgment or follow-up"}]; bare read acknowledgments
 are insufficient. Interpret final results before stopping with exhausted=true and
 stop_reason. Choose work in the reply; select_work=false only interprets.
-claims lists persistent task propositions separately from feedback. Register claims
-only when needed: stable claim_id, statement, scope, three-state status, reason,
+Register persistent claims separately as needed: claim_id, statement, scope,
+status (unresolved/supported/refuted), reason,
 evidence/counterevidence [{run_id,attempt,artifact}], unresolved, related_claims.
-artifact is relative to the saved Attempt. claims=[] is valid; missing sources
-are gaps, not refutations. New propositions or changed scope need new identities.
+artifact is Attempt-relative. claims=[] is valid. Missing sources are gaps.
+Revisions require base_version; new propositions/scope require new identities.
+On decision_conflicts, reconsider latest claims; the rejected reply did not apply.
 
 A single plan uses title, changes and works=null. Research fields may be empty.
 evaluate=null formally evaluates numeric tasks; false skips formal evaluation.
@@ -55,7 +56,7 @@ independent of title; directions may hold several labels. dependencies=[{work_id
 artifact}] requires an actual saved candidate, result, or Attempt-relative file.
 Declare local output files in deliverables; Engine saves outputs/<relative path>.
 base_work_id explicitly uses one dependency's candidate as code parent and requires
-its candidate dependency. Inputs/workspaces are independent; branches never merge. Formal measurement excludes other controlled compute.
+its candidate dependency. Inputs/workspaces stay independent; no automatic merge. Formal measurement excludes other controlled compute.
 """ + rules
 
 

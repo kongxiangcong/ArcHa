@@ -34,7 +34,7 @@ from ..adapters.worker import Worker, WorkerCall, make_worker, validate_plan
 from ..domain import DomainAdapter, Evaluation, bounded_data, experimental_data, load_domain
 from . import accept as acceptance
 from .config import Bindings, Budget, ComponentConfig, ProjectConfig, TaskSpec, WorkerSpec
-from .ledger import Ledger
+from .ledger import ClaimConflict, Ledger
 from .platform import execution_control, portable_path
 from .worker_config import load_worker_config, load_max_concurrency, resolve_worker
 from .model import (BudgetExhausted, DispatchStopped, Cost, GateResult, Measurements, OPCError, Outcome, Verdict,
@@ -1244,7 +1244,9 @@ class Engine:
                              if a["candidate"] == champ[0] and a["plan"] and a["plan"].get("params")), None)
                          if self.worker_spec("expert").kind == "scripted" else None} if acc.objective_metric else None,
             "baseline": {"commit": base["commit_sha"], "values": metric_view(base["metrics"]["values"])},
-            "history": history, "claims": self.claims(), "background": background, "budget_left": self.budget_left(),
+            "history": history, "claims": self.claims(),
+            "decision_conflicts": [e["body"] for e in self.ledger.events(self.run_id, "expert_conflict")],
+            "background": background, "budget_left": self.budget_left(),
             "pending_feedback": [{"attempt": a["attempt_no"], "evidence": str(self.attempt_dir(a["attempt_no"]))}
                                  for a in decided if a["conclusion"] is None],
             "evidence_root": str(self.artifact_dir()),
@@ -1260,22 +1262,22 @@ class Engine:
                              and a["outcome"] != Outcome.INFRA.value],
         }
 
-    def authorized_claims(self, task_id: str | None = None, claim_id: str | None = None) -> list[dict]:
+    def authorized_claims(self, task_id: str | None = None, claim_id: str | None = None, *,
+                          version: int | None = None, history: bool = False) -> list[dict]:
         """Read own claims and explicitly named foreign material, without write rights."""
         selected = self.task.task_id if task_id is None else task_id
         if selected == self.task.task_id:
-            return self.ledger.claims(selected, claim_id)
+            return self.ledger.claims(selected, claim_id, version=version, history=history)
         allowed = {dep['claim_id'] for dep in self.task.raw.get('knowledge_dependencies', [])
                    if dep['task_id'] == selected}
         if not allowed or (claim_id is not None and claim_id not in allowed):
             raise OPCError('claim is outside authorized task material')
-        return [claim for claim in self.ledger.claims(selected, claim_id) if claim['claim_id'] in allowed]
+        return [claim for claim in self.ledger.claims(selected, claim_id, version=version, history=history) if claim['claim_id'] in allowed]
 
-    def knowledge_context(self, context_path: Path) -> dict:
+    def knowledge_context(self, context_path: Path, claims: list[dict]) -> dict:
         """Fixed scoped material for a Call; the ledger alone owns claim state."""
         import sys
         from . import results
-        claims = self.claims()
         task_ids = [self.task.task_id]
         for dep in self.task.raw.get('knowledge_dependencies', []):
             found = self.authorized_claims(dep['task_id'], dep['claim_id'])
@@ -1286,14 +1288,22 @@ class Engine:
             for claim in found:
                 if not any(c['task_id'] == claim['task_id'] and c['claim_id'] == claim['claim_id'] for c in claims):
                     claims.extend(results.claim_sources([claim], self.bindings.artifact_root, self.project.project_id))
-        return dict(task_ids=task_ids, claims=claims, context=str(context_path),
+        latest = {(c['task_id'], c['claim_id']): c['version'] for c in claims}
+        history = self.ledger.claims(self.task.task_id, history=True)
+        for dep in self.task.raw.get('knowledge_dependencies', []):
+            history.extend(self.authorized_claims(dep['task_id'], dep['claim_id'], history=True))
+        older = {(c['task_id'], c['claim_id'], c['version']): c for c in history
+                 if c['version'] < latest[(c['task_id'], c['claim_id'])]}
+        historical = results.claim_sources(list(older.values()), self.bindings.artifact_root, self.project.project_id)
+        return dict(task_ids=task_ids, claims=claims, claim_history=historical, context=str(context_path),
                     command=[str(Path(sys.executable).resolve()), str(Path(results.__file__).resolve()), str(context_path)],
                     as_of='fixed_call_input')
 
     def results_context(self) -> dict:
         from .results import snapshot
         try:
-            return snapshot(self.root, self.bindings.artifact_root, self.task.raw['results_path'])
+            return {**snapshot(self.root, self.bindings.artifact_root, self.task.raw['results_path']),
+                    'claims': self.claims()}
         except (OSError, ValueError, OPCError) as exc:
             return {'entry': self.task.raw.get('results_path'), 'sources': [], 'issues': [str(exc)]}
 
@@ -1308,9 +1318,10 @@ class Engine:
         self._results_error = None
         return None
 
-    def claims(self, claim_id: str | None = None) -> list[dict]:
+    def claims(self, claim_id: str | None = None, *,
+               version: int | None = None, history: bool = False) -> list[dict]:
         """Task claim entry, with explicit pending feedback and source availability."""
-        claims = self.ledger.claims(self.task.task_id, claim_id)
+        claims = self.ledger.claims(self.task.task_id, claim_id, version=version, history=history)
         pending = [{"run_id": self.run_id, "attempt": a["attempt_no"]}
                    for a in self.attempt_records()
                    if a["outcome"] and a["conclusion"] is None]
@@ -1323,15 +1334,27 @@ class Engine:
         claims = output.get("claims", [])
         if not isinstance(claims, list):
             return "claims must be a list"
-        seen = {c["claim_id"] for c in self.ledger.claims(self.task.task_id)}
+        if not claims:
+            return None
+        current = {c["claim_id"]: c for c in self.ledger.claims(self.task.task_id)}
+        seen = set(current)
+        proposed = set()
         for claim in claims:
             if not isinstance(claim, dict):
                 return "claim must be an object"
             ident = claim.get("claim_id")
             if not isinstance(ident, str) or not ident.strip() or not portable_path(ident) or "/" in ident:
                 return "claim_id must be a stable identifier"
-            if ident in seen:
-                return "claim already exists: " + ident
+            if ident in proposed:
+                return "duplicate claim identity in decision: " + ident
+            proposed.add(ident)
+            prior = current.get(ident)
+            base = claim.get("base_version")
+            if prior:
+                if type(base) is not int or base < 1:
+                    return "existing claim requires base_version: " + ident
+            elif base is not None:
+                return "unknown claim revision identity: " + ident
             seen.add(ident)
             if claim.get("task_id", self.task.task_id) != self.task.task_id:
                 return "claim write outside current task is forbidden"
@@ -1475,6 +1498,7 @@ class Engine:
                 tree.mkdir(parents=True, exist_ok=True)
                 processed = {e["body"]["call_id"] for e in decisions}
                 processed.update(e["body"]["call_id"] for e in self.ledger.events(self.run_id, "expert_rejected"))
+                processed.update(e["body"]["call_id"] for e in self.ledger.events(self.run_id, "expert_conflict"))
                 calls = [c for c in self.ledger.calls(self.run_id)
                          if c["role"] == "expert" and c["attempt_no"] is None]
                 replay = next((c for c in calls if c["call_id"] not in processed), None)
@@ -1495,8 +1519,9 @@ class Engine:
                         else:
                             ctx["session_id"] = prior_session["session_id"]
                 if not replay:
-                    ctx["knowledge"] = self.knowledge_context(tree / "research.json")
+                    ctx["knowledge"] = self.knowledge_context(tree / "research.json", ctx["claims"])
                     ctx["claims"] = ctx["knowledge"].pop("claims")
+                    ctx["claim_history"] = ctx["knowledge"].pop("claim_history")
                 write_json(tree / "research.json", ctx)
                 call = self.dispatch_call("expert", None, {"context": ctx}, tree, log_dir,
                                           lambda: expert.propose(ctx, tree, log_dir))
@@ -1531,7 +1556,13 @@ class Engine:
                     return None, StopDecision("blocked", "expert decision: " + why)
                 if call.exhausted:
                     output = {**output, "exhausted": True}
-                self.ledger.record_decision(self.run_id, call.call_id, output)
+                try:
+                    self.ledger.record_decision(self.run_id, call.call_id, output)
+                except ClaimConflict as exc:
+                    self.ledger.event(self.run_id, "expert_conflict", call_id=call.call_id,
+                                      conflicts=exc.conflicts)
+                    self.hard_check()
+                    continue
                 decision = dict(call_id=call.call_id, output=output)
             output, call_id = decision["output"], decision["call_id"]
             if output.get("exhausted"):
@@ -1670,9 +1701,11 @@ class Engine:
                         path = self.attempt_dir(upstream["attempt_no"]) / ("candidate.patch" if artifact == "candidate" else
                                 "decision.json" if artifact == "result" else artifact)
                         dependencies.append({**dependency, "path": str(path), "candidate": upstream["candidate"]})
+                    claim_index = ctx["claims"]
                     ctx = {key: ctx[key] for key in ("attempt", "task", "component", "parent", "champion", "budget_left")}
-                    ctx["knowledge"] = self.knowledge_context(context_path)
+                    ctx["knowledge"] = self.knowledge_context(context_path, claim_index)
                     ctx["claims"] = ctx["knowledge"].pop("claims")
+                    ctx["claim_history"] = ctx["knowledge"].pop("claim_history")
                     ctx["handoff"] = {"purpose": plan["changes"], "deliverables": plan.get("deliverables", []),
                                       "inputs": dependencies, "evidence": str(self.artifact_dir())}
                     write_json(context_path, ctx)
@@ -2091,6 +2124,8 @@ class Engine:
                 "control": self.ledger.control(self.run_id),
                 "inflight_calls": [c["call_id"] for c in self.ledger.calls(self.run_id) if c["result"] is None],
                 "claims": self.claims(),
+                "claim_history": self.claims(history=True),
+                "decision_conflicts": self.ledger.events(self.run_id, "expert_conflict"),
                 "decisions": self.ledger.events(self.run_id, "expert_decision"),
                 "materials": str(self.artifact_dir() / "materials"),
 

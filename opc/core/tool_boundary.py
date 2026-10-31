@@ -159,7 +159,7 @@ def worker_policy(role: str, tree: Path, log_dir: Path, ctx: dict | None = None)
     knowledge = ctx.get('knowledge')
     if knowledge:
         reads += [knowledge['context'], knowledge['command'][0], knowledge['command'][1]]
-        for claim in ctx['claims']:
+        for claim in ctx['claims'] + ctx.get('claim_history', []):
             for ref in claim.get('evidence', []) + claim.get('counterevidence', []):
                 if ref.get('availability') != 'access_denied':
                     path = Path(ref['source'])
