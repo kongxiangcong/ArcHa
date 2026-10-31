@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — 主张修订、冲突重判与恢复；04 — 采用版本的声明与交接。
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 依据：[S3 规格](../spec.md)。
 

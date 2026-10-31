@@ -1119,6 +1119,10 @@ class Engine:
                 a[event["kind"]] = body
             elif event["kind"] == "comparison_baseline":
                 a["comparison"] = body
+            elif event["kind"] == "work_reconsidered":
+                a["basis_review"] = body
+                a.setdefault("original_plan", a["plan"])
+                a["plan"] = body["plan"]
             elif event["kind"] == "conclusion":
                 a["conclusion"] = body["text"]
         for a in rows:
@@ -1251,6 +1255,9 @@ class Engine:
                          if self.worker_spec("expert").kind == "scripted" else None} if acc.objective_metric else None,
             "baseline": {"commit": base["commit_sha"], "values": metric_view(base["metrics"]["values"])},
             "history": history, "claims": self.claims(),
+            "basis_changes": [{"attempt": a["attempt_no"], "changes": changes}
+                              for a in attempts
+                              if (changes := self.basis_changes(self.direct_basis(a["plan"] or {}, attempts)))],
             "decision_conflicts": [e["body"] for e in self.ledger.events(self.run_id, "expert_conflict")],
             "background": background, "budget_left": self.budget_left(),
             "pending_feedback": [{"attempt": a["attempt_no"], "evidence": str(self.attempt_dir(a["attempt_no"]))}
@@ -1267,6 +1274,34 @@ class Engine:
                              if a["plan"].get("params") is not None
                              and a["outcome"] != Outcome.INFRA.value],
         }
+
+    def direct_basis(self, plan: dict, records: list[dict]) -> list[dict]:
+        refs = list(plan.get("adopted_claims") or [])
+        sources = {d["work_id"] for d in plan.get("dependencies") or []}
+        for a in records:
+            if ((a["plan"] or {}).get("work_id") in sources or a["attempt_no"] == plan.get("base_attempt")):
+                for ref in a["adopted_claims"]:
+                    if ref not in refs:
+                        refs.append(ref)
+        return refs
+
+    def basis_changes(self, refs: list[dict]) -> list[dict]:
+        changes = []
+        for ref in refs:
+            current = self.authorized_claims(ref["task_id"], ref["claim_id"])[0]
+            if current["version"] != ref["version"]:
+                changes.append(dict(ref, current_version=current["version"],
+                                    current_status=current["status"], reason=current["reason"]))
+        return changes
+
+    def pending_basis_review(self, attempt: dict, records: list[dict]) -> list[dict]:
+        # A started Call always resumes its original input, even if its basis changes.
+        if any(c["attempt_no"] == attempt["attempt_no"] and c["role"] == "designer"
+               for c in self.ledger.calls(self.run_id)):
+            return []
+        changes = self.basis_changes(self.direct_basis(attempt["plan"] or {}, records))
+        reviewed = (attempt.get("basis_review") or {}).get("changes", [])
+        return [c for c in changes if c not in reviewed]
 
     def authorized_claims(self, task_id: str | None = None, claim_id: str | None = None, *,
                           version: int | None = None, history: bool = False) -> list[dict]:
@@ -1431,8 +1466,8 @@ class Engine:
                 refs.append(normalized)
         return refs
 
-    def validate_work_batch(self, works: list[dict]) -> str | None:
-        existing = self.attempt_records()
+    def validate_work_batch(self, works: list[dict], replace_attempt: int | None = None) -> str | None:
+        existing = [a for a in self.attempt_records() if a["attempt_no"] != replace_attempt]
         graph = {(a["plan"] or {}).get("work_id") or "a%d" % a["attempt_no"]:
                  (a["plan"] or {}).get("dependencies") or [] for a in existing}
         new_ids = []
@@ -1504,7 +1539,7 @@ class Engine:
                               blocked_by=missing, state=attempt["state"], outcome=attempt["outcome"], parent=attempt["parent"]))
         return nodes
 
-    def choose_work(self, ws: Workspaces) -> tuple[int | None, StopDecision | None]:
+    def choose_work(self, ws: Workspaces, basis_attempt: int | None = None) -> tuple[int | None, StopDecision | None]:
         """Run-level decisions select work; receipt/decision replay never calls the expert twice."""
         while True:
             champ = self.ledger.champion(self.run_id) or (self.working_commit(), Measurements())
@@ -1520,6 +1555,11 @@ class Engine:
                 except BaseException:
                     ws.drop(loader)
                     raise
+                if basis_attempt is not None:
+                    records = self.attempt_records()
+                    affected = next(a for a in records if a["attempt_no"] == basis_attempt)
+                    ctx["basis_review"] = dict(attempt=basis_attempt, plan=affected["plan"],
+                                               changes=self.pending_basis_review(affected, records))
                 ctx["source_root"] = str(loader)
                 tree = self.artifact_dir() / "materials"
                 tree.mkdir(parents=True, exist_ok=True)
@@ -1565,6 +1605,10 @@ class Engine:
                 why = self.validate_conclusions(output) if isinstance(output, dict) else "expert reply is not an object"
                 if why is None:
                     why = self.validate_claims(output)
+                review = output.get("basis_review") if isinstance(output, dict) else None
+                adjusting = basis_attempt is not None and isinstance(review, dict) and review.get("action") == "adjust"
+                if adjusting:
+                    output["work_id"] = ctx["basis_review"]["plan"]["work_id"]
                 if why is None and not (call.exhausted or output.get("exhausted") or output.get("select_work") is False):
                     works = output.get("works") if output.get("works") is not None else [output]
                     if not isinstance(works, list) or not works:
@@ -1582,7 +1626,34 @@ class Engine:
                             if why:
                                 break
                         if why is None:
-                            why = self.validate_work_batch(works)
+                            why = self.validate_work_batch(works, basis_attempt if adjusting else None)
+                if why is None:
+                    review = output.get("basis_review")
+                    if basis_attempt is not None:
+                        if (not isinstance(review, dict) or review.get("attempt") != basis_attempt
+                                or review.get("action") not in ("continue", "adjust", "supplement")
+                                or any(not isinstance(review.get(k), str) or not review[k].strip()
+                                       for k in ("scope", "reason"))):
+                            why = "basis_review requires affected attempt, action, scope and reason"
+                        else:
+                            records = self.attempt_records()
+                            affected = next(a for a in records if a["attempt_no"] == basis_attempt)
+                            expected = ctx["basis_review"]["changes"]
+                            if review.get("changes") != expected:
+                                why = "basis_review must identify the observed latest versions"
+                            elif review["action"] == "adjust":
+                                if output.get("select_work") is False or output.get("works") is not None:
+                                    why = "basis adjustment requires one replacement work plan"
+                                else:
+                                    review["plan"] = {k: v for k, v in output.items()
+                                                      if k not in ("claims", "conclusions", "basis_review")}
+                                    review["plan"]["work_id"] = affected["plan"]["work_id"]
+                            elif review["action"] == "continue":
+                                review["plan"] = affected["plan"]
+                            elif output.get("select_work") is False:
+                                why = "basis supplement requires new work"
+                    elif review is not None:
+                        why = "basis_review requires an affected pending work"
                 if why:
                     self.ledger.event(self.run_id, "expert_rejected", call_id=call.call_id, reason=why)
                     return None, StopDecision("blocked", "expert decision: " + why)
@@ -1597,6 +1668,10 @@ class Engine:
                     continue
                 decision = dict(call_id=call.call_id, output=output)
             output, call_id = decision["output"], decision["call_id"]
+            review = output.get("basis_review")
+            if review and review["action"] in ("continue", "adjust"):
+                self.ledger.event(self.run_id, "decision_applied", call_id=call_id)
+                return review["attempt"], None
             if output.get("exhausted"):
                 pending = [a["attempt_no"] for a in self.attempt_records()
                            if a["outcome"] and a["conclusion"] is None]
@@ -1683,7 +1758,7 @@ class Engine:
         champ = self.ledger.champion(self.run_id)
         if champ is None:
             champ = (self.working_commit(), Measurements())
-        selected = next(a for a in self.ledger.attempts(self.run_id) if a["attempt_no"] == n)
+        selected = next(a for a in self.attempt_records() if a["attempt_no"] == n)
         plan = selected["plan"]
         focus = selected["focus"]
         adir = self.attempt_dir(n)
@@ -1711,6 +1786,12 @@ class Engine:
             parent_event = next(e for e in reversed(self.ledger.events(self.run_id, "development_parent"))
                                 if e["attempt"] == n)
             parent = parent_event["body"]["commit"]
+            if (selected.get("basis_review") or {}).get("action") == "adjust":
+                adjusted_parent = self.development_parent(plan, champ[0], ws)
+                if parent != adjusted_parent:
+                    parent = adjusted_parent
+                    self.ledger.event(self.run_id, "development_parent", n, commit=parent,
+                                      base_attempt=plan.get("base_attempt"))
             if plan.get("base_work_id"):
                 upstream = next(a for a in self.attempt_records() if (a["plan"] or {}).get("work_id") == plan["base_work_id"])
                 parent = upstream["candidate"]
@@ -1721,9 +1802,13 @@ class Engine:
             try:
                 _, designer = self.workers(loader)
                 context_path = adir / "context.json"
-                if context_path.is_file():
-                    ctx = json.loads(context_path.read_text(encoding="utf-8"))
-                else:
+                ctx = json.loads(context_path.read_text(encoding="utf-8")) if context_path.is_file() else None
+                if (ctx is not None and selected.get("basis_review")
+                        and ctx.get("handoff", {}).get("basis_review") != selected["basis_review"]
+                        and not any(c["attempt_no"] == n and c["role"] == "designer"
+                                    for c in self.ledger.calls(self.run_id))):
+                    ctx = None  # Material prepared before a Call may follow the new reviewed plan.
+                if ctx is None:
                     ctx = self.context(n, champ, focus, loader)
                     ctx["parent"] = {"commit": parent, "base_attempt": plan.get("base_attempt")}
                     dependencies = []
@@ -1740,7 +1825,8 @@ class Engine:
                     ctx["claim_history"] = ctx["knowledge"].pop("claim_history")
                     ctx["handoff"] = {"purpose": plan["changes"], "deliverables": plan.get("deliverables", []),
                                       "inputs": dependencies, "evidence": str(self.artifact_dir()),
-                                      "adopted_claims": plan.get("adopted_claims", [])}
+                                      "adopted_claims": plan.get("adopted_claims", []),
+                                      "basis_review": selected.get("basis_review")}
                     write_json(context_path, ctx)
             finally:
                 ws.drop(loader)
@@ -1922,6 +2008,8 @@ class Engine:
             try:
                 while True:
                     nodes = observe_waiting()
+                    records = self.attempt_records()
+                    affected = []
                     progressed = False
                     if not evaluations:
                         for attempt in self.ledger.open_attempts(self.run_id):
@@ -1945,6 +2033,10 @@ class Engine:
                             if waiting.get(n) != ("ready", ()):
                                 self.ledger.event(self.run_id, "node_waiting", n, reason="ready", blocked_by=[])
                                 waiting[n] = ("ready", ())
+                            record = next(a for a in records if a["attempt_no"] == n)
+                            if self.pending_basis_review(record, records):
+                                affected.append(n)
+                                continue
                             self.admit()
                             started += 1
                             progressed = True
@@ -1968,6 +2060,12 @@ class Engine:
                     if not self.ledger.open_attempts(self.run_id):
                         break
                     if progressed:
+                        continue
+                    if affected and not session_waiting:
+                        _, decision = self.choose_work(ws, basis_attempt=affected[0])
+                        if decision:
+                            stop = stop or decision
+                            break
                         continue
                     stop = stop or (StopDecision("paused", "session attempt limit reached") if session_waiting else
                                     StopDecision("blocked", "selected work is waiting for inputs or a failed execution"))
@@ -2121,6 +2219,7 @@ class Engine:
         run = self.ledger.run(self.run_id)
         champs = self.ledger.champions(self.run_id)
         attempts = self.ledger.attempts(self.run_id)
+        records = self.attempt_records()
         outcomes: dict[str, int] = {}
         for a in attempts:
             if a["outcome"]:
@@ -2172,6 +2271,9 @@ class Engine:
                 "inflight_calls": [c["call_id"] for c in self.ledger.calls(self.run_id) if c["result"] is None],
                 "claims": self.claims(),
                 "claim_history": self.claims(history=True),
+                "basis_changes": [{"attempt": a["attempt_no"], "changes": changes}
+                                  for a in records
+                                  if (changes := self.basis_changes(self.direct_basis(a["plan"] or {}, records)))],
                 "decision_conflicts": self.ledger.events(self.run_id, "expert_conflict"),
                 "decisions": self.ledger.events(self.run_id, "expert_decision"),
                 "materials": str(self.artifact_dir() / "materials"),

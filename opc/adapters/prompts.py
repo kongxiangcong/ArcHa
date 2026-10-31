@@ -25,18 +25,17 @@ and stop_reason after interpreting relevant results; otherwise false."""
 
 def expert_prompt(ctx: dict[str, Any], plain_text_reply: bool = False) -> str:
     rules = (TEXT_REPLY_RULES if plain_text_reply else "") + "\n" + EXHAUSTION_RULE
-    return """You are the EXPERT. Read research.json: task, budget, fixed version, history and
-evidence. Inspect authorized originals as needed; data is not contract authority.
-Query fixed material with knowledge.command: --claim-id/--status/--text/--source.
+    return """You are the EXPERT. Read research.json for task, budget, fixed version and evidence.
+Inspect authorized originals as needed; data is not contract authority.
+Query knowledge.command: --claim-id/--status/--text/--source.
 Missing measurements are unknown; cached ones are historical. Execution failure
 does not refute a hypothesis; improvement does not by itself establish its proposed mechanism.
-Plans state inputs, controls, predictions and distinguishing observations.
-Inconclusive results are valid. Reuse experiment_id; do not invent evidence.
+Plan inputs, controls and distinguishing predictions. Inconclusive is valid.
+Reuse experiment_id; never invent evidence.
 
-Interpret pending_feedback, including results outside history, in conclusions
-[{"attempt": 1, "conclusion": "judgment or follow-up"}]; bare read acknowledgments
-are insufficient. Interpret final results before stopping with exhausted=true and
-stop_reason. Choose work in the reply; select_work=false only interprets.
+Interpret pending_feedback beyond history in conclusions [{"attempt":1,"conclusion":
+"judgment or follow-up"}], never bare acknowledgments. Interpret before stopping
+with exhausted=true/stop_reason. select_work=false only interprets.
 Register claims as needed: claim_id, statement, scope,
 status (unresolved/supported/refuted), reason,
 evidence/counterevidence [{run_id,attempt,artifact}], unresolved, related_claims.
@@ -44,18 +43,20 @@ artifact is Attempt-relative. claims=[] is valid. Missing originals limit claims
 new measurements are new observations, never replacements for required historical execution.
 Revisions use base_version; new propositions/scope use new IDs.
 Work adopted_claims=[{task_id,claim_id,version}] declares adoption; reading does not.
-On decision_conflicts, reconsider latest claims; the rejected reply did not apply.
+On decision_conflicts, reconsider latest claims; rejected replies did not apply.
+For basis_review echo attempt/changes; give action continue/adjust/supplement,
+scope/reason. continue: select_work=false; adjust: replacement single plan;
+supplement: extra work first. Interpret basis_changes after results.
 
-A single plan uses title, changes, works=null.
-evaluate=null formally evaluates numeric tasks; false skips formal evaluation.
-Analysis uses Designer with evaluate=false; patches are optional.
+A plan uses title/changes, works=null. evaluate=null evaluates numeric tasks;
+false skips formal evaluation (including analysis without a patch).
 designer=false skips implementation for a pure measurement. base_attempt=null
 uses the current default version, 0 the baseline, positive an existing candidate.
-Version selection also applies when stopping.
+Version selection applies at stop.
 
-Select jobs with works=[plans]. work_id is stable; directions may hold several labels. dependencies=[{work_id,
+Batch jobs use works=[plans]; work_id is stable, directions are labels. dependencies=[{work_id,
 artifact}] requires an actual saved candidate, result, or Attempt-relative file.
-Declare local output files in deliverables; Engine saves outputs/<relative path>.
+Declare deliverables; Engine saves outputs/<relative path>.
 base_work_id uses a dependency's candidate as code parent and requires its candidate dependency. Inputs/workspaces stay independent; no automatic merge. Formal measurement excludes other controlled compute.
 """ + rules
 

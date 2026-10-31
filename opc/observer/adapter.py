@@ -846,6 +846,10 @@ class ObserverAdapter:
         plan_art = self._register(path=row.get('_snapshot'), record=row, locator='attempts.run_id=%s,attempt_no=%s' % (run['run_id'], n), phase='loop', owners=[dict(id=ident, label='第 %s 轮' % n)], title='第 %s 轮计划与状态 · 账本记录' % n)
         sources['plan'] = [self._source(plan_art)]
         event_artifacts.append(ref(plan_art))
+        original_plan = plan
+        basis_review = projected.get('work_reconsidered')
+        if basis_review:
+            plan = basis_review['plan']
         outcome = row.get('outcome')
         execution = projected.get('execution')
         adopted_claims = list(plan.get('adopted_claims') or [])
@@ -861,6 +865,7 @@ class ObserverAdapter:
                    conclusion=fact(conclusion.get('text'), 'conclusion'), gaps=fact(conclusion.get('gaps'), 'conclusion'), next_step=fact(conclusion.get('next_step'), 'conclusion'),
                    parent_commit=(projected.get('development_parent') or {}).get('commit') or row.get('champion_before'),
                    candidate_commit=(projected.get('candidate_saved') or {}).get('commit'),
+                   basis_review=basis_review, original_plan=original_plan if basis_review else None,
                    adopted_claims=adopted_claims, planned_claims=plan.get('adopted_claims') or [],
                    designer_claims=(execution or {}).get('adopted_claims') or [],
                    work_id=plan.get('work_id') or 'a%d' % n,
