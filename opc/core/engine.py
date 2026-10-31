@@ -1117,6 +1117,8 @@ class Engine:
                 a["parent"] = body["parent"]
             elif event["kind"] in ("execution", "experiment"):
                 a[event["kind"]] = body
+            elif event["kind"] == "deliverables_saved":
+                a["execution"]["saved_files"] = body["paths"]
             elif event["kind"] == "comparison_baseline":
                 a["comparison"] = body
             elif event["kind"] == "conclusion":
@@ -1728,14 +1730,15 @@ class Engine:
                                            lambda: designer.implement(plan, ctx, design_tree, designer_log))
                 self.ledger.event(self.run_id, "execution", n,
                                   **{**(call.output or {}), "completed": call.ok, "error": call.error})
+                if not call.ok and self._worker_outcome(call) is Outcome.INFRA:
+                    self.ledger.update_attempt(self.run_id, n, "planned", reason=call.error,
+                                               cost=attempt_cost().as_dict())
+                    return Outcome.INFRA, StopDecision("blocked", "designer execution incomplete: %s" % call.error[:200])
+                missing = self.collect_deliverables(n, design_tree, plan,
+                                                    evidence_files=(call.output or {}).get("evidence_files", []))
                 if not call.ok:
-                    out = self._worker_outcome(call)
-                    if out is Outcome.INFRA:
-                        self.ledger.update_attempt(self.run_id, n, "planned", reason=call.error,
-                                                   cost=attempt_cost().as_dict())
-                        return out, StopDecision("blocked", "designer execution incomplete: %s" % call.error[:200])
-                    return finish(out, "designer: %s" % call.error)
-                missing = self.collect_deliverables(n, design_tree, plan)
+                    error = call.error + ("; evidence: " + missing if missing else "")
+                    return finish(self._worker_outcome(call), "designer: %s" % error)
                 if missing:
                     return finish(Outcome.WORKER_FAILED, missing)
             rep = sandbox(self.comp, design_tree, parent)
@@ -1809,14 +1812,23 @@ class Engine:
                 for t in trees:
                     ws.drop(t)
 
-    def collect_deliverables(self, n: int, tree: Path, plan: dict) -> str | None:
+    def collect_deliverables(self, n: int, tree: Path, plan: dict,
+                             evidence_files: list[str] | None = None) -> str | None:
         if any(e["attempt"] == n for e in self.ledger.events(self.run_id, "deliverables_saved")):
             return None
+        if not isinstance(evidence_files, (list, type(None))) or any(
+                not isinstance(rel, str) or not portable_path(rel)
+                or not (self.comp.is_editable(rel) or self.comp.is_scratch(rel))
+                for rel in evidence_files or []):
+            return "evidence_files must list relative editable/scratch file paths"
         saved = []
-        for rel in plan.get("deliverables") or []:
+        for rel in dict.fromkeys([*(plan.get("deliverables") or []), *(evidence_files or [])]):
             source = tree / rel
             if not source.is_file() or not source.resolve().is_relative_to(tree.resolve()):
                 return "declared deliverable missing or outside workspace: " + rel
+            resolved = source.resolve().relative_to(tree.resolve()).as_posix()
+            if not (self.comp.is_editable(resolved) or self.comp.is_scratch(resolved)):
+                return "declared deliverable resolves outside editable/scratch paths: " + rel
             target = self.attempt_dir(n) / "outputs" / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)

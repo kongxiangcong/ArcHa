@@ -398,6 +398,152 @@ def test_claim_source_expansion_distinguishes_missing_and_access_denied(make_pro
     assert 'content' not in denied['source']
 
 
+@pytest.mark.parametrize('worker_ok', [True, False])
+def test_designer_discovered_originals_survive_cleanup_and_candidate_rejection(make_project, engine_for, worker_ok):
+    from opc.core.results import query_claims
+    from opc.tests.conftest import component
+    trees = []
+    class EvidenceWorker(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            trees.append(tree)
+            raw = tree / 'measurements/long.json'
+            raw.parent.mkdir(parents=True)
+            raw.write_text('{"field":"long","latency":17}')
+            (raw.parent / 'trace.bin').write_bytes(b'\x00\xffnative-trace')
+            call = super().implement(p, ctx, tree, log_dir)
+            call.output['evidence_files'] = ['measurements/long.json', 'measurements/trace.bin']
+            call.ok = worker_ok
+            call.error = '' if worker_ok else 'Work incomplete; observations retained'
+            return call
+    def register_claim(ctx):
+        saved = ctx['history'][0]['execution']['saved_files']
+        assert saved == ['outputs/measurements/long.json', 'outputs/measurements/trace.bin']
+        return dict(stop(ctx), claims=[dict(claim_id='long', statement='Less copying helps long fields',
+                    scope='long fields only', status='supported', reason='Controlled long field observation',
+                    evidence=[dict(run_id=e.run_id, attempt=1, artifact=path) for path in saved])])
+    root = make_project(comp=component(scratch=['measurements/**']))
+    e = use_sequence(engine_for(root), EvidenceWorker([
+        plan(1, deliverables=['measurements/long.json']), register_claim], [0]))
+    result = e.run()
+    assert result['state'] == 'closed'
+    assert e.attempt_records()[0]['outcome'] == ('no_gain' if worker_ok else 'worker_failed')
+    assert json.loads((root / 'params.json').read_text()) == {'x': 3}
+    assert not trees[0].exists()
+    original = e.attempt_dir(1) / 'outputs/measurements/long.json'
+    trace = e.attempt_dir(1) / 'outputs/measurements/trace.bin'
+    assert original.read_text() == '{"field":"long","latency":17}'
+    assert trace.read_bytes() == b'\x00\xffnative-trace'
+    assert sorted(p.name for p in original.parent.iterdir()) == ['long.json', 'trace.bin']
+    old_stat = original.stat().st_mtime_ns
+    seq = Sequence([stop])
+    restored = use_sequence(engine_for(root), seq)
+    restored.run(new_run=True)
+    expanded = query_claims(seq.contexts[0], claim_id='long', source=0)
+    assert expanded['source']['availability'] == 'read'
+    assert json.loads(expanded['source']['content'])['latency'] == 17
+    assert original.stat().st_mtime_ns == old_stat
+
+
+def test_missing_claim_original_is_preserved_as_gap_after_fresh_observation(make_project, engine_for):
+    from opc.core.results import query_claims
+    from opc.tests.conftest import component
+    from opc.adapters.worker import WorkerCall
+    from opc.core.model import Cost
+    claim = dict(claim_id='long', statement='Less copying helps long fields', scope='long fields only',
+                 status='supported', reason='First controlled observation')
+    class EvidenceWorker(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            raw = tree / 'measurements/long.json'
+            raw.parent.mkdir(parents=True)
+            raw.write_text('{"observation":"fresh measurement","latency":22}')
+            return WorkerCall('designer', True, Cost(), output=dict(
+                summary='New controlled long-field observation; does not recover old execution',
+                evidence_files=['measurements/long.json']))
+    def register_claim(ctx):
+        return dict(stop(ctx), claims=[dict(claim, evidence=[dict(
+                    run_id=first.run_id, attempt=1, artifact='outputs/measurements/long.json')])])
+    root = make_project(comp=component(scratch=['measurements/**']))
+    first = use_sequence(engine_for(root), EvidenceWorker([plan(1), register_claim]))
+    first.run()
+    missing = first.attempt_dir(1) / 'outputs/measurements/long.json'
+    missing.unlink()
+    original_run = first.run_id
+    old_ref = dict(run_id=original_run, attempt=1, artifact='outputs/measurements/long.json')
+    def recover(ctx):
+        found = query_claims(ctx, claim_id='long', source=0)
+        assert found['source']['availability'] == 'missing'
+        assert found['claims'][0]['status'] == 'supported'
+        return dict(plan(1), changes='Obtain a new long-field observation; original execution remains missing')
+    def reconsider(ctx):
+        assert ctx['pending_feedback'][0]['attempt'] == 1
+        return dict(stop(ctx), claims=[dict(claim, base_version=1,
+                    reason='Fresh observation supports scope; original historical execution remains missing',
+                    evidence=[old_ref, dict(run_id=second.run_id, attempt=1,
+                                           artifact='outputs/measurements/long.json')],
+                    unresolved=['Original historical execution could not be recovered'])])
+    seq = EvidenceWorker([recover, reconsider])
+    second = use_sequence(engine_for(root), seq)
+    assert second.run(new_run=True)['state'] == 'closed'
+    assert second.run_id != original_run
+    final_seq = Sequence([stop])
+    final = use_sequence(engine_for(root), final_seq)
+    final.run(new_run=True)
+    ctx = final_seq.contexts[0]
+    current = query_claims(ctx, claim_id='long')
+    assert current['claims'][0]['version'] == 2
+    assert current['claims'][0]['unresolved'] == ['Original historical execution could not be recovered']
+    assert query_claims(ctx, claim_id='long', source=0)['source']['availability'] == 'missing'
+    assert query_claims(ctx, claim_id='long', source=1)['source']['availability'] == 'read'
+    old = query_claims(ctx, claim_id='long', version=1, source=0)
+    assert old['source']['availability'] == 'missing'
+    assert old['claims'][0]['reason'] == 'First controlled observation'
+    assert not missing.exists()
+    from opc.observer.adapter import ObserverAdapter
+    before = final.ledger.path.read_bytes()
+    observer = ObserverAdapter(root)
+    observed = observer.run(observer._id('run', second.run_id))['data']
+    assert observed['claims'][0]['version'] == 2
+    assert observed['claims'][0]['evidence'][0]['availability'] == 'missing'
+    assert observed['claim_history'][0]['reason'] == 'First controlled observation'
+    assert final.ledger.path.read_bytes() == before
+
+
+@pytest.mark.parametrize('evidence_files', [
+    '../outside.txt', ['../outside.txt'], ['.opc/eval/evaluate.py'],
+])
+def test_discovered_evidence_rejects_invalid_or_unauthorized_paths(make_project, engine_for, evidence_files):
+    from opc.adapters.worker import WorkerCall
+    from opc.core.model import Cost
+    class EvidenceWorker(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            return WorkerCall('designer', True, Cost(), output=dict(
+                summary='Attempted evidence declaration', evidence_files=evidence_files))
+    e = use_sequence(engine_for(make_project()), EvidenceWorker([plan(1), stop]))
+    e.run()
+    result = e.attempt_records()[0]
+    assert result['outcome'] == 'worker_failed'
+    assert 'evidence_files' in result['reason']
+    assert not (e.attempt_dir(1) / 'outputs').exists()
+
+
+def test_discovered_evidence_cannot_archive_protected_file_through_scratch_link(make_project, engine_for):
+    from opc.adapters.worker import WorkerCall
+    from opc.core.model import Cost
+    from opc.tests.conftest import component
+    class EvidenceWorker(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            raw = tree / 'measurements/linked.py'
+            raw.parent.mkdir()
+            raw.symlink_to(tree / '.opc/eval/evaluate.py')
+            return WorkerCall('designer', True, Cost(), output=dict(
+                summary='Attempted protected source alias', evidence_files=['measurements/linked.py']))
+    e = use_sequence(engine_for(make_project(comp=component(scratch=['measurements/**']))),
+                     EvidenceWorker([plan(1), stop]))
+    e.run()
+    assert e.attempt_records()[0]['outcome'] == 'worker_failed'
+    assert not (e.attempt_dir(1) / 'outputs/measurements/linked.py').exists()
+
+
 @pytest.mark.parametrize('has_results', [False, True])
 def test_claim_review_keeps_exact_revision_after_later_run_updates(make_project, engine_for, monkeypatch, has_results):
     from opc.core.promote import promote
