@@ -40,7 +40,7 @@ from typing import Any
 
 from ..core.model import Cost, OPCError, write_json, write_text
 from .prompts import designer_prompt, expert_prompt
-from .worker import request_rejected, EXHAUSTED_SENTINEL, WorkerCall
+from .worker import designer_output, request_rejected, EXHAUSTED_SENTINEL, WorkerCall
 
 #: Wording that names an account or host condition. The structured code covers
 #: most cases; this is the fallback for a reply whose code is absent or unknown.
@@ -359,5 +359,9 @@ class DshWorker:
                   log_dir: Path) -> WorkerCall:
         call, text = self._run("designer", designer_prompt(plan, ctx), tree, log_dir,
                                "workspace-write", ctx=ctx)
-        call.output = {"summary": text[-2000:]}
+        try:
+            call.output = designer_output(text)
+        except ValueError as exc:
+            call.output = {"summary": text[-2000:]}
+            call.ok, call.error = False, "; ".join(part for part in (call.error, str(exc)) if part)
         return call

@@ -848,6 +848,10 @@ class ObserverAdapter:
         event_artifacts.append(ref(plan_art))
         outcome = row.get('outcome')
         execution = projected.get('execution')
+        adopted_claims = list(plan.get('adopted_claims') or [])
+        for claim_ref in (execution or {}).get('adopted_claims') or []:
+            if claim_ref not in adopted_claims:
+                adopted_claims.append(claim_ref)
         experiment = projected.get('experiment')
         conclusion = projected.get('conclusion') or {}
         attempt_artifacts = [ref(a) for a in artifacts if ('/a%06d/' % n) in a['display_path']]
@@ -857,6 +861,8 @@ class ObserverAdapter:
                    conclusion=fact(conclusion.get('text'), 'conclusion'), gaps=fact(conclusion.get('gaps'), 'conclusion'), next_step=fact(conclusion.get('next_step'), 'conclusion'),
                    parent_commit=(projected.get('development_parent') or {}).get('commit') or row.get('champion_before'),
                    candidate_commit=(projected.get('candidate_saved') or {}).get('commit'),
+                   adopted_claims=adopted_claims, planned_claims=plan.get('adopted_claims') or [],
+                   designer_claims=(execution or {}).get('adopted_claims') or [],
                    work_id=plan.get('work_id') or 'a%d' % n,
                    directions=plan.get('directions') or [], dependencies=plan.get('dependencies') or [],
                    blocked_by=(projected.get('node_waiting') or {}).get('blocked_by', []),
