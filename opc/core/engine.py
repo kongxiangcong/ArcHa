@@ -111,6 +111,8 @@ class Engine:
         self.preparation = self.ledger.preparation_scope(task_id, create=False)
         self.log = log
         self.run_id: str | None = None
+        self._budget_origin: dict[str, Any] = {}
+        self._project_hard_limits = self.project.raw.get("hard_limits", {})
         self._domain: DomainAdapter | None = None
         self._rule = None
         self._workers: tuple[Worker, Worker] | None = None
@@ -219,6 +221,7 @@ class Engine:
                       log_dir=call.log_dir or str(log_dir), extra=call.extra,
                       usage_complete=usage_complete,
                       state=("not_started" if call.extra.get("not_started") else
+                             "unknown" if call.extra.get("execution_unknown") and not control.cancelled else
                              "cancelled" if call.extra.get("cancelled") else "completed"))
         write_json(receipt, result)
         self.ledger.finish_call(call_id, result)
@@ -230,6 +233,8 @@ class Engine:
 
     def reconcile_calls(self) -> None:
         for call in self.ledger.calls(self.run_id):
+            if call["state"] == "unknown":
+                raise OPCError("Call %s execution unknown; inspect original logs before retry" % call["call_id"])
             if call["result"] is not None:
                 continue
             path = Path(call["receipt_path"])
@@ -259,7 +264,7 @@ class Engine:
         digest, files = self.evaluator_digest(base)
         if self.preparation:
             receipt = self.preparation_receipt()
-            if self.accounting_required() and self.ledger.unresolved_accounting(self.preparation):
+            if self.accounting_required() and self.unresolved_usage(self.preparation):
                 problems.append("preparation accounting incomplete; no new dispatch")
             if receipt.get("state") != "ready":
                 problems.append("preparation not ready: " + receipt.get("reason", "unmetered draft"))
@@ -508,15 +513,38 @@ class Engine:
 
     # ------------------------------------------------------------------- runs
     def open_run(self, new_run: bool = False, direction: str | None = None,
-                 base_ref: str | None = None) -> str:
+                 base_ref: str | None = None, *, switch_backend: bool = False) -> str:
+        if switch_backend and not new_run:
+            raise OPCError("explicit backend switch requires a new Run")
         if new_run and self.requested_run_id:
             raise OPCError("--run-id selects an existing Run; it cannot create a new Run")
         if new_run:
+            self.run_id = None
             self.task = TaskSpec.load(self.root, self.task.task_id, self.requested_revision)
             self.worker_config = load_worker_config(self.root)
             self.resolved_workers = self.resolve_workers()
             self._workers = None
             self.comp = ComponentConfig.load(self.root, self.task.component)
+        previous = self.ledger.latest_run(self.task.task_id)
+        if previous is not None:
+            origins = self.ledger.events(previous["run_id"], "budget_origin")
+            self._budget_origin = origins[-1]["body"] if origins else {}
+        if switch_backend:
+            if previous is None:
+                raise OPCError("backend switch requires a previous Run")
+            prior_calls = self.ledger.calls(previous["run_id"])
+            if (previous["state"] == "active" or any(c["state"] in ("dispatched", "unknown", "running")
+                                                     for c in prior_calls)):
+                raise OPCError("backend switch requires a quiescent previous Run with no unknown execution")
+            prior = self.bindings.artifact_root / self.project.project_id / self.task.task_id / previous["run_id"] / "frozen/baseline.json"
+            old_workers = json.loads(prior.read_text(encoding="utf-8"))["execution"]["workers"]
+            old_kind, new_kind = old_workers["expert"]["kind"], self.resolved_workers["expert"]["kind"]
+            if old_kind not in ("codex", "dsh") or new_kind not in ("codex", "dsh") or old_kind == new_kind:
+                raise OPCError("backend switch requires an explicit change between Codex and DSH")
+            totals = self.ledger.task_totals(self.task.task_id)
+            self._budget_origin = dict(wall_seconds=totals["wall_seconds"], tokens=totals["tokens"],
+                                       after_event=self.ledger.db.execute("SELECT COALESCE(MAX(seq),0) FROM events").fetchone()[0],
+                                       source_run=previous["run_id"], previous_backend=old_kind, backend=new_kind)
         last = None if new_run else self.ledger.select_run(
             self.task.task_id, self.requested_revision, self.requested_run_id)
         if last is not None:
@@ -558,6 +586,8 @@ class Engine:
             task_digest=self.task.digest, component=self.comp.component_id, base_commit=base,
             evaluator_digest=rep["evaluator_digest"], toolchain_digest=tool_digest,
             champion_ref=self.ref, direction=direction or self.task.direction)
+        if self._budget_origin:
+            self.ledger.event(self.run_id, "budget_origin", **self._budget_origin)
         if self.delivery_accounting():
             self.enable_delivery()
         write_json(self.artifact_dir() / "frozen" / "task.json", self.task.raw)
@@ -571,6 +601,8 @@ class Engine:
                                 "workers": ".opc/local/workers.json", "bindings": ".opc/local/bindings.json"},
                     "execution": {"task_digest": self.task.digest, "budget": asdict(self.task.budget),
                                   "configuration_sources": self.task.configuration_sources,
+                                  "budget_origin": self._budget_origin,
+                                  "project_hard_limits": self._project_hard_limits,
                                   "workers": self.resolved_workers,
                                   "worker_config": self.worker_config,
                                   "bindings": {"artifact_root": str(self.bindings.artifact_root),
@@ -601,6 +633,8 @@ class Engine:
         self.task = TaskSpec.load(self.root, run["task_id"], run["revision"],
                                   source=task, resolve_local=False)
         if execution:
+            self._budget_origin = execution.get("budget_origin", {})
+            self._project_hard_limits = execution.get("project_hard_limits", {})
             if self.task.digest != execution["task_digest"]:
                 raise OPCError("frozen task source differs from execution identity; use original sources")
             self.task.budget = Budget(**execution["budget"])
@@ -764,6 +798,15 @@ class Engine:
         t["search_attempts"] = sum(1 for a in attempts if a["outcome"] and
                                    Outcome(a["outcome"]).counts_as_search)
         t["attempts"] = len(attempts)
+        if self._budget_origin:
+            # Scope by original Run ownership, so a late correction to an older
+            # Call remains historical usage rather than consuming the new quota.
+            row = self.ledger.db.execute(
+                "SELECT COALESCE(SUM(c.wall_seconds),0), COALESCE(SUM(c.tokens),0) FROM charges c "
+                "JOIN runs r ON c.run_id=r.run_id WHERE r.task_id=? AND r.revision!='preparation' "
+                "AND r.rowid > (SELECT rowid FROM runs WHERE run_id=?)",
+                (self.task.task_id, self._budget_origin["source_run"])).fetchone()
+            t["wall_seconds"], t["tokens"] = row
         return t
 
     def effective_budget(self):
@@ -779,6 +822,14 @@ class Engine:
             setattr(budget, key, min(value, limit) if value is not None else limit)
         return budget
 
+    def unresolved_usage(self, scope: str) -> list[dict[str, Any]]:
+        unknown = self.ledger.unresolved_accounting(scope)
+        lifetime = (self.effective_budget().max_usd is not None
+                    or "max_tokens" in self.task.raw.get("hard_limits", {})
+                    or self._project_hard_limits.get("max_tokens") is not None)
+        cutoff = 0 if lifetime else self._budget_origin.get("after_event", 0)
+        return [event for event in unknown if event["seq"] > cutoff]
+
     def accounting_required(self) -> bool:
         b = self.effective_budget()
         return b.max_tokens is not None or b.max_usd is not None
@@ -792,6 +843,16 @@ class Engine:
             left["tokens"] = b.max_tokens - s["tokens"]
         if b.max_usd is not None:
             left["usd"] = round(b.max_usd - s["usd"], 4) if s["usd_known"] else "unknown"
+        for limits, project_scope in ((self.task.raw.get("hard_limits", {}), False),
+                                      (self._project_hard_limits, True)):
+            for key, cap in limits.items():
+                if cap is None:
+                    continue
+                metric = {"max_tokens": "tokens", "max_wall_seconds": "wall_seconds"}[key]
+                used = (self.ledger.db.execute("SELECT COALESCE(SUM(%s),0) FROM charges" % metric).fetchone()[0]
+                        if project_scope else self.ledger.task_totals(self.task.task_id)[metric])
+                available = cap - used
+                left[metric] = min(left[metric], available) if left.get(metric) is not None else available
         return left
 
     def admit(self) -> None:
@@ -833,7 +894,25 @@ class Engine:
         """Between steps of one attempt: stop as soon as a cap is crossed."""
         self.dispatch_boundary()
         b, s = self.effective_budget(), self.spent()
-        if self.accounting_required() and any(self.ledger.unresolved_accounting(r["run_id"])
+        for key, cap in self.task.raw.get("hard_limits", {}).items():
+            total_key = {"max_tokens": "tokens", "max_wall_seconds": "wall_seconds"}[key]
+            if self.task.configuration_sources.get("hard_limits." + key) == "project":
+                used = self.ledger.db.execute("SELECT COALESCE(SUM(%s),0) FROM charges" % total_key).fetchone()[0]
+            else:
+                used = self.ledger.task_totals(self.task.task_id)[total_key]
+            if used >= cap:
+                raise BudgetExhausted(key, "lifetime hard limit reached")
+        for key, cap in self._project_hard_limits.items():
+            total_key = {"max_tokens": "tokens", "max_wall_seconds": "wall_seconds"}[key]
+            used = self.ledger.db.execute("SELECT COALESCE(SUM(%s),0) FROM charges" % total_key).fetchone()[0]
+            if cap is not None and used >= cap:
+                raise BudgetExhausted(key, "project lifetime hard limit reached")
+        if self._project_hard_limits.get("max_tokens") is not None:
+            scopes = [row[0] for row in self.ledger.db.execute(
+                "SELECT DISTINCT run_id FROM events WHERE kind='accounting_unknown'")]
+            if any(self.ledger.unresolved_accounting(scope) for scope in scopes):
+                raise OPCError("project usage accounting incomplete; no new dispatch")
+        if self.accounting_required() and any(self.unresolved_usage(r["run_id"])
                 for r in self.ledger.runs() if r["task_id"] == self.task.task_id):
             raise OPCError("usage accounting incomplete; no new dispatch")
         if self.delivery_accounting():
@@ -842,7 +921,7 @@ class Engine:
         if self.preparation and not self.run_id:
             if self.preparation_receipt().get("state") != "ready":
                 raise OPCError("preparation is not ready; no formal dispatch")
-        if self.preparation and self.accounting_required() and self.ledger.unresolved_accounting(self.preparation):
+        if self.preparation and self.accounting_required() and self.unresolved_usage(self.preparation):
             raise OPCError("usage accounting incomplete; no new dispatch")
         if b.max_wall_seconds is not None and s["wall_seconds"] >= b.max_wall_seconds:
             raise BudgetExhausted("max_wall_seconds", "crossed mid-attempt")
@@ -1110,11 +1189,29 @@ class Engine:
                 log_dir = Path(replay["receipt_path"]).parent if replay else self.artifact_dir() / "expert" / ("decision-%06d" % (len(calls) + 1))
                 if replay:
                     ctx = replay["input"]["context"]
+                else:
+                    invalid = {e["body"]["session_id"] for e in self.ledger.events(self.run_id, "expert_session_rebuilt")}
+                    invalid.update(c["session_id"] for c in calls if c["result"]
+                                   and c["result"].get("extra", {}).get("session_unavailable"))
+                    prior_session = next((c for c in reversed(calls)
+                                          if c["session_id"] and c["session_id"] not in invalid
+                                          and c["result"] is not None and c["state"] == "completed"), None)
+                    if prior_session:
+                        if prior_session["input"]["tree"] != str(tree):
+                            self.ledger.event(self.run_id, "expert_session_rebuilt", call_id=prior_session["call_id"],
+                                              session_id=prior_session["session_id"], reason="Run materials directory relocated; rebuild from persisted inputs")
+                        else:
+                            ctx["session_id"] = prior_session["session_id"]
                 write_json(tree / "research.json", ctx)
                 call = self.dispatch_call("expert", None, {"context": ctx}, tree, log_dir,
                                           lambda: expert.propose(ctx, tree, log_dir))
                 if not call.ok:
                     self.ledger.event(self.run_id, "expert_rejected", call_id=call.call_id, reason=call.error)
+                    if call.extra.get("session_unavailable"):
+                        self.ledger.event(self.run_id, "expert_session_rebuilt", call_id=call.call_id,
+                                          session_id=ctx["session_id"], reason=call.error)
+                        self.hard_check()
+                        continue
                     return None, StopDecision("blocked", "expert worker unavailable: " + call.error[:200])
                 output = call.output or {} if call.exhausted else call.output
                 why = self.validate_conclusions(output) if isinstance(output, dict) else "expert reply is not an object"
@@ -1402,9 +1499,10 @@ class Engine:
         return self.run()
 
     def run(self, new_run: bool = False, direction: str | None = None,
-            max_attempts_now: int | None = None, base_ref: str | None = None) -> dict[str, Any]:
+            max_attempts_now: int | None = None, base_ref: str | None = None,
+            *, switch_backend: bool = False) -> dict[str, Any]:
         with self.ledger.writer():
-            self.open_run(new_run, direction, base_ref)
+            self.open_run(new_run, direction, base_ref, switch_backend=switch_backend)
             if self.ledger.run(self.run_id)["state"] == "closed":
                 self._returned_closed = True
                 return self.summary()
@@ -1511,6 +1609,7 @@ class Engine:
                 "working_version": self.working_commit() if not m else None,
                 "baseline": run["base_commit"], "startpoint": self.startpoint(),
                 "workers": self.resolved_workers,
+                "backend_validation": {"dsh": "implemented; not runtime verified"},
                 "configuration_sources": self.task.configuration_sources,
                 "compatibility": compatibility,
                 "baseline_metrics": base["metrics"]["values"] if base else None,
@@ -1528,7 +1627,8 @@ class Engine:
                 "calls": self.ledger.calls(self.run_id),
                 "unresolved_accounting": self.ledger.unresolved_accounting(self.run_id),
                 "spent": self.spent(), "budget_left": self.budget_left(),
-                "budget": {"scope": "task", "limits": {"wall_seconds": self.effective_budget().max_wall_seconds,
+                "budget": {"scope": "task", "origin": self._budget_origin,
+                           "historical_used": self.ledger.task_totals(self.task.task_id), "limits": {"wall_seconds": self.effective_budget().max_wall_seconds,
                            "tokens": self.effective_budget().max_tokens, "attempts": self.effective_budget().max_attempts},
                            "used": self.spent()}}
 

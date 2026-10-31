@@ -1,4 +1,4 @@
-"""DeepSeek Harness worker: `dsh --profile headless --json`, one fresh session per role call.
+"""DeepSeek Harness worker: `dsh --profile headless --json`, explicit Expert session continuation.
 
 The headless bundle is a one-shot runner: it answers one task, prints a
 newline-delimited event stream, and exits 0 (completed) or 1 (aborted/errored).
@@ -99,6 +99,14 @@ def parse_events(text: str) -> dict[str, Any]:
             runner_error = str(ev.get("message") or "")
         elif kind == "final":
             last_text = ev.get("text", "") or ""
+            session_id = ev.get("sessionId") or session_id
+            # The final event's reason describes this invocation's last turn;
+            # a preceding successful turn cannot establish its completion.
+            if "reason" in ev:
+                reason = ev["reason"] or {}
+                end_kind = reason.get("kind")
+                error = reason.get("error") or {}
+                end_code, end_message = str(error.get("code") or ""), str(error.get("message") or "")
         elif kind == "status" and ev.get("phase") == "step_end":
             usage = ev.get("usage")
             if isinstance(usage, dict):
@@ -175,6 +183,7 @@ class DshWorker:
     """A worker driven by the `dsh` launcher's one-shot headless profile."""
 
     def __init__(self, options: dict[str, Any]):
+        self.session_id: str | None = None
         self.binary_unavailable = options.get("binary_unavailable", False)
         self.binary = options.get("binary") or os.environ.get("OPC_DSH_BIN", "dsh")
         self.profile = str(options.get("profile") or "headless")
@@ -199,8 +208,8 @@ class DshWorker:
         env["DSH_PERMISSION_MODE"] = sandbox
         if self.dsh_home:
             env["DSH_HOME"] = str(self.dsh_home)
-        # Keep the child from inheriting a stale session working directory that
-        # would make --session-id adoption refuse; every call is a fresh Session.
+        # Adopt only the explicit ID supplied for this Run; inherited process
+        # context must not silently choose another native Session.
         env.pop("DSH_SESSION_ID", None)
         return env
 
@@ -213,6 +222,8 @@ class DshWorker:
         """
         log_dir.mkdir(parents=True, exist_ok=True)
         argv = [*command_prefix(self.binary), *self.extra, "--profile", self.profile, "--json", "-"]
+        if role == "expert" and self.session_id:
+            argv[-1:-1] = ["--session-id", self.session_id]
         if self.selection:
             # JSON is a YAML subset. An invocation-local patch never edits DSH_HOME.
             selection = {"provider": self.selection["provider"], "model": self.selection["model"]}
@@ -236,7 +247,7 @@ class DshWorker:
             except OSError as exc:
                 return WorkerCall(role, False, Cost(time.time() - t0, 0, None),
                                   error="dsh could not start: %s" % exc,
-                                  extra={"infra": True}), ""
+                                  extra={"infra": True, "not_started": True, "usage_complete": True}), ""
             with p:
                 try:
                     p.communicate(prompt.encode(), timeout=self.timeout)
@@ -250,7 +261,12 @@ class DshWorker:
                           log_dir=str(log_dir))
         call.extra.update({"usage_complete": info["usage_complete"],
                            "tool_calls": info["tool_calls"],
-                           "turn_end": info["end_kind"], "code": info["end_code"]})
+                           "turn_end": info["end_kind"], "code": info["end_code"],
+                           "session_id": info["session_id"],
+                           "terminal_completed": info["end_kind"] == "completed"})
+        if p.cancel_reason and info["end_kind"] == "completed":
+            call.ok = True
+            return call, info["text"]
         if timed_out:
             call.error, call.extra["infra"] = "dsh timed out after %ss" % self.timeout, True
             return call, info["text"]
@@ -259,7 +275,15 @@ class DshWorker:
             return call, info["text"]
         message = info["end_message"] or info["runner_error"] or info["end_kind"] or \
             "dsh exited %s" % p.returncode
-        call.error = message[:500]
+        if not info["session_id"]:
+            stderr = (log_dir / ("%s-stderr.txt" % role)).read_text(encoding="utf-8", errors="replace")
+            message = info["runner_error"] or stderr.strip() or message
+        call.error = message[:2000]
+        if (role == "expert" and self.session_id and not info["tool_calls"] and not info["output_tokens"]
+                and any(marker in call.error.lower() for marker in ("session not found", "no session found", "no stored session", "cannot be adopted", "not adoptable"))):
+            call.extra.update(session_unavailable=True, not_started=True, usage_complete=True)
+        elif info["end_kind"] is None:
+            call.extra["execution_unknown"] = True
         if info["end_code"] in INFRA_CODES:
             call.extra["infra"] = True
         elif info["end_kind"] == "interrupted":
@@ -278,6 +302,7 @@ class DshWorker:
     def propose(self, ctx: dict[str, Any], tree: Path, log_dir: Path) -> WorkerCall:
         # Headless has no --output-schema, so the prompt carries the output-shape
         # rules that codex receives through its schema instead.
+        self.session_id = ctx.get("session_id")
         call, text = self._run("expert", expert_prompt(ctx, plain_text_reply=True), tree,
                                log_dir, "read-only")
         if not call.ok:

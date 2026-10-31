@@ -813,3 +813,30 @@ def test_failed_run_expert_is_charged_without_creating_attempt(make_project, eng
     assert result['state'] == 'blocked' and result['spent']['tokens'] == 3
     assert e.ledger.attempts(e.run_id) == []
     assert e.ledger.calls(e.run_id)[-1]['attempt_no'] is None
+
+
+def test_expert_session_loss_rebuilds_from_materials_in_new_call(make_project, engine_for):
+    class Sessions(Sequence):
+        def propose(self, ctx, tree, log_dir):
+            self.contexts.append(ctx)
+            if len(self.contexts) == 1:
+                assert 'session_id' not in ctx
+                return WorkerCall('expert', True, Cost(0, 2), call_id='native-session', output=plan(1))
+            if len(self.contexts) == 2:
+                assert ctx['session_id'] == 'native-session'
+                return WorkerCall('expert', False, Cost(0, 0), error='session not found',
+                    extra={'session_unavailable': True, 'not_started': True, 'usage_complete': True})
+            assert 'session_id' not in ctx and ctx['pending_feedback']
+            return WorkerCall('expert', True, Cost(0, 3), call_id='rebuilt-session',
+                              output=stop(ctx), exhausted=True)
+    root = make_project()
+    worker = Sessions([], [4])
+    e = use_sequence(engine_for(root), worker)
+    result = e.run()
+    assert result['state'] == 'closed' and len(e.ledger.attempts(e.run_id)) == 1
+    calls = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'expert']
+    assert len({c['call_id'] for c in calls}) == 3
+    assert calls[1]['state'] == 'not_started'
+    assert calls[0]['session_id'] == 'native-session' and calls[2]['session_id'] == 'rebuilt-session'
+    assert e.ledger.events(e.run_id, 'expert_session_rebuilt')[0]['body']['reason'] == 'session not found'
+    assert not result['pending_conclusions']
