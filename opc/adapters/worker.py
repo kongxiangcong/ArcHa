@@ -116,6 +116,15 @@ PLAN_SCHEMA["properties"]["basis_review"] = {"type": ["object", "null"], "additi
                    "scope": {"type": "string"}, "reason": {"type": "string"},
                    "changes": {"type": "array", "items": _BASIS_CHANGE_SCHEMA}}}
 PLAN_SCHEMA["required"].append("basis_review")
+PLAN_SCHEMA["properties"]["delivery_claims"] = _ADOPTION_SCHEMA
+PLAN_SCHEMA["properties"]["delivery_artifacts"] = {"type": "array", "items": _SOURCE_SCHEMA}
+PLAN_SCHEMA["properties"]["delivery_basis_review"] = {"type": ["object", "null"], "additionalProperties": False,
+    "required": ["action", "scope", "reason", "changes"],
+    "properties": {"action": {"type": "string", "enum": ["continue", "adjust", "supplement"]},
+                   "scope": {"type": "string"}, "reason": {"type": "string"},
+                   "changes": {"type": "array", "items": _BASIS_CHANGE_SCHEMA}}}
+PLAN_SCHEMA["required"] += ["delivery_claims", "delivery_artifacts", "delivery_basis_review"]
+
 
 
 

@@ -116,7 +116,7 @@ def test_missing_sources_bounds_and_path_boundary(tmp_path):
             entry_path(tmp_path, bad)
 
 
-def test_review_keeps_consumed_version_and_does_not_remeasure_on_text_change(make_project, engine_for, monkeypatch):
+def test_unselected_results_text_does_not_replace_delivery_material_or_remeasure(make_project, engine_for, monkeypatch):
     from opc.core.promote import promote
     root = make_project(tsk=task(results_path=ENTRY), extra={
         ENTRY: '# Findings\n[C1](../spec.md)\n', 'research/spec.md': 'C1 v1: support under X'})
@@ -130,7 +130,8 @@ def test_review_keeps_consumed_version_and_does_not_remeasure_on_text_change(mak
     first = promote(e, review='codex')
     old = Path(first['report_dir']) / 'report.json'
     old_bytes = old.read_bytes()
-    assert 'C1 v1: support' in json.dumps(supplied[0])
+    assert 'C1 v1: support' in json.dumps(e.results_context())
+    assert supplied[0]['claims'] == [] and supplied[0]['sources'] == []
     assert not any('older source versions' in i for i in e.results_context()['issues'])
     (root / 'research/spec.md').write_text('C1 v2: refuted; review pending', encoding="utf-8")
     def no_measurements(*a, **kw):
@@ -139,10 +140,10 @@ def test_review_keeps_consumed_version_and_does_not_remeasure_on_text_change(mak
     second = promote(e, review='codex')
     assert first['evidence_key'] == second['evidence_key']
     assert second['evidence_source'] == str(old)
-    assert 'C1 v2: refuted' in json.dumps(supplied[-1])
+    assert 'C1 v2: refuted' in json.dumps(e.results_context())
+    assert 'C1 v2: refuted' not in json.dumps(supplied[-1])
     assert old.read_bytes() == old_bytes
-    assert first['task_results'] != second['task_results']
-    assert any('older source versions' in s for s in supplied[-1]['issues'])
+    assert first['task_results'] == second['task_results']
 
 
 def test_old_contract_and_new_revision_binding(make_project):
@@ -553,7 +554,8 @@ def test_claim_review_keeps_exact_revision_after_later_run_updates(make_project,
     claim = dict(claim_id='copy-all', statement='Reducing copying always improves speed',
                  scope='Comparable long and short fields', status='unresolved', reason='Need evidence', evidence=[])
     e = use_sequence(engine_for(make_project(tsk=task(results_path=ENTRY) if has_results else task())),
-                     Sequence([plan(1), lambda ctx: dict(stop(ctx), claims=[claim])], [4]))
+                     Sequence([plan(1), lambda ctx: dict(stop(ctx), finish='request_acceptance', claims=[claim],
+                         delivery_claims=[dict(claim_id='copy-all', version=1)])], [4]))
     e.run()
     supplied = []
     def reviewer(*args):
@@ -641,3 +643,20 @@ def test_historical_source_index_is_lazy_until_explicit_expansion(make_project, 
         return stop(ctx)
     engine = use_sequence(engine_for(make_project()), Sequence([plan(1), register, revise, inspect], [4]))
     assert engine.run()['state'] == 'closed'
+
+
+def test_snapshot_reports_changed_sources_of_historical_review(tmp_path):
+    entry = tmp_path / ENTRY
+    entry.parent.mkdir(parents=True)
+    entry.write_text('# Findings\n[claim](../spec.md)\n')
+    claim_path = tmp_path / 'research/spec.md'
+    claim_path.write_text('Original bounded claim')
+    old = snapshot(tmp_path, tmp_path / 'artifacts', ENTRY)
+    (tmp_path / 'research/review.json').write_text(json.dumps(dict(
+        promotion_id='historical', selected_version='fixed', complete=True,
+        task_results=old, reviewer=dict(verdict='accept'))))
+    entry.write_text('# Findings\n[claim](../spec.md)\n[old review](../review.json)\n')
+    claim_path.write_text('Revised claim after counterevidence')
+    current = snapshot(tmp_path, tmp_path / 'artifacts', ENTRY)
+    assert any('older source versions' in issue for issue in current['issues'])
+    assert 'Revised claim' in json.dumps(current)

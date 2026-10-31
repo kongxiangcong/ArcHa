@@ -1261,6 +1261,7 @@ class Engine:
                          if self.worker_spec("expert").kind == "scripted" else None} if acc.objective_metric else None,
             "baseline": {"commit": base["commit_sha"], "values": metric_view(base["metrics"]["values"])},
             "history": history, "claims": self.claims(),
+            "delivery_reconsideration": next((e["body"] for e in reversed(self.ledger.events(self.run_id, "delivery_reconsideration"))), None),
             "basis_changes": [{"attempt": a["attempt_no"], "changes": changes}
                               for a in attempts
                               if (changes := self.basis_changes(self.direct_basis(a["plan"] or {}, attempts, a["adopted_claims"])))],
@@ -1469,23 +1470,23 @@ class Engine:
             seen.add(ident)
         return None
 
-    def adopted_claims(self, value, proposed=()) -> list[dict]:
-        """Validate explicit adoption at the Worker boundary; reading is separate."""
+    def claim_refs(self, value, proposed=(), *, field="adopted_claims") -> list[dict]:
+        """Normalize explicit version references without inferring adoption or delivery."""
         if not isinstance(value, list):
-            raise OPCError("adopted_claims must be a list")
+            raise OPCError(field + " must be a list")
         refs = []
         for ref in value:
             if (not isinstance(ref, dict) or not isinstance(ref.get("claim_id"), str)
                     or type(ref.get("version")) is not int or ref["version"] < 1
                     or not isinstance(ref.get("task_id", self.task.task_id), str)):
-                raise OPCError("adopted_claims requires task_id, claim_id and positive version")
+                raise OPCError(field + " requires task_id, claim_id and positive version")
             normalized = dict(task_id=ref.get("task_id", self.task.task_id),
                               claim_id=ref["claim_id"], version=ref["version"])
             new = any(c["claim_id"] == ref["claim_id"]
                       and (c.get("base_version") or 0) + 1 == ref["version"] for c in proposed)
             if not (normalized["task_id"] == self.task.task_id and new):
                 if not self.authorized_claims(normalized["task_id"], ref["claim_id"], version=ref["version"]):
-                    raise OPCError("unknown adopted claim identity or version: " + str(normalized))
+                    raise OPCError("unknown " + field + " identity or version: " + str(normalized))
             if normalized not in refs:
                 refs.append(normalized)
         return refs
@@ -1637,6 +1638,14 @@ class Engine:
                 why = self.validate_conclusions(output) if isinstance(output, dict) else "expert reply is not an object"
                 if why is None:
                     why = self.validate_claims(output)
+                if why is None and (output.get("delivery_claims") or output.get("delivery_artifacts")) and output.get("finish") != "request_acceptance":
+                    why = "delivery references require request_acceptance"
+                if why is None and output.get("finish") == "request_acceptance":
+                    try:
+                        output["delivery_claims"] = self.claim_refs(output.get("delivery_claims", []), output.get("claims", []), field="delivery_claims")
+                        self.validate_delivery_artifacts(output.get("delivery_artifacts", []))
+                    except OPCError as exc:
+                        why = str(exc)
                 if why is None and output.get("finish") is not None:
                     if output["finish"] not in ("request_acceptance", "close_incomplete"):
                         why = "finish must be request_acceptance or close_incomplete"
@@ -1661,7 +1670,7 @@ class Engine:
                             why = validate_plan(work)
                             if why is None and "adopted_claims" in work:
                                 try:
-                                    work["adopted_claims"] = self.adopted_claims(work["adopted_claims"], output.get("claims", []))
+                                    work["adopted_claims"] = self.claim_refs(work["adopted_claims"], output.get("claims", []))
                                 except OPCError as exc:
                                     why = str(exc)
                             if why is None and any(not self.comp.is_editable(f) for f in work.get("files") or []):
@@ -1728,7 +1737,32 @@ class Engine:
                 finish = output.get("finish") or "close_incomplete"
                 closure = dict(finish=finish, reason=reason, gaps=output.get("gaps", []),
                                reopen_conditions=output.get("reopen_conditions", []))
-                self.ledger.finish_decision(self.run_id, call_id, selected, closure)
+                records = self.attempt_records()
+                source = next((a for a in records if a["attempt_no"] == output.get("base_attempt")), None)
+                if source is None:
+                    source = next((a for a in reversed(records) if a["candidate"] == selected), None)
+                candidate = dict(commit=selected, claims=output.get("delivery_claims", []),
+                                 artifacts=output.get("delivery_artifacts", []),
+                                 basis=self.direct_basis(source["plan"] or {}, records, source["adopted_claims"]) if source else [],
+                                 basis_review=output.get("delivery_basis_review"))
+                for ref in candidate["claims"]:
+                    chosen = self.authorized_claims(ref["task_id"], ref["claim_id"], version=ref["version"])[0]
+                    for ident in chosen.get("related_claims", []):
+                        for related in self.authorized_claims(ref["task_id"], ident):
+                            dependency = {key: related[key] for key in ("task_id", "claim_id", "version")}
+                            if dependency not in candidate["basis"] and dependency not in candidate["claims"]:
+                                candidate["basis"].append(dependency)
+                changes = self.basis_changes(candidate["claims"] + candidate["basis"])
+                review = candidate["basis_review"]
+                if ((review is not None and (not isinstance(review, dict)
+                        or review.get("action") not in ("continue", "adjust", "supplement")
+                        or not isinstance(review.get("changes"), list)
+                        or any(not isinstance(review.get(key), str) or not review[key].strip() for key in ("scope", "reason"))))
+                        or (changes and (review is None or review.get("changes") != changes))):
+                    self.ledger.event(self.run_id, "delivery_reconsideration", candidate=candidate, changes=changes)
+                    self.ledger.event(self.run_id, "decision_applied", call_id=call_id)
+                    return None, StopDecision("blocked", "delivery candidate requires review of changed claim basis")
+                self.ledger.finish_decision(self.run_id, call_id, candidate, closure)
                 prefix = "acceptance_requested" if finish == "request_acceptance" else "expert_exhausted"
                 return None, StopDecision("closed", prefix + ": " + reason)
             if final_feedback_only:
@@ -1786,6 +1820,24 @@ class Engine:
             return self.save_candidate(ws, selected, prior["parent"], patch,
                                        (prior["plan"] or {}).get("title", "restored candidate"))
         raise OPCError("base_attempt %s has no saved candidate in this run" % selected)
+
+    def validate_delivery_artifacts(self, refs) -> None:
+        if not isinstance(refs, list):
+            raise OPCError("delivery_artifacts must be a list")
+        for ref in refs:
+            if (not isinstance(ref, dict) or not isinstance(ref.get("run_id"), str)
+                    or type(ref.get("attempt")) is not int or not isinstance(ref.get("artifact"), str)
+                    or not portable_path(ref["artifact"])):
+                raise OPCError("delivery artifact requires run_id, attempt and relative artifact")
+            owner = self.ledger.run(ref["run_id"])
+            if owner is None or owner["task_id"] != self.task.task_id:
+                raise OPCError("delivery artifact is outside authorized task material")
+            if not any(a["attempt_no"] == ref["attempt"] and a["outcome"] for a in self.ledger.attempts(ref["run_id"])):
+                raise OPCError("delivery artifact must identify a saved work result")
+
+    def delivery_candidate(self) -> dict:
+        selected = self.ledger.events(self.run_id, "selected_version")
+        return selected[-1]["body"] if selected else dict(commit=self.selected_commit(), claims=[], artifacts=[], basis=[])
 
     def working_commit(self) -> str:
         events = self.ledger.events(self.run_id, "working_version")
@@ -1900,7 +1952,7 @@ class Engine:
                 adoption_error = None
                 if "adopted_claims" in execution:
                     try:
-                        execution["adopted_claims"] = self.adopted_claims(execution["adopted_claims"])
+                        execution["adopted_claims"] = self.claim_refs(execution["adopted_claims"])
                     except OPCError as exc:
                         adoption_error = str(exc)
                         execution.pop("adopted_claims")
@@ -2329,6 +2381,7 @@ class Engine:
                 "closure": next((e["body"] for e in reversed(self.ledger.events(self.run_id, "expert_stop"))), None),
                 "champion_ref": self.ref, "champion": best["commit_sha"] if best else None,
                 "selected_version": self.selected_commit(),
+                "delivery_candidate": self.delivery_candidate(),
                 "working_version": self.working_commit() if not m else None,
                 "baseline": run["base_commit"], "startpoint": self.startpoint(),
                 "workers": self.resolved_workers,
@@ -2377,6 +2430,7 @@ class Engine:
                  "- state: **%s** (%s)" % (s["state"], s["stop_reason"] or ""),
                  "- result: %s" % (s["result"] or "running"),
                  "- closeout: %s" % json.dumps(s["closure"], ensure_ascii=False),
+                 "- delivery candidate: %s" % json.dumps(s["delivery_candidate"], ensure_ascii=False),
                  "- champion: `%s` (ref `%s`)" % ((s["champion"] or "")[:12], self.ref),
                  "- objective `%s`: baseline %s -> champion %s (%s)" % (
                      s["objective"], (s["baseline_metrics"] or {}).get(s["objective"]),
