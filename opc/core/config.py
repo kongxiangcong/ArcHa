@@ -48,13 +48,13 @@ def _keys(d: dict, allowed: set[str], where: str) -> None:
                        % (where, ", ".join(unknown), ", ".join(sorted(allowed))))
 
 
-PROJECT_KEYS = {"project_id", "display_name", "components", "execution_enabled"}
+PROJECT_KEYS = {"project_id", "display_name", "components", "execution_enabled", "hard_limits"}
 COMPONENT_KEYS = {"component_id", "description", "editable", "frozen", "evaluator_files",
                   "scratch", "toolchain", "env", "gates", "infra_patterns", "skip_exit_code",
                   "on_skip", "context_files", "focus_areas", "adapter", "deterministic"}
 GATE_KEYS = {"id", "argv", "timeout_s", "metrics", "repeat", "cwd", "env"}
 TASK_KEYS = {"task_id", "revision", "component", "goal", "direction", "requirements",
-             "acceptance", "budget", "workers", "base_ref", "preparation_review", "results_path"}
+             "acceptance", "budget", "workers", "base_ref", "preparation_review", "results_path", "profile", "hard_limits"}
 REQUIREMENT_KEYS = {"id", "text", "verification", "check", "gates", "required"}
 ACCEPTANCE_KEYS = {"objective", "constraints", "target", "repeats", "noise_k", "rule",
                    "rule_params"}
@@ -81,6 +81,68 @@ def _read(path: Path) -> dict:
         raise OPCError("%s must contain a JSON object" % path)
     return data
 
+
+def _no_inline_credentials(values: dict, where: str) -> None:
+    for key in values:
+        if re.search(r"(?:^|_)(?:api_key|token|password|secret|credential)$", key, re.IGNORECASE):
+            raise OPCError("%s: inline credential %s is not allowed; inherit credentials from the process environment" % (where, key))
+
+
+def resolve_task_defaults(root: Path, task: dict) -> tuple[dict, dict]:
+    """Resolve ordinary policy defaults without granting scope or execution rights."""
+    from .worker_config import validate_limits
+    selected = task.get("profile")
+    sources = {"budget.max_tokens": "builtin:budget-v1", "budget.max_wall_seconds": "builtin:budget-v1"}
+    defaults = {}
+    if selected is not None:
+        if not isinstance(selected, dict):
+            raise OPCError("task profile must be an object")
+        _keys(selected, {"name", "version"}, "task profile")
+        name, version = selected.get("name"), selected.get("version")
+        if name not in ("development", "tuning", "exploration") or type(version) is not int or version < 1:
+            raise OPCError("profile requires development, tuning or exploration and a positive version")
+        path = root / ".opc/profiles" / name / ("v%d.json" % version)
+        if path.is_file():
+            defaults = _read(path)
+            _keys(defaults, {"name", "version", "budget", "workers"}, str(path))
+            if (defaults.get("name"), defaults.get("version")) != (name, version):
+                raise OPCError("%s: profile name/version does not match selection" % path)
+            source = path.relative_to(root).as_posix()
+        elif version == 1:
+            defaults = {"budget": {"max_tokens": None, "max_wall_seconds": 7200}}
+            source = "builtin:" + name
+        else:
+            raise OPCError("missing versioned profile %s" % path)
+        sources["profile"] = {"name": name, "version": version, "source": source}
+    for owner, values in (("profile", defaults), ("task", task)):
+        for key in ("budget", "workers"):
+            if key in values and not isinstance(values[key], dict):
+                raise OPCError("%s %s must be an object" % (owner, key))
+        for role, worker in values.get("workers", {}).items():
+            if role not in ("expert", "designer") or not (isinstance(worker, dict) or (role == "designer" and worker is None)):
+                raise OPCError("%s workers must name expert/designer objects" % owner)
+    budget = {**defaults.get("budget", {}), **task.get("budget", {})}
+    workers = {role: dict(values) if values is not None else None for role, values in defaults.get("workers", {}).items()}
+    for role, values in task.get("workers", {}).items():
+        workers[role] = {**workers.get(role, {}), **values} if values is not None else None
+    for role, values in workers.items():
+        for key in values or {}:
+            sources["workers.%s.%s" % (role, key)] = ("task" if key in (task.get("workers", {}).get(role) or {}) else sources["profile"]["source"])
+    for key in budget:
+        sources["budget." + key] = "task" if key in task.get("budget", {}) else sources["profile"]["source"]
+    project_limits = ProjectConfig.load(root).raw.get("hard_limits", {}) if (root / ".opc/project.json").exists() else {}
+    hard = {}
+    for owner, limits in (("project", project_limits), ("task", task.get("hard_limits", {}))):
+        try:
+            validate_limits(limits)
+        except OPCError as exc:
+            raise OPCError("%s hard_limits: %s" % (owner, exc)) from exc
+        for key, value in limits.items():
+            if value is not None:
+                if key not in hard or value < hard[key]:
+                    hard[key] = value
+                    sources["hard_limits." + key] = owner
+    return {**task, "budget": budget, "workers": workers, **({"hard_limits": hard} if hard else {})}, sources
 
 # ----------------------------------------------------------------------- globs
 def glob_regex(pattern: str) -> re.Pattern:
@@ -179,6 +241,7 @@ class ComponentConfig:
         d = _read(path)
         where = str(path)
         _keys(d, COMPONENT_KEYS, where)
+        _no_inline_credentials(d.get("env", {}), where + " env")
         cid = _id(_need(d, "component_id", where, str), where)
         if cid != component_id:
             raise OPCError("%s: component_id %r does not match file name" % (where, cid))
@@ -206,6 +269,7 @@ class ComponentConfig:
         for i, g in enumerate(_need(d, "gates", where, list)):
             gw = "%s gates[%d]" % (where, i)
             _keys(g, GATE_KEYS, gw)
+            _no_inline_credentials(g.get("env", {}), gw + " env")
             gid = _id(_need(g, "id", gw, str), gw)
             argv = _need(g, "argv", gw, list)
             if not argv or not all(isinstance(a, str) for a in argv):
@@ -310,6 +374,7 @@ class TaskSpec:
     digest: str
     path: Path
     raw: dict
+    configuration_sources: dict = field(default_factory=dict)
 
     @classmethod
     def save_revision(cls, root: Path, task_id: str, revision: str, values: dict) -> "TaskSpec":
@@ -373,6 +438,7 @@ class TaskSpec:
         d = _read(path)
         where = str(path)
         _keys(d, TASK_KEYS, where)
+        d, configuration_sources = resolve_task_defaults(root, d)
         if d.get("results_path") is not None:
             from .results import entry_path
             entry_path(root, d["results_path"])
@@ -435,6 +501,11 @@ class TaskSpec:
         from .worker_config import load_budget_config, resolve_budget_limits
         local_limits = load_budget_config(root)
         caps = resolve_budget_limits(b, local_limits)
+        for key, value in local_limits.items():
+            if value is not None:
+                configuration_sources["budget." + key] = ".opc/local/workers.json"
+        for key, limit in d.get("hard_limits", {}).items():
+            caps[key] = min(caps[key], limit) if caps.get(key) is not None else limit
         budget = Budget(max_attempts=b.get("max_attempts"),
                         max_wall_seconds=caps.get("max_wall_seconds"),
                         max_tokens=caps.get("max_tokens"), max_usd=b.get("max_usd"),
@@ -448,6 +519,8 @@ class TaskSpec:
         def worker(spec: dict | None, role: str) -> WorkerSpec | None:
             if spec is None:
                 return None
+            _no_inline_credentials(spec, where + " workers." + role)
+            _no_inline_credentials(spec.get("env", {}), where + " workers." + role + " env")
             kind = _need(spec, "kind", "%s workers.%s" % (where, role), str)
             if kind not in ("codex", "dsh", "scripted"):
                 raise OPCError("%s workers.%s.kind must be codex, dsh or scripted"
@@ -460,7 +533,7 @@ class TaskSpec:
         model_kinds = ("codex", "dsh")
         if expert.kind in model_kinds and designer is None:
             raise OPCError("%s: a %s expert needs a designer worker" % (where, expert.kind))
-        if local_limits:
+        if local_limits or d.get("profile") or d.get("hard_limits"):
             d = {**d, "budget": {**b, **caps}}
         digest = hashlib.sha256(canonical_json(d).encode()).hexdigest()
         return cls(task_id=task_id, revision=revision, component=_id(_need(d, "component", where,
@@ -468,7 +541,7 @@ class TaskSpec:
                    goal=_need(d, "goal", where, str), direction=d.get("direction", ""),
                    requirements=list(d.get("requirements") or []), acceptance=acceptance,
                    budget=budget, expert=expert, designer=designer,
-                   base_ref=d.get("base_ref", "HEAD"), digest=digest, path=path, raw=d)
+                   base_ref=d.get("base_ref", "HEAD"), digest=digest, path=path, raw=d, configuration_sources=configuration_sources)
 
 
 # ------------------------------------------------------------------- bindings
@@ -482,6 +555,7 @@ class Bindings:
         local = project.root / ".opc" / "local"
         path = local / "bindings.json"
         d = _read(path) if path.exists() else {}
+        _keys(d, {"workspace_root", "artifact_root"}, str(path))
         ws = Path(d.get("workspace_root") or
                   project.root.parent / ".opc-workspaces" / project.project_id).resolve()
         art = Path(d.get("artifact_root") or local / "artifacts").resolve()

@@ -51,6 +51,9 @@ class Engine:
         self.root = self.project.root
         self.task = TaskSpec.load(self.root, task_id, revision)
         self.worker_config = load_worker_config(self.root)
+        for role, values in self.worker_config.items():
+            for key in values:
+                self.task.configuration_sources["workers.%s.%s" % (role, key)] = ".opc/local/workers.json"
         self.comp = ComponentConfig.load(self.root, self.task.component)
         self.bindings = Bindings.load(self.project)
         self.ledger = Ledger(self.root / ".opc" / "local" / "ledger.sqlite3")
@@ -149,6 +152,15 @@ class Engine:
         if (self.comp.adapter == "command" and acceptance.required_metrics(self.task.acceptance)
                 and not any(g.metrics for g in self.comp.gates)):
             problems.append("required numeric metrics have no declared output")
+        profile = (self.task.raw.get("profile") or {}).get("name")
+        if profile == "tuning" and not self.task.acceptance.objective_metric:
+            problems.append("tuning profile requires an objective and comparable baseline measurements")
+        if profile == "exploration":
+            materials = [p for p in (self.root / ".opc/context").glob("*.md") if p.is_file() and p.read_text(encoding="utf-8").strip()]
+            if not materials:
+                problems.append("exploration profile requires readable materials in .opc/context/*.md")
+            if not self.task.requirements:
+                problems.append("exploration profile requires an acceptance channel in requirements")
         gate_ids = {g.gate_id for g in self.comp.gates}
         for req in self.task.requirements:
             missing = set(req.get("gates") or []) - gate_ids
@@ -341,7 +353,7 @@ class Engine:
             if self.evaluator_digest(base)[0] != rep["evaluator_digest"]:
                 raise OPCError("--base %s carries a different evaluator than the task base"
                                % base_ref)
-        if not self.task.acceptance.objective_metric:
+        if not self.task.acceptance.objective_metric or self.task.raw.get("profile"):
             capability = self.preflight(base_ref=base)
             if not capability["ok"]:
                 raise OPCError("preflight failed:\n  " + "\n  ".join(capability["problems"]))
@@ -362,6 +374,9 @@ class Engine:
                     "sources": {"contract": self.task.path.relative_to(self.root).as_posix(),
                                 "workers": ".opc/local/workers.json", "bindings": ".opc/local/bindings.json"},
                     "execution": {"task_digest": self.task.digest, "budget": asdict(self.task.budget),
+                                  "configuration_sources": self.task.configuration_sources,
+                                  "workers": {"expert": {"kind": self.task.expert.kind, **worker_options(self.worker_config, "expert", self.task.expert.options)},
+                                              **({"designer": {"kind": self.task.designer.kind, **worker_options(self.worker_config, "designer", self.task.designer.options)}} if self.task.designer else {})},
                                   "worker_config": self.worker_config,
                                   "bindings": {"artifact_root": str(self.bindings.artifact_root),
                                                "workspace_root": str(self.bindings.workspace_root)}},
@@ -471,7 +486,11 @@ class Engine:
         if scope:
             for event in self.ledger.events(scope, "task_budget_authorized"):
                 caps.update(event["body"])
-        return replace(self.task.budget, **caps)
+        budget = replace(self.task.budget, **caps)
+        for key, limit in self.task.raw.get("hard_limits", {}).items():
+            value = getattr(budget, key)
+            setattr(budget, key, min(value, limit) if value is not None else limit)
+        return budget
 
     def accounting_required(self) -> bool:
         b = self.effective_budget()
