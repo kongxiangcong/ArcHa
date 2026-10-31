@@ -986,7 +986,7 @@ def test_target_met_does_not_skip_required_evidence(make_project, engine_for):
     e.run()
     rep = promote(e)
     assert rep['target_met'] is True and rep['complete'] is False
-    assert rep['requirements'][0]['status'] == 'needs_review'
+    assert rep['requirements'][0]['status'] == 'not_covered'
 
 
 def test_legacy_target_requires_explicit_semantic_revision_without_rewriting_history(make_project, engine_for):

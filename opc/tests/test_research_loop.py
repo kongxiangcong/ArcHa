@@ -472,7 +472,8 @@ def test_selected_delivery_and_review_reuses_exact_evidence(make_project, engine
     monkeypatch.setattr(Engine, 'evaluate_commit', evaluate)
     first = promote(e)
     assert not first['complete'] and first['selected_version'] == s['selected_version']
-    monkeypatch.setattr('opc.core.promote.run_reviewer', lambda *a: {'ok': True, 'verdict': 'accept'})
+    monkeypatch.setattr('opc.core.promote.run_reviewer', lambda *a: {'ok': True, 'verdict': 'accept', 'requirement_findings': [
+        {'id': 'R1', 'status': 'met', 'evidence': ['Selected candidate satisfies usable interface'], 'gap': ''}]})
     second = promote(e, review='codex')
     assert second['complete'] and second['evidence_source']
     assert len(count) == 1

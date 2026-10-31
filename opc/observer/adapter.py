@@ -716,8 +716,9 @@ class ObserverAdapter:
                 for req in requirements:
                     result = report_requirements.get(req['id'], {})
                     raw_status = str(result.get('status') or '')
-                    req.update(result='met' if raw_status in ('met', 'met_by_gates', 'met_by_review') else 'not_met' if raw_status.startswith('not_met') else 'pending_review' if raw_status == 'needs_review' else 'unverified',
-                               tested_commit=selected, evidence_refs=[self._source(art)], report_artifact_id=art['id'])
+                    req.update(result='met' if raw_status in ('met', 'met_by_gates', 'met_by_review') else 'not_met' if raw_status.startswith('not_met') else raw_status if raw_status in ('insufficient_evidence', 'not_covered') else 'pending_review' if raw_status == 'needs_review' else 'unverified',
+                               tested_commit=selected, evidence_refs=[self._source(art)], report_artifact_id=art['id'],
+                               review_status=result.get('review_status'), review_evidence=result.get('evidence', []), gap=result.get('gap'))
                 if acceptance['value'] == 'passed' and any(r['required'] and r['result'] != 'met' for r in requirements):
                     acceptance = state('unknown', raw='complete=true', basis='recorded', note='总体结论与逐项证据不一致；无法确认验收通过')
                     self.issues.append(issue('report_inconsistent', '终验总体结论与逐项证据不一致'))

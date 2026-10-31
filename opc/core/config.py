@@ -462,8 +462,13 @@ class TaskSpec:
                 raise OPCError('knowledge dependency claim_id must be a stable identifier')
         if "preparation_review" in d and type(d["preparation_review"]) is not bool:
             raise OPCError("preparation_review must be boolean")
+        requirement_ids = set()
         for i, r in enumerate(d.get("requirements") or []):
             _keys(r, REQUIREMENT_KEYS, "%s requirements[%d]" % (where, i))
+            ident = r.get("id")
+            if not isinstance(ident, str) or not ident.strip() or ident in requirement_ids:
+                raise OPCError("requirements need unique nonempty IDs")
+            requirement_ids.add(ident)
             if "required" in r and type(r["required"]) is not bool:
                 raise OPCError("requirement.required must be boolean")
             if "gates" in r and (not isinstance(r["gates"], list) or not r["gates"] or
