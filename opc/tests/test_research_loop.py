@@ -840,3 +840,163 @@ def test_expert_session_loss_rebuilds_from_materials_in_new_call(make_project, e
     assert calls[0]['session_id'] == 'native-session' and calls[2]['session_id'] == 'rebuilt-session'
     assert e.ledger.events(e.run_id, 'expert_session_rebuilt')[0]['body']['reason'] == 'session not found'
     assert not result['pending_conclusions']
+
+
+REVIEW_CLI = """import json,os,sys,time
+from pathlib import Path
+sys.stdin.read()
+print(json.dumps({'type':'thread.started','thread_id':'review-session'}),flush=True)
+Path(os.environ['REVIEW_READY']).touch()
+while not Path(os.environ['REVIEW_RELEASE']).exists():
+    time.sleep(.01)
+reply = {'verdict':'accept','summary':'review completed','overreach':[],'requirement_findings':[]}
+print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':json.dumps(reply)}}),flush=True)
+if os.environ.get('REVIEW_UNKNOWN') != '1':
+    print(json.dumps({'type':'turn.completed','usage':{'input_tokens':3,'output_tokens':2}}),flush=True)
+"""
+
+
+def reviewer_case(make_project, engine_for, tmp_path, monkeypatch):
+    from opc.tests.conftest import write
+    cli = tmp_path / 'reviewer.py'
+    cli.write_text(REVIEW_CLI)
+    ready, release = tmp_path / 'review-ready', tmp_path / 'review-release'
+    monkeypatch.setenv('REVIEW_READY', str(ready))
+    monkeypatch.setenv('REVIEW_RELEASE', str(release))
+    root = make_project()
+    write(root / '.opc/local/workers.json', json.dumps({'reviewer': {'kind':'codex','binary':str(cli)}}))
+    e = engine_for(root)
+    e.run(max_attempts_now=0)
+    commit, measurements = e.ledger.champion(e.run_id)
+    selected = {'commit_sha':commit,'metrics':measurements.as_dict()}
+    return e, selected, e.artifact_dir() / 'promotion/test-review', ready, release
+
+
+def test_reviewer_stop_uses_call_receipt_and_finite_cancellation(make_project, engine_for, tmp_path, monkeypatch):
+    import threading
+    import time
+    from opc.core.ledger import Ledger
+    from opc.core.model import DispatchStopped
+    from opc.core.promote import run_reviewer
+    e, selected, out, ready, release = reviewer_case(make_project, engine_for, tmp_path, monkeypatch)
+    def stop():
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        other = Ledger(e.ledger.path)
+        other.set_control(e.run_id, 'stop')
+        other.db.close()
+    requester = threading.Thread(target=stop)
+    requester.start()
+    fallback = threading.Timer(2, release.touch)
+    fallback.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(DispatchStopped, match='stopped by user'):
+            run_reviewer(e, 'codex', out, '', selected, selected, [])
+    finally:
+        fallback.cancel()
+        release.touch()
+        requester.join(timeout=5)
+    assert time.monotonic() - started < 1.5
+    calls = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'reviewer']
+    assert len(calls) == 1 and calls[0]['state'] == 'cancelled'
+    assert calls[0]['session_id'] == 'review-session'
+    assert Path(calls[0]['receipt_path']).is_file()
+    assert not calls[0]['result']['ok']
+    assert len(e.ledger.events(e.run_id, 'worker_call')) == 1
+
+
+
+def test_reviewer_replays_saved_reply_without_new_call_or_charge(make_project, engine_for, tmp_path, monkeypatch):
+    from opc.core.promote import run_reviewer
+    e, selected, out, ready, release = reviewer_case(make_project, engine_for, tmp_path, monkeypatch)
+    release.touch()
+    first = run_reviewer(e, 'codex', out, '', selected, selected, [])
+    assert first['ok'] and first['verdict'] == 'accept'
+    calls = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'reviewer']
+    assert len(calls) == 1 and calls[0]['call_id'] == first['call_id']
+    assert calls[0]['session_id'] == 'review-session'
+    used = e.ledger.totals(e.run_id)
+    ready.unlink()
+    release.unlink()
+    replay = run_reviewer(e, 'codex', out, '', selected, selected, [])
+    assert replay == first
+    assert not ready.exists()  # no subprocess was started again
+    assert e.ledger.totals(e.run_id) == used
+    assert not Path(calls[0]['input']['tree']).exists()
+
+
+def test_unknown_reviewer_keeps_selected_checkout_and_blocks_redispatch(make_project, engine_for, tmp_path, monkeypatch):
+    from opc.core.promote import run_reviewer
+    e, selected, out, ready, release = reviewer_case(make_project, engine_for, tmp_path, monkeypatch)
+    monkeypatch.setenv('REVIEW_UNKNOWN', '1')
+    release.touch()
+    with pytest.raises(OPCError, match='execution unknown'):
+        run_reviewer(e, 'codex', out, '', selected, selected, [])
+    calls = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'reviewer']
+    assert len(calls) == 1 and calls[0]['state'] == 'unknown'
+    assert (Path(calls[0]['input']['tree']) / 'params.json').is_file()
+    with pytest.raises(OPCError, match='execution unknown'):
+        run_reviewer(e, 'codex', out.parent / 'another-review', '', selected, selected, [])
+    assert len([c for c in e.ledger.calls(e.run_id) if c['role'] == 'reviewer']) == 1
+
+
+def test_delivery_requires_project_writer_before_any_execution(make_project, engine_for):
+    from opc.core.ledger import Ledger
+    from opc.core.promote import promote
+    e = engine_for(make_project())
+    e.run(max_attempts_now=0)
+    events = e.ledger.events(e.run_id)
+    calls = e.ledger.calls(e.run_id)
+    other = Ledger(e.ledger.path)
+    try:
+        with other.writer():
+            with pytest.raises(OPCError, match='another controller'):
+                promote(e)
+    finally:
+        other.db.close()
+    assert e.ledger.events(e.run_id) == events
+    assert e.ledger.calls(e.run_id) == calls
+    assert not (e.artifact_dir() / 'promotion').exists()
+
+
+
+def test_delivery_unknown_evaluation_retains_workspace_and_is_not_repeated(make_project, engine_for, monkeypatch):
+    from opc.core.promote import promote
+    from opc.domains.command import CommandDomain
+    e = engine_for(make_project())
+    e.run(max_attempts_now=0)
+    original = CommandDomain.evaluate
+    evaluations = []
+    def lost_terminal(self, tree, out, repeats, **kwargs):
+        original(self, tree, out, repeats, **kwargs)
+        evaluations.append(str(tree))
+        raise RuntimeError('controller lost evaluator terminal before receipt')
+    monkeypatch.setattr(CommandDomain, 'evaluate', lost_terminal)
+    with pytest.raises(RuntimeError, match='lost evaluator terminal'):
+        promote(e)
+    pending = [c for c in e.ledger.calls(e.run_id) if c['result'] is None]
+    assert len(pending) == 1 and pending[0]['role'] == 'evaluator'
+    assert pending[0]['state'] == 'dispatched'
+    tree = Path(pending[0]['input']['tree'])
+    assert (tree / 'params.json').is_file()
+    assert not Path(pending[0]['receipt_path']).exists()
+    calls = e.ledger.calls(e.run_id)
+    with pytest.raises(OPCError, match='execution unknown'):
+        promote(e)
+    assert e.ledger.calls(e.run_id) == calls
+    assert evaluations == [str(tree)]
+    assert (tree / 'params.json').is_file()
+
+
+def test_delivery_completed_evaluation_releases_its_workspace(make_project, engine_for):
+    from opc.core.promote import promote
+    e = engine_for(make_project())
+    e.run(max_attempts_now=0)
+    report = promote(e)
+    assert report['evaluation']['failure'] is None
+    calls = [c for c in e.ledger.calls(e.run_id)
+             if c['role'] == 'evaluator' and c['input'].get('delivery')]
+    assert len(calls) == 1 and calls[0]['state'] == 'completed'
+    assert not Path(calls[0]['input']['tree']).exists()
