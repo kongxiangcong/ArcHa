@@ -35,6 +35,7 @@ import time
 from pathlib import Path
 
 from ..core.platform import Process, command_prefix
+from ..core.tool_boundary import worker_policy
 from typing import Any
 
 from ..core.model import Cost, OPCError, write_json, write_text
@@ -184,6 +185,7 @@ class DshWorker:
 
     def __init__(self, options: dict[str, Any]):
         self.session_id: str | None = None
+        self.tool_scope = {"tool_policy": options["tool_policy"]} if "tool_policy" in options else {}
         self.binary_unavailable = options.get("binary_unavailable", False)
         self.binary = options.get("binary") or os.environ.get("OPC_DSH_BIN", "dsh")
         self.profile = str(options.get("profile") or "headless")
@@ -214,16 +216,31 @@ class DshWorker:
         return env
 
     def _run(self, role: str, prompt: str, tree: Path, log_dir: Path, sandbox: str,
-             schema: dict | None = None) -> tuple[WorkerCall, str]:
+             schema: dict | None = None, *, ctx: dict | None = None) -> tuple[WorkerCall, str]:
         """Signature-compatible with `CodexWorker._run` so this is a drop-in.
 
         `schema` is accepted and ignored: headless has no `--output-schema`, and
         the core validates the plan either way.
         """
         log_dir.mkdir(parents=True, exist_ok=True)
-        argv = [*command_prefix(self.binary), *self.extra, "--profile", self.profile, "--json", "-"]
-        if role == "expert" and self.session_id:
-            argv[-1:-1] = ["--session-id", self.session_id]
+        session_id = (ctx or {}).get("session_id", self.session_id)
+        policy = worker_policy(role, tree, log_dir, ctx or self.tool_scope)
+        write_json(log_dir / "tool-policy.json", policy)
+        from ..core import tool_boundary
+        import sys
+        patch = [{"id": "sandbox", "config": {
+                    "runnerCommand": [sys.executable, str(Path(tool_boundary.__file__).resolve()), str((log_dir / "tool-policy.json").resolve())],
+                    "runnerFailureSignatures": ["archa-tool-boundary:"], "probeTimeoutMs": 5000}},
+                 {"id": "tool-bash", "config": {"enableRunInBackground": False, "promoteOnTimeout": False}},
+                 {"insert": [{"id": "archa-tool-boundary", "name": str(Path(__file__).with_name("dsh-tool-boundary.mjs").resolve())}]}]
+        patch += [{"id": name, "disabled": True} for name in
+                  ("tool-fs", "tool-fs-search", "tool-pwsh", "tool-web", "tool-subagent", "tool-subagent-fork", "tool-subagent-control", "tool-workflow")]
+        overlay = log_dir / "tool-boundary.patch.json"
+        write_json(overlay, patch)
+        argv = [*command_prefix(self.binary), *self.extra, "--profile", self.profile, "--patch", str(overlay.resolve()), "--json", "-"]
+        prompt += "\nArcHa tool boundary: use foreground bash for all reads, edits and checks. Other tools, background calls and permission escalation are disabled.\n"
+        if role == "expert" and session_id:
+            argv[-1:-1] = ["--session-id", session_id]
         if self.selection:
             # JSON is a YAML subset. An invocation-local patch never edits DSH_HOME.
             selection = {"provider": self.selection["provider"], "model": self.selection["model"]}
@@ -231,7 +248,8 @@ class DshWorker:
                 selection["reasoningEffort"] = self.selection["reasoning_effort"]
             overlay = log_dir / ("%s-model.patch.json" % role)
             write_json(overlay, [{"id": "agent-default-model", "config": selection}])
-            argv[-2:-2] = ["--patch", str(overlay.resolve())]
+            at = argv.index("--patch")
+            argv[at:at] = ["--patch", str(overlay.resolve())]
         write_text(log_dir / ("%s-prompt.md" % role), prompt)
         write_json(log_dir / ("%s-request.json" % role),
                    {"argv": argv, "cwd": str(tree), "sandbox": sandbox,
@@ -263,7 +281,10 @@ class DshWorker:
                            "tool_calls": info["tool_calls"],
                            "turn_end": info["end_kind"], "code": info["end_code"],
                            "session_id": info["session_id"],
-                           "terminal_completed": info["end_kind"] == "completed"})
+                           "terminal_completed": info["end_kind"] == "completed",
+                           "tool_policy": str(log_dir / "tool-policy.json"),
+                           "tool_boundary": "confined bash; DSH integration not runtime verified",
+                           "boundary_limitations": policy["limitations"]})
         if p.cancel_reason and info["end_kind"] == "completed":
             call.ok = True
             return call, info["text"]
@@ -279,7 +300,7 @@ class DshWorker:
             stderr = (log_dir / ("%s-stderr.txt" % role)).read_text(encoding="utf-8", errors="replace")
             message = info["runner_error"] or stderr.strip() or message
         call.error = message[:2000]
-        if (role == "expert" and self.session_id and not info["tool_calls"] and not info["output_tokens"]
+        if (role == "expert" and session_id and not info["tool_calls"] and not info["output_tokens"]
                 and any(marker in call.error.lower() for marker in ("session not found", "no session found", "no stored session", "cannot be adopted", "not adoptable"))):
             call.extra.update(session_unavailable=True, not_started=True, usage_complete=True)
         elif info["end_kind"] is None:
@@ -302,9 +323,8 @@ class DshWorker:
     def propose(self, ctx: dict[str, Any], tree: Path, log_dir: Path) -> WorkerCall:
         # Headless has no --output-schema, so the prompt carries the output-shape
         # rules that codex receives through its schema instead.
-        self.session_id = ctx.get("session_id")
         call, text = self._run("expert", expert_prompt(ctx, plain_text_reply=True), tree,
-                               log_dir, "read-only")
+                               log_dir, "read-only", ctx=ctx)
         if not call.ok:
             return call
         if text.strip() == EXHAUSTED_SENTINEL:
@@ -323,6 +343,6 @@ class DshWorker:
     def implement(self, plan: dict[str, Any], ctx: dict[str, Any], tree: Path,
                   log_dir: Path) -> WorkerCall:
         call, text = self._run("designer", designer_prompt(plan, ctx), tree, log_dir,
-                               "workspace-write")
+                               "workspace-write", ctx=ctx)
         call.output = {"summary": text[-2000:]}
         return call

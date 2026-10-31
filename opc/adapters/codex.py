@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 from ..core.platform import Process, command_prefix
+from ..core.tool_boundary import worker_policy, codex_policy_args
 from typing import Any
 
 from ..core.model import Cost, OPCError, write_json, write_text
@@ -72,6 +73,10 @@ def parse_events(text: str) -> dict[str, Any]:
 class CodexWorker:
     def __init__(self, options: dict[str, Any]):
         self.session_id: str | None = None
+        self.tool_scope = {"tool_policy": options["tool_policy"]} if "tool_policy" in options else {}
+        self.frozen_config = options.get("frozen_config", False)
+        self.native_model_provider = options.get("native_model_provider")
+        self.native_provider_config = options.get("native_provider_config", {})
         self.binary_unavailable = options.get("binary_unavailable", False)
         self.model = options.get("model")
         self.reasoning_effort = options.get("reasoning_effort")
@@ -90,7 +95,8 @@ class CodexWorker:
             self.binary = (shutil.which("codex.exe") if sys.platform == "win32" else None) or "codex"
 
     def _run(self, role: str, prompt: str, tree: Path, log_dir: Path, sandbox: str,
-             schema: dict | None) -> tuple[WorkerCall, str]:
+             schema: dict | None, *, ctx: dict | None = None) -> tuple[WorkerCall, str]:
+        session_id = (ctx or {}).get("session_id", self.session_id)
         env = os.environ.copy()
         if self.codex_home:
             home = Path(self.codex_home).expanduser()
@@ -100,11 +106,11 @@ class CodexWorker:
         log_dir.mkdir(parents=True, exist_ok=True)
         last = log_dir / ("%s-last.txt" % role)
         last.unlink(missing_ok=True)
-        argv = [*command_prefix(self.binary), "exec", "--json", "--skip-git-repo-check", "-s", sandbox,
+        argv = [*command_prefix(self.binary), "--no-daemon", "exec", "--json", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules",
                 "-C", str(tree), "-o", str(last)]
-        if self.profile:
+        if self.profile and not getattr(self, "frozen_config", False):
             argv += ["-p", self.profile]
-        if role == "expert" and self.session_id:
+        if role == "expert" and session_id:
             # cwd/permissions/profile are parent exec options; resume accepts the
             # explicit native identity and inherits these execution constraints.
             argv += ["resume"]
@@ -112,6 +118,15 @@ class CodexWorker:
             write_json(log_dir / "plan.schema.json", schema)
             argv += ["--output-schema", str(log_dir / "plan.schema.json")]
         extra = list(self.extra)
+        # Native permission/profile overrides are owned by the adapter. Arbitrary
+        # CLI arguments must not re-enable a broader access or remote tool path.
+        for arg in extra:
+            if arg.startswith(("--dangerously-", "--sandbox", "--add-dir", "--approve-for-me", "--worktree")) or arg == "-s":
+                raise OPCError("codex argument conflicts with task tool boundary: " + arg)
+        policy = worker_policy(role, tree, log_dir, ctx or self.tool_scope)
+        policy["read"].append(str(Path(shutil.which(command_prefix(self.binary)[0]) or command_prefix(self.binary)[0]).resolve()))
+        write_json(log_dir / "tool-policy.json", policy)
+        prompt += "\nTask tool boundary: only paths in tool-policy.json grants are available. " + json.dumps({k: policy[k] for k in ('read', 'write', 'limitations')})
         if self.model:
             # Model is a single-valued clap option; duplicate -m is an error.
             filtered, i = [], 0
@@ -124,7 +139,12 @@ class CodexWorker:
                     filtered.append(arg)
                 i += 1
             extra = filtered
-        argv += extra + ([self.session_id] if role == "expert" and self.session_id else []) + ["-"]
+        argv += extra + codex_policy_args(policy)
+        if self.native_model_provider:
+            argv += ["-c", "model_provider=" + json.dumps(self.native_model_provider)]
+            for key, value in self.native_provider_config.items():
+                argv += ["-c", "model_providers." + self.native_model_provider + "." + key + "=" + json.dumps(value)]
+        argv +=  ([session_id] if role == "expert" and session_id else []) + ["-"]
         if self.reasoning_effort:
             argv[-1:-1] = ["-c", "model_reasoning_effort=" + json.dumps(self.reasoning_effort)]
         # Explicit role settings outrank legacy extra_args overrides.
@@ -156,8 +176,10 @@ class CodexWorker:
         text = last.read_text(errors="replace", encoding="utf-8") if last.exists() else info["last_agent"]
         call = WorkerCall(role, ok=False, cost=cost, call_id=info["thread_id"],
                           log_dir=str(log_dir), extra={"usage_complete": info["usage_complete"],
-                                                    "session_id": info["thread_id"] or (self.session_id if role == "expert" else None),
-                                                    "terminal_completed": info["terminal_completed"]})
+                                                    "session_id": info["thread_id"] or (session_id if role == "expert" else None),
+                                                    "terminal_completed": info["terminal_completed"],
+                                                    "tool_policy": str(log_dir / "tool-policy.json"),
+                                                    "tool_boundary": "codex native permission profile", "boundary_limitations": policy["limitations"]})
         if p.cancel_reason and info["terminal_completed"]:
             call.ok = True
         elif p.cancel_reason:
@@ -184,7 +206,10 @@ class CodexWorker:
         else:
             call.error = "codex exited without a reliable terminal event"
             call.extra.update(infra=True, execution_unknown=True)
-        if (role == "expert" and self.session_id and not info["executed"]
+        if not info["thread_id"] and not info["executed"] and "thread/start failed" in call.error:
+            call.extra.update(not_started=True, usage_complete=True, capability_gap=True)
+            call.error = "Codex could not establish the task tool boundary before model dispatch: " + call.error
+        if (role == "expert" and session_id and not info["executed"]
                 and any(marker in call.error.lower() for marker in
                         ("no rollout found", "no session found", "session not found", "session does not exist"))):
             call.extra.update(session_unavailable=True, not_started=True, usage_complete=True)
@@ -193,9 +218,8 @@ class CodexWorker:
         return call, text
 
     def propose(self, ctx: dict[str, Any], tree: Path, log_dir: Path) -> WorkerCall:
-        self.session_id = ctx.get("session_id")
         call, text = self._run("expert", expert_prompt(ctx), tree, log_dir, "read-only",
-                               PLAN_SCHEMA)
+                               PLAN_SCHEMA, ctx=ctx)
         if call.ok:
             # The output schema admits only a plan object, so the text sentinel dsh
             # uses is unreachable here. The schema-valid equivalent is the optional
@@ -216,6 +240,6 @@ class CodexWorker:
     def implement(self, plan: dict[str, Any], ctx: dict[str, Any], tree: Path,
                   log_dir: Path) -> WorkerCall:
         call, text = self._run("designer", designer_prompt(plan, ctx), tree, log_dir,
-                               "workspace-write", None)
+                               "workspace-write", None, ctx=ctx)
         call.output = {"summary": text[-2000:]}
         return call

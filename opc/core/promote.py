@@ -354,6 +354,8 @@ The working directory is a read-only checkout of the champion."""
         options = dict(spec.options)
         if engine.preparation or engine.delivery_accounting():
             options["timeout_s"] = engine.budget_left()["wall_seconds"]
+        options["tool_policy"] = {"read": [str(tree.resolve()), str(engine.artifact_dir().resolve())],
+                                  "write": [], "network": False, "limitations": []}
         worker = make_worker(WorkerSpec(spec.kind, options), tree)
         call, text = worker._run("reviewer", prompt, tree, out / "reviewer", "read-only", schema)
     finally:

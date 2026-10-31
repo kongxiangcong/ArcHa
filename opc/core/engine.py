@@ -1208,7 +1208,8 @@ class Engine:
                                     "constraints": [c.describe() for c in acc.constraints],
                                     "target": acc.target.describe() if acc.target else None}},
             "component": {"id": self.comp.component_id, "description": self.comp.description,
-                          "editable": self.comp.editable, "scratch": self.comp.scratch},
+                          "editable": self.comp.editable, "scratch": self.comp.scratch,
+                          "frozen": self.comp.frozen, "evaluator_files": self.comp.evaluator_files},
             "working_version": {"commit": champ[0]},
             "champion": {"commit": champ[0], "values": metric_view(champ[1].values),
                          "params": next((a["plan"].get("params") for a in reversed(attempts)
@@ -1352,8 +1353,10 @@ class Engine:
                 try:
                     expert, _ = self.workers(loader)
                     ctx = self.context(self.ledger.next_attempt_no(self.run_id), champ, None, loader)
-                finally:
+                except BaseException:
                     ws.drop(loader)
+                    raise
+                ctx["source_root"] = str(loader)
                 tree = self.artifact_dir() / "materials"
                 tree.mkdir(parents=True, exist_ok=True)
                 processed = {e["body"]["call_id"] for e in decisions}
@@ -1388,6 +1391,7 @@ class Engine:
                         self.hard_check()
                         continue
                     return None, StopDecision("blocked", "expert worker unavailable: " + call.error[:200])
+                ws.drop(loader)
                 output = call.output or {} if call.exhausted else call.output
                 why = self.validate_conclusions(output) if isinstance(output, dict) else "expert reply is not an object"
                 if why is None and not (call.exhausted or output.get("exhausted") or output.get("select_work") is False):
@@ -1554,6 +1558,7 @@ class Engine:
                     write_json(context_path, ctx)
             finally:
                 ws.drop(loader)
+            ctx["component"].update(frozen=self.comp.frozen, evaluator_files=self.comp.evaluator_files)
             write_json(adir / "plan.json", plan)
             self.hard_check()
             design_tree = ws.root / ("a%06d/designer" % n)

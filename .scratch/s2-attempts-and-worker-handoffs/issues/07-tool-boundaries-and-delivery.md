@@ -4,7 +4,7 @@
 
 **Blocked by:** 06 — Attempt DAG 与有界并行（包含前述 CLI、控制与预算依赖）。
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 **Spec:** [S2 实现规格](../spec.md)
 
