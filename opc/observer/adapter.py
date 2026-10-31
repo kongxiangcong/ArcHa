@@ -766,8 +766,14 @@ class ObserverAdapter:
                              dict(record=dict(state='readable', reason='ledger record available'),
                                   execution=dict(state='blocked', reason='legacy: artifact source unavailable'),
                                   measurement=dict(state='unknown', reason='measurement sources unavailable')))
+            frozen_baseline = self._read(run_dir / 'frozen/baseline.json', json_file=True, default={}) if run_dir else {}
+            worker_execution = mapping(mapping(frozen_baseline).get('execution'))
+            worker_selection = {role: {key: value for key, value in mapping(spec).items()
+                                      if key in ('kind', 'model', 'provider', 'reasoning_effort')}
+                                for role, spec in mapping(worker_execution.get('workers')).items()}
             result = dict(id=ident, compatibility=compatibility, source_run_id=row['run_id'], kind='preparation' if row.get('revision') == 'preparation' else 'execution',
                           task_revision_id=revision['id'] if revision and not revision.get('_contract_mismatch') else None, execution_task_id=row.get('task_id'),
+                          workers=worker_selection, configuration_sources=worker_execution.get('configuration_sources', {}),
                           preparation=prep, execution=execution, acceptance=acceptance, stop_reason=row.get('stop_reason'),
                           phase='onboard' if row.get('revision') == 'preparation' else 'loop', last_activity_at=self.source_at,
                           versions=versions, requirements=requirements, metrics=metrics, usage=self._usage(row, data['charges'], events, contract),

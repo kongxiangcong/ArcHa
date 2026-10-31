@@ -50,7 +50,7 @@ def stop(ctx):
 
 
 def use_sequence(e, seq):
-    e._workers = (seq, seq)
+    e.workers = lambda tree: (seq, seq)
     return e
 
 
@@ -788,7 +788,7 @@ def test_review_only_decision_can_interpret_multiple_results_without_work(make_p
     first = e.run(max_attempts_now=2)
     assert first['pending_conclusions'] == [1, 2]
     seq = Sequence([lambda ctx: {**stop(ctx), 'exhausted': False, 'select_work': False}, stop])
-    e._workers = (seq, seq)
+    e.workers = lambda tree: (seq, seq)
     result = e.run()
     assert result['state'] == 'closed' and result['pending_conclusions'] == []
     assert len(e.ledger.attempts(e.run_id)) == 2

@@ -685,7 +685,7 @@ def test_dispatch_without_terminal_receipt_is_not_reissued(make_project, engine_
     def disappeared(*args, **kwargs):
         raise KeyboardInterrupt
     expert, _ = e.workers(e.workspaces().checkout('loader', e.working_commit()))
-    monkeypatch.setattr(expert, 'propose', disappeared)
+    monkeypatch.setattr(type(expert), 'propose', disappeared)
     e.run(max_attempts_now=1)
     calls = e.ledger.calls(e.run_id)
     assert len(calls) == 2  # baseline evaluation plus Expert dispatch

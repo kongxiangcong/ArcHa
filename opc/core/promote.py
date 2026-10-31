@@ -315,16 +315,6 @@ def run_reviewer(engine: Engine, kind: str, out: Path, patch: str, base: dict, b
     engine.hard_check()
     if kind not in ("codex", "dsh"):
         raise OPCError("the reviewer must be codex or dsh")
-    # Both workers expose the same private _run(role, prompt, tree, log_dir,
-    # sandbox, schema). dsh ignores the schema argument: headless has no
-    # --output-schema, so the reply is parsed and a non-JSON reply is a
-    # reviewer failure rather than a silent pass.
-    if kind == "dsh":
-        from ..adapters.dsh import DshWorker
-        worker_cls = DshWorker
-    else:
-        from ..adapters.codex import CodexWorker
-        worker_cls = CodexWorker
     schema = {"type": "object", "additionalProperties": False,
               "required": ["verdict", "summary", "overreach", "requirement_findings"],
               "properties": {
@@ -356,9 +346,15 @@ The working directory is a read-only checkout of the champion."""
     ws = engine.workspaces("review")
     try:
         tree = ws.checkout("reviewer", best["commit_sha"])
-        from .worker_config import worker_options
-        worker = worker_cls(worker_options(engine.worker_config, "reviewer",
-            {"timeout_s": engine.budget_left()["wall_seconds"]} if engine.preparation or engine.delivery_accounting() else {}))
+        from ..adapters.worker import make_worker
+        from .config import WorkerSpec
+        spec = engine.worker_spec("reviewer")
+        if kind != spec.kind:
+            raise OPCError("reviewer backend conflict: Run froze %s, requested %s" % (spec.kind, kind))
+        options = dict(spec.options)
+        if engine.preparation or engine.delivery_accounting():
+            options["timeout_s"] = engine.budget_left()["wall_seconds"]
+        worker = make_worker(WorkerSpec(spec.kind, options), tree)
         call, text = worker._run("reviewer", prompt, tree, out / "reviewer", "read-only", schema)
     finally:
         ws.drop_all()
