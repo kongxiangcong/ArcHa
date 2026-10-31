@@ -478,7 +478,7 @@ The working directory is a read-only checkout of the champion."""
         options = dict(spec.options)
 
         source_paths = [s["source"] for s in (task_results or {}).get("sources", [])
-                        if s.get("availability") == "read"]
+                        if s.get("availability") in ("read", "not_expanded")]
         options["tool_policy"] = {"read": [str(tree.resolve()), *source_paths],
                                   "write": [], "network": False, "limitations": []}
         worker = make_worker(WorkerSpec(spec.kind, options), tree)
