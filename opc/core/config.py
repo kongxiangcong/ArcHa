@@ -312,6 +312,56 @@ class TaskSpec:
     raw: dict
 
     @classmethod
+    def save_revision(cls, root: Path, task_id: str, revision: str, values: dict) -> "TaskSpec":
+        """Save an authorized candidate edit; executed contracts receive a new identity."""
+        from .model import write_json
+        root = root.resolve()
+        _id(task_id, "task_id")
+        if not REV.fullmatch(revision):
+            raise OPCError("revision must be rNNNN")
+        if values.get("task_id") != task_id:
+            raise OPCError("saved contract task_id does not match the selected Task")
+        values = {**values, "revision": revision}
+        tdir = root / ".opc/tasks" / task_id / "revisions"
+        frozen = cls.frozen_digest(root, task_id, revision)
+        if frozen is not None and hashlib.sha256(canonical_json(values).encode()).hexdigest() != frozen:
+            numbers = [int(p.name[1:]) for p in tdir.iterdir() if REV.fullmatch(p.name)]
+            number = max(numbers, default=0) + 1
+            if number > 9999:
+                raise OPCError("task revision numbers exhausted")
+            revision = "r%04d" % number
+            values = {**values, "revision": revision}
+        write_json(tdir / revision / "task.json", values)
+        return cls.load(root, task_id, revision)
+
+    @classmethod
+    def frozen_digest(cls, root: Path, task_id: str, revision: str) -> str | None:
+        """Identity of the source contract first bound to execution, including legacy Runs."""
+        from .ledger import Ledger
+        from .workspace import git
+        path = root / ".opc/local/ledger.sqlite3"
+        if not path.is_file():
+            return None
+        runs = [r for r in Ledger(path).runs()
+                if r["task_id"] == task_id and r["revision"] == revision]
+        if not runs:
+            return None
+        run = runs[0]
+        contract = f".opc/tasks/{task_id}/revisions/{revision}/task.json"
+        project = ProjectConfig.load(root)
+        bindings = Bindings.load(project)
+        snapshot = bindings.artifact_root / project.project_id / task_id / run["run_id"] / "frozen/baseline.json"
+        if snapshot.is_file():
+            frozen = _read(snapshot)
+            if frozen.get("source_contract_digest"):
+                return frozen["source_contract_digest"]
+        try:
+            source = json.loads(git("show", run["base_commit"] + ":" + contract, cwd=root))
+        except (OPCError, ValueError) as exc:
+            raise OPCError("frozen revision %s source is unavailable: %s" % (revision, exc)) from exc
+        return hashlib.sha256(canonical_json(source).encode()).hexdigest()
+
+    @classmethod
     def load(cls, root: Path, task_id: str, revision: str | None = None) -> "TaskSpec":
         tdir = root / ".opc" / "tasks" / task_id / "revisions"
         if revision is None:

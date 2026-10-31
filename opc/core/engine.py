@@ -20,7 +20,7 @@ import hashlib
 import json
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -31,7 +31,7 @@ from .config import Bindings, ComponentConfig, ProjectConfig, TaskSpec, WorkerSp
 from .ledger import Ledger
 from .worker_config import load_worker_config, worker_options, load_budget_config
 from .model import (BudgetExhausted, Cost, GateResult, Measurements, OPCError, Outcome, Verdict,
-                    write_json, write_text)
+                    canonical_json, write_json, write_text)
 from .workspace import (Workspaces, apply_patch, cas_update_ref, commit_tree, dirty_paths, git,
                         extract_patch, patch_digest, read_ref, rev_parse, sandbox, tracked_digest)
 
@@ -310,6 +310,8 @@ class Engine:
     def open_run(self, new_run: bool = False, direction: str | None = None,
                  base_ref: str | None = None) -> str:
         last = self.ledger.latest_run(self.task.task_id)
+        if last is not None and last["revision"] != self.task.revision:
+            last = None
         if last is not None and not new_run and last["state"] == "closed":
             raise OPCError("run %s is closed (%s). Start another with --new-run; add --base %s "
                            "to continue from its champion instead of the task base"
@@ -326,15 +328,27 @@ class Engine:
             if direction:
                 self.ledger.event(self.run_id, "direction", None, text=direction)
             return self.run_id
+        source_digest = hashlib.sha256(canonical_json(json.loads(self.task.path.read_text(encoding="utf-8-sig"))).encode()).hexdigest()
+        frozen_digest = TaskSpec.frozen_digest(self.root, self.task.task_id, self.task.revision)
+        if frozen_digest is not None and source_digest != frozen_digest:
+            raise OPCError("frozen revision %s cannot be overwritten; save a new revision" % self.task.revision)
         rep = self.static_check()
         if not rep["ok"]:
             raise OPCError("static check failed:\n  " + "\n  ".join(rep["problems"]))
+        bound = next((r for r in self.ledger.runs()
+                      if r["task_id"] == self.task.task_id and r["revision"] == self.task.revision), None)
+        if bound is not None and bound["evaluator_digest"] != rep["evaluator_digest"]:
+            raise OPCError("frozen revision %s evaluation or scope changed; save a new revision" % self.task.revision)
         base = rev_parse(self.root, base_ref) if base_ref else rep["base_commit"]
         if base_ref:
             # the evaluator must be the task's, whatever commit the run starts from
             if self.evaluator_digest(base)[0] != rep["evaluator_digest"]:
                 raise OPCError("--base %s carries a different evaluator than the task base"
                                % base_ref)
+        if not self.task.acceptance.objective_metric:
+            capability = self.preflight()
+            if not capability["ok"]:
+                raise OPCError("preflight failed:\n  " + "\n  ".join(capability["problems"]))
         tool_digest = self.toolchain_digest(base)
         self.run_id = self.ledger.create_run(
             task_id=self.task.task_id, revision=self.task.revision,
@@ -347,7 +361,16 @@ class Engine:
         write_json(self.artifact_dir() / "frozen" / "component.json", self.comp.raw)
         write_json(self.artifact_dir() / "frozen" / "baseline.json",
                    {"commit": base, "evaluator_digest": rep["evaluator_digest"],
-                    "evaluator_files": rep["evaluator_files"], "toolchain_digest": tool_digest})
+                    "evaluator_files": rep["evaluator_files"], "toolchain_digest": tool_digest,
+                    "source_commit": rep["base_commit"], "source_contract_digest": source_digest,
+                    "sources": {"contract": self.task.path.relative_to(self.root).as_posix(),
+                                "workers": ".opc/local/workers.json", "bindings": ".opc/local/bindings.json"},
+                    "execution": {"task_digest": self.task.digest, "budget": asdict(self.task.budget),
+                                  "worker_config": self.worker_config,
+                                  "bindings": {"artifact_root": str(self.bindings.artifact_root),
+                                               "workspace_root": str(self.bindings.workspace_root)}},
+                    "startpoint": {"kind": "explicit_base" if base_ref else "task_base",
+                                   "ref": base_ref or self.task.base_ref, "commit": base}})
         self.log("run %s created on %s" % (self.run_id, base[:12]))
         return self.run_id
 
@@ -1066,6 +1089,13 @@ class Engine:
             return self.summary()
 
     # ------------------------------------------------------------------ views
+    def startpoint(self) -> dict[str, Any]:
+        path = self.artifact_dir() / "frozen" / "baseline.json"
+        if path.is_file():
+            return json.loads(path.read_text(encoding="utf-8")).get("startpoint", {
+                "kind": "legacy", "commit": self.ledger.run(self.run_id)["base_commit"]})
+        return {"kind": "legacy", "commit": self.ledger.run(self.run_id)["base_commit"]}
+
     def summary(self) -> dict[str, Any]:
         run = self.ledger.run(self.run_id)
         champs = self.ledger.champions(self.run_id)
@@ -1099,7 +1129,7 @@ class Engine:
                 "champion_ref": self.ref, "champion": best["commit_sha"] if best else None,
                 "selected_version": self.selected_commit(),
                 "working_version": self.working_commit() if not m else None,
-                "baseline": run["base_commit"],
+                "baseline": run["base_commit"], "startpoint": self.startpoint(),
                 "baseline_metrics": base["metrics"]["values"] if base else None,
                 "champion_metrics": best["metrics"]["values"] if best else None,
                 "target_met": bool(best and acceptance.target_met(

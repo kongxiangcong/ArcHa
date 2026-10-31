@@ -205,23 +205,6 @@ def test_ref_moved_outside_opc_is_refused(make_project, engine_for):
         engine_for(root).run()
 
 
-def test_contract_change_requires_new_run(make_project, engine_for):
-    root = make_project()
-    e = engine_for(root)
-    e.run(max_attempts_now=0)
-    t = task(revision="r0002")
-    t["budget"]["max_attempts"] = 3
-    p = root / ".opc/tasks/t-toy/revisions/r0002/task.json"
-    p.parent.mkdir(parents=True)
-    p.write_text(json.dumps(t), encoding="utf-8")
-    git(root, "add", "-A")
-    git(root, "commit", "-qm", "r0002")
-    with pytest.raises(OPCError, match="new run"):
-        engine_for(root).run()
-    s = engine_for(root).run(new_run=True)
-    assert s["revision"] == "r0002" and s["run_id"] != e.run_id
-
-
 def test_second_controller_is_refused(make_project, engine_for):
     root = make_project()
     e = engine_for(root)
@@ -313,3 +296,98 @@ def test_failed_gate_history_preserves_failure_without_inventing_metrics(make_pr
     assert previous['metrics'] is None
     assert previous['experiment']['status'] == 'failed'
     assert previous['falsifier'] == 'loss does not decrease'
+
+
+def test_explicit_new_revision_starts_its_own_run(make_project):
+    from opc.core.engine import Engine
+    root = make_project()
+    first = Engine(root, 't-toy', 'r0001', log=lambda s: None)
+    first.run(max_attempts_now=1)
+    second_contract = task(revision='r0002', goal='same scope, explicitly revised task')
+    path = root / '.opc/tasks/t-toy/revisions/r0002/task.json'
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(second_contract))
+    git(root, 'add', '-A')
+    git(root, 'commit', '-qm', 'new revision')
+    second = Engine(root, 't-toy', 'r0002', log=lambda s: None)
+    result = second.run(max_attempts_now=0)
+    assert result['revision'] == 'r0002'
+    assert result['run_id'] != first.run_id
+    assert result['baseline'] == git(root, 'rev-parse', 'HEAD').strip()
+    assert result['baseline'] != first.summary()['champion']
+
+
+def test_run_freezes_execution_values_sources_and_startpoint(make_project):
+    from opc.core.engine import Engine
+    root = make_project()
+    local = root / '.opc/local/workers.json'
+    local.parent.mkdir(parents=True, exist_ok=True)
+    local.write_text(json.dumps({'expert': {'model': 'local-model'}}))
+    engine = Engine(root, 't-toy', 'r0001', log=lambda s: None)
+    result = engine.run(max_attempts_now=0)
+    frozen = json.loads((engine.artifact_dir() / 'frozen/baseline.json').read_text())
+    assert frozen['execution']['task_digest'] == engine.task.digest
+    assert frozen['execution']['worker_config']['expert']['model'] == 'local-model'
+    assert frozen['execution']['budget']['max_wall_seconds'] == 600
+    assert frozen['startpoint'] == {'kind': 'task_base', 'ref': 'HEAD', 'commit': result['baseline']}
+    assert frozen['sources']['contract'] == '.opc/tasks/t-toy/revisions/r0001/task.json'
+    assert result['startpoint'] == frozen['startpoint']
+
+
+def test_frozen_contract_cannot_be_overwritten_even_for_independent_run(make_project):
+    from opc.core.engine import Engine
+    root = make_project()
+    first = Engine(root, 't-toy', 'r0001', log=lambda s: None)
+    first.run(max_attempts_now=0)
+    path = root / '.opc/tasks/t-toy/revisions/r0001/task.json'
+    changed = task(goal='overwrite historical execution')
+    path.write_text(json.dumps(changed))
+    git(root, 'add', '-A')
+    git(root, 'commit', '-qm', 'overwrite frozen revision')
+    with pytest.raises(OPCError, match='frozen.*revision|revision.*frozen'):
+        Engine(root, 't-toy', 'r0001', log=lambda s: None).run(new_run=True)
+    assert len(first.ledger.runs()) == 1
+
+
+def test_preparation_edits_candidate_then_allocates_after_execution(make_project):
+    from opc.core.config import TaskSpec
+    from opc.core.engine import Engine
+    root = make_project()
+    edited = task(goal='clarified candidate goal')
+    candidate = TaskSpec.save_revision(root, 't-toy', 'r0001', edited)
+    assert candidate.revision == 'r0001'
+    git(root, 'add', '-A')
+    git(root, 'commit', '-qm', 'prepared candidate')
+    Engine(root, 't-toy', 'r0001', log=lambda s: None).run(max_attempts_now=0)
+    reserved = root / '.opc/tasks/t-toy/revisions/r0003'
+    reserved.mkdir()
+    next_contract = TaskSpec.save_revision(root, 't-toy', 'r0001', task(goal='new authorized goal'))
+    assert next_contract.revision == 'r0004'
+    assert TaskSpec.load(root, 't-toy', 'r0001').goal == 'clarified candidate goal'
+    assert next_contract.goal == 'new authorized goal'
+
+
+def test_no_objective_missing_tool_cannot_dispatch_formal_worker(make_project):
+    from opc.core.engine import Engine
+    strategy = STRATEGY.replace('def propose(self, ctx, tree):', 'def propose(self, ctx, tree):\n        raise AssertionError("formal worker must not run")')
+    comp = component(gates=[{'id': 'needed-tool', 'argv': ['archa-missing-executable'], 'timeout_s': 5}])
+    root = make_project(tsk=task(acceptance={'objective': None}, requirements=[]), comp=comp, strategy=strategy)
+    engine = Engine(root, 't-toy', 'r0001', log=lambda s: None)
+    with pytest.raises(OPCError, match='preflight|infrastructure|baseline fails'):
+        engine.run()
+    assert not engine.ledger.runs()
+
+
+def test_independent_run_cannot_change_frozen_evaluation_contract(make_project):
+    from opc.core.engine import Engine
+    root = make_project()
+    first = Engine(root, 't-toy', 'r0001', log=lambda s: None)
+    first.run(max_attempts_now=0)
+    path = root / '.opc/components/toy.json'
+    changed = json.loads(path.read_text())
+    changed['editable'] = ['params.json', 'new-feature.py']
+    path.write_text(json.dumps(changed))
+    git(root, 'add', '-A')
+    git(root, 'commit', '-qm', 'change frozen execution scope')
+    with pytest.raises(OPCError, match='frozen.*revision|revision.*frozen'):
+        Engine(root, 't-toy', 'r0001', log=lambda s: None).run(new_run=True)

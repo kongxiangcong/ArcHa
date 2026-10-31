@@ -380,6 +380,11 @@ def test_delivery_missing_evidence_blocks(make_project, engine_for, monkeypatch,
     ev = EVALUATE+'\nraise SystemExit(1)\n' if case == 'gates' else EVALUATE
     e = use_sequence(engine_for(make_project(evaluate=ev, tsk=task(acceptance=acc, requirements=requirements))),
                      Sequence([plan(1), {'exhausted': True, 'base_attempt': 0}], [4]))
+    if case == 'metrics':
+        with pytest.raises(OPCError, match='required metrics: missing'):
+            e.run()
+        assert not e.ledger.runs()
+        return
     s = e.run()
     assert s['selected_version'] == s['baseline']
     monkeypatch.setattr('opc.core.promote.run_reviewer', lambda *a: {
