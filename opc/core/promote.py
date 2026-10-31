@@ -544,6 +544,12 @@ def render(r: dict[str, Any]) -> str:
     for row in r.get('acceptance_history', []):
         path = row['report_path']
         source = '[report](<%s>)' % path if path else '—'
+        candidate = row.get('candidate') or {}
+        parts = [candidate['commit'][:12]] if candidate.get('commit') else []
+        parts += ['%s/%s/v%s' % (ref['task_id'], ref['claim_id'], ref['version'])
+                  for ref in candidate.get('claims', [])]
+        parts += ['%s/a%s/%s' % (ref['run_id'], ref['attempt'], ref['artifact'])
+                  for ref in candidate.get('artifacts', [])]
         lines.append('| %s | %s | %s | %s |' % (
-            row['revision'], row['selected_version'] or '—', row['status'], source))
+            row['revision'], ', '.join(parts) or '—', row['status'], source))
     return "\n".join(lines) + "\n"

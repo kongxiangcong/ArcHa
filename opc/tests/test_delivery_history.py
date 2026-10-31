@@ -151,3 +151,41 @@ def test_standards_reassessment_rejects_execution_changes_before_dispatch(make_p
     with pytest.raises(OPCError, match='cannot change execution'):
         promote(Engine(root, 't-toy', 'r0002'), source_run=e.run_id, standards_confirmation=receipt)
     assert len(e.ledger.calls(e.run_id)) == calls and len(e.ledger.runs()) == 1
+
+
+def test_history_distinguishes_claim_versions_with_the_same_code_commit(make_project, engine_for):
+    from opc.tests.test_delivery_candidates import claim
+    from opc.tests.test_task_delivery_intent import request
+
+    c = claim()
+    root = make_project(tsk=task(acceptance={}, requirements=[]))
+    first = use_sequence(engine_for(root), Sequence([
+        dict(select_work=False, claims=[c]),
+        dict(select_work=False, claims=[dict(c, base_version=1, status='refuted', reason='Valid counterexample')]),
+        lambda ctx: dict(request(ctx), delivery_claims=[dict(claim_id='copy', version=2)])]))
+    selected_v2 = first.run()
+    report_v2 = promote(first)
+    path_v2 = Path(report_v2['report_dir']) / 'report.json'
+    original = path_v2.read_bytes()
+    assert report_v2['acceptance_history'][0]['candidate'] == selected_v2['delivery_candidate']
+
+    second = use_sequence(engine_for(root), Sequence([
+        dict(select_work=False, claims=[dict(c, base_version=2, status='refuted', reason='Boundary explanation clarified')]),
+        lambda ctx: dict(request(ctx), delivery_claims=[dict(claim_id='copy', version=3)])]))
+    selected_v3 = second.run(new_run=True)
+    report_v3 = promote(second, source_run=second.run_id)
+    assert selected_v2['selected_version'] == selected_v3['selected_version']
+    history = report_v3['acceptance_history'][0]
+    assert history['candidate'] == selected_v3['delivery_candidate']
+    assert history['candidate']['claims'][0]['version'] == 3
+    assert history['report_path'] == str(Path(report_v3['report_dir']) / 'report.json')
+    document_v2 = (path_v2.parent / 'PROMOTION.md').read_text().split('## Acceptance revision history')[1]
+    document_v3 = (Path(report_v3['report_dir']) / 'PROMOTION.md').read_text().split('## Acceptance revision history')[1]
+    assert 't-toy/copy/v2' in document_v2 and 't-toy/copy/v3' in document_v3
+    assert path_v2.read_bytes() == original
+    calls = len(second.ledger.calls(second.run_id))
+    before = second.ledger.path.read_bytes()
+    observer = ObserverAdapter(root)
+    observed = observer.run(observer._id('run', second.run_id))['data']['acceptance_history'][0]
+    assert observed['candidate'] == history['candidate']
+    assert second.ledger.path.read_bytes() == before and len(second.ledger.calls(second.run_id)) == calls
