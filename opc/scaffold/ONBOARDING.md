@@ -100,8 +100,6 @@
   "direction": "用户给出的探索方向，可以在 opc run --direction 覆盖",
   "requirements": [
     {"id": "REQ-001", "text": "结果与 golden 一致", "verification": "automated"},
-    {"id": "REQ-002", "text": "延迟 ≤ 80000 周期", "verification": "automated",
-     "check": {"metric": "latency_cycles", "op": "<=", "value": 80000}},
     {"id": "REQ-003", "text": "参数选择有可解释依据", "verification": "independent_review"}
   ],
   "acceptance": {
@@ -126,7 +124,7 @@
 ```
 
 - `requirements[].check` 可选：`promote` 时据此判定该需求 met / not_met；没有 `check` 的需求须以 `gates: [门ID]` 声明覆盖或以独立 review 验证；缺覆盖不能自动通过。
-- 指标缺失 = 拒绝（不是通过）。`target` 达到是专家进展信号，不强制停止；报告单列 `target_met`，完成仍由终验判断。
+- 指标缺失 = 拒绝（不是通过）。新契约填写的 `target` 是硬性交付门槛，只维护这一处，无需复制到 requirements；中间冠军可尚未达标。`target_met` 是进展信号，不强制停止，也不能替代其他必需项的终验。无数值门槛时省略 target；可选需求使用 required=false。旧冻结 Run 保留原 target 语义，升级须用户授权及新 revision，standards confirmation 的 changes 加入 `"target_policy": {"old": "advisory", "new": "required"}`。
 - 数字有噪声时设 `repeats>1`：收益必须超过 `noise_k × 重复测量的极差`。
 - 自定义规则：`"rule": ".opc/eval/accept.py:accept"`（函数 `accept(old, new, **rule_params) -> (bool, str)`，必须在 `evaluator_files` 里）。
 - worker 三选一：

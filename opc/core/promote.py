@@ -35,6 +35,12 @@ def _drop_finished_workspaces(engine: Engine, ws) -> None:
     ws.drop_all()
 
 
+def target_policy(engine: Engine) -> str:
+    """Old frozen runs keep their advisory target until an authorized revision."""
+    baseline = json.loads((engine.artifact_dir() / "frozen/baseline.json").read_text(encoding="utf-8"))
+    return baseline.get("target_policy", "advisory")
+
+
 def validate_standards_confirmation(engine: Engine, run: dict, confirmation: dict) -> None:
     """Validate only acceptance changes against the source's immutable contract."""
     frozen = json.loads((engine.artifact_dir() / "frozen/task.json").read_text(encoding="utf-8"))
@@ -49,7 +55,10 @@ def validate_standards_confirmation(engine: Engine, run: dict, confirmation: dic
         raise OPCError("standards confirmation must be an object")
     changes = {k:{"old":frozen.get(k), "new":engine.task.raw.get(k)}
                for k in ("requirements", "acceptance") if frozen.get(k) != engine.task.raw.get(k)}
-    if (not changes or confirmation.get("confirmed_by") != "user" or
+    if (frozen.get("acceptance", {}).get("target") and engine.task.acceptance.target
+            and target_policy(engine) == "advisory"):
+        changes["target_policy"] = {"old": "advisory", "new": "required"}
+    if (not changes or engine.task.revision == run["revision"] or confirmation.get("confirmed_by") != "user" or
         confirmation.get("source_run") != run["run_id"] or
         confirmation.get("from_revision") != run["revision"] or
         confirmation.get("to_revision") != engine.task.revision or confirmation.get("changes") != changes):
@@ -214,8 +223,9 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
     #    A requirement with a machine check is judged on the champion's metrics.
     from .config import Constraint
     champ_values = best["metrics"]["values"]
+    policy = "required" if revised else target_policy(engine)
     if task.acceptance.target and not acceptance.target_met(task.acceptance, champ_values):
-        finding("target", "warn", "target %s not met (champion %s=%g)" % (
+        finding("target", "block" if policy == "required" else "warn", "target %s not met (selected %s=%g)" % (
             task.acceptance.target.describe(), task.acceptance.target.metric,
             champ_values.get(task.acceptance.target.metric, float("nan"))))
     coverage = []
@@ -284,6 +294,7 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
               "champion": champs[-1]["commit_sha"] if champs else None, "files": files,
               "evidence_key": key, "evaluation": evidence, "evidence_source": evidence_source,
               "stop_reason": run["stop_reason"], "complete": not blocked,
+              "target_met": acceptance.target_met(task.acceptance, champ_values), "target_policy": policy,
               "objective": m, "claimed_gain": claimed, "confirm": confirm,
               "baseline_metrics": base["metrics"]["values"],
               "selected_metrics": best["metrics"]["values"],
@@ -420,6 +431,7 @@ def render(r: dict[str, Any]) -> str:
              "- baseline `%s` -> champion `%s`" % (r["baseline"][:12], r["selected_version"][:12]),
              "- objective `%s`: claimed gain %+.2f%%" % (r["objective"], 100 * (r["claimed_gain"] or 0)),
              "- files: %s" % ", ".join(r["files"]),
+             "- target met: %s (policy: %s)" % (r.get("target_met", False), r.get("target_policy", "advisory")),
              "- **promotable: %s**" % r["promotable"], "", "## Findings", ""]
     for f in r["findings"] or [{"severity": "-", "check": "-", "text": "none"}]:
         lines.append("- [%s] %s: %s" % (f["severity"], f["check"], f["text"]))
