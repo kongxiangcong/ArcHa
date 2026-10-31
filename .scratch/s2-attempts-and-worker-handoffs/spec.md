@@ -1,6 +1,6 @@
 # S2：Attempt、Worker 交接与恢复
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 ## Problem Statement
 
@@ -117,6 +117,8 @@
 已按用户确认的拆分发布 [7 张实现事项](issues/)。原 Codex 会话票、DSH 会话票和预算票合并为 05；各票声明真实阻塞关系并包含相关观察、必要验证及旧路径清理，DSH 遵循上述阶段例外。具体字段、事务与调度代码由实现按本规格选取最小方案。
 
 ## 交付验证
+
+实施中，集成分支 `feat/s2-attempts-and-worker-handoffs`。01–05 合入后的完整回归：`/tmp/archa-results-venv/bin/python -m pytest -q`，**447 passed、5 skipped、12 subtests passed**（149.34 秒）；仅既有 AnyIO 弃用警告。06、07 尚待交付，未启动正式四题考试。
 
 - 02：Call 派发、原子回执、事务内幂等扣费及恢复已实现；不再统一 abandoned。已保存成果复用、未知执行保留阻塞、评价失败沿原 Attempt 新 Call 补测；普通 Run 计量可补齐。Engine/计量恢复/研究循环首轮 127 通过，唯一过时中断断言更新后，新增交接与中断用例重跑通过；具体见 [02 交付](issues/02-call-result-recovery.md#answer)。DSH 未新增专用测试、未运行验证。
 
