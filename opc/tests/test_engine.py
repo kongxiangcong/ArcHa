@@ -281,7 +281,8 @@ def test_next_expert_receives_original_plan_and_measured_evidence(make_project, 
     e = engine_for(make_project())
     e.run(max_attempts_now=2)
     attempts = e.ledger.attempts(e.run_id)
-    ctx = json.loads((e.attempt_dir(2) / 'context.json').read_text(encoding='utf-8'))
+    ctx = [call['input']['context'] for call in e.ledger.calls(e.run_id)
+           if call['role'] == 'expert'][-1]
     previous = ctx['history'][0]
     for field in ('hypothesis', 'expected', 'falsifier'):
         assert previous[field] == attempts[0]['plan'][field]
@@ -300,7 +301,8 @@ def test_failed_gate_history_preserves_failure_without_inventing_metrics(make_pr
     evaluate = EVALUATE + '\nif x != 3: raise SystemExit(1)\n'
     e = engine_for(make_project(evaluate=evaluate))
     e.run(max_attempts_now=2)
-    ctx = json.loads((e.attempt_dir(2) / 'context.json').read_text(encoding='utf-8'))
+    ctx = [call['input']['context'] for call in e.ledger.calls(e.run_id)
+           if call['role'] == 'expert'][-1]
     previous = ctx['history'][0]
     assert previous['outcome'] == Outcome.BROKEN.value
     assert previous['metrics'] is None

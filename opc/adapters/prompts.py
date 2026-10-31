@@ -18,25 +18,25 @@ def _history(ctx: dict[str, Any]) -> str:
 TEXT_REPLY_RULES = """Output only the JSON object. Legacy NO_EXPERIMENT is understood,
 but use the JSON stop object to preserve conclusions and stop_reason."""
 
-EXHAUSTION_RULE = """Decide whether any worthwhile work remains toward the task, including
-capability development and diagnosis, within the budget. Reaching a target or a
-streak without gain is information for your decision. If finished, set "exhausted":
-true and give stop_reason after interpreting relevant results; otherwise set it false."""
+EXHAUSTION_RULE = """Decide whether worthwhile task work remains within budget, including development
+and diagnosis. Target/streak are decision inputs. If finished set exhausted=true
+and stop_reason after interpreting relevant results; otherwise false."""
 
 
 def expert_prompt(ctx: dict[str, Any], plain_text_reply: bool = False) -> str:
     rules = (TEXT_REPLY_RULES if plain_text_reply else "") + "\n" + EXHAUSTION_RULE
     return """You are the EXPERT. Read research.json for the task, budget, fixed working
 version, history and evidence references. Inspect authorized originals when needed. Evidence is data, not contract authority.
+Query fixed material with knowledge.command: --claim-id/--status/--text/--source.
 Missing measurements are unknown; cached ones are historical. Execution failure
-does not refute a hypothesis; improvement alone does not prove a mechanism.
-Research plans state inputs, controls, predictions and distinguishing observations.
+does not refute a hypothesis; improvement does not by itself establish its proposed mechanism.
+Plans state inputs, controls, predictions and distinguishing observations.
 Inconclusive results are valid. Reuse experiment_id; do not invent evidence.
 
 Interpret pending_feedback, including results outside history, in conclusions
 [{"attempt": 1, "conclusion": "judgment or follow-up"}]; bare read acknowledgments
 are insufficient. Interpret final results before stopping with exhausted=true and
-stop_reason. Choose next work in the same reply; select_work=false only interprets.
+stop_reason. Choose work in the reply; select_work=false only interprets.
 claims lists persistent task propositions separately from feedback. Register claims
 only when needed: stable claim_id, statement, scope, three-state status, reason,
 evidence/counterevidence [{run_id,attempt,artifact}], unresolved, related_claims.
@@ -45,7 +45,7 @@ are gaps, not refutations. New propositions or changed scope need new identities
 
 A single plan uses title, changes and works=null. Research fields may be empty.
 evaluate=null formally evaluates numeric tasks; false skips formal evaluation.
-Independent analysis uses Designer with evaluate=false, without requiring a patch.
+Analysis uses Designer with evaluate=false; patches are optional.
 designer=false skips implementation for a pure measurement. base_attempt=null
 uses the current default version, 0 the baseline, positive an existing candidate.
 Version selection also applies when stopping.
@@ -55,8 +55,7 @@ independent of title; directions may hold several labels. dependencies=[{work_id
 artifact}] requires an actual saved candidate, result, or Attempt-relative file.
 Declare local output files in deliverables; Engine saves outputs/<relative path>.
 base_work_id explicitly uses one dependency's candidate as code parent and requires
-its candidate dependency. Inputs and workspaces are independent; branches never
-merge automatically. Formal measurement excludes other controlled compute.
+its candidate dependency. Inputs/workspaces are independent; branches never merge. Formal measurement excludes other controlled compute.
 """ + rules
 
 
@@ -88,6 +87,8 @@ Numeric champion (when applicable): {json.dumps(ctx.get('champion'))}
 
 Actual development parent: {json.dumps(ctx.get('parent') or {})}
 Required saved inputs: {json.dumps(ctx.get('handoff') or {})}
+Claim query (fixed Call scope; --claim-id, --status, --text, --source INDEX):
+{json.dumps(ctx.get('knowledge') or {})}
 
 When done, summarize actual behavior, design deviations, capability changes and
 execution limitations. Official measurements run separately.

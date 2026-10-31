@@ -1260,6 +1260,36 @@ class Engine:
                              and a["outcome"] != Outcome.INFRA.value],
         }
 
+    def authorized_claims(self, task_id: str | None = None, claim_id: str | None = None) -> list[dict]:
+        """Read own claims and explicitly named foreign material, without write rights."""
+        selected = self.task.task_id if task_id is None else task_id
+        if selected == self.task.task_id:
+            return self.ledger.claims(selected, claim_id)
+        allowed = {dep['claim_id'] for dep in self.task.raw.get('knowledge_dependencies', [])
+                   if dep['task_id'] == selected}
+        if not allowed or (claim_id is not None and claim_id not in allowed):
+            raise OPCError('claim is outside authorized task material')
+        return [claim for claim in self.ledger.claims(selected, claim_id) if claim['claim_id'] in allowed]
+
+    def knowledge_context(self, context_path: Path) -> dict:
+        """Fixed scoped material for a Call; the ledger alone owns claim state."""
+        import sys
+        from . import results
+        claims = self.claims()
+        task_ids = [self.task.task_id]
+        for dep in self.task.raw.get('knowledge_dependencies', []):
+            found = self.authorized_claims(dep['task_id'], dep['claim_id'])
+            if not found:
+                raise OPCError('unknown knowledge dependency: ' + dep['task_id'] + '/' + dep['claim_id'])
+            if dep['task_id'] not in task_ids:
+                task_ids.append(dep['task_id'])
+            for claim in found:
+                if not any(c['task_id'] == claim['task_id'] and c['claim_id'] == claim['claim_id'] for c in claims):
+                    claims.extend(results.claim_sources([claim], self.bindings.artifact_root, self.project.project_id))
+        return dict(task_ids=task_ids, claims=claims, context=str(context_path),
+                    command=[str(Path(sys.executable).resolve()), str(Path(results.__file__).resolve()), str(context_path)],
+                    as_of='fixed_call_input')
+
     def results_context(self) -> dict:
         from .results import snapshot
         try:
@@ -1286,14 +1316,8 @@ class Engine:
                    if a["outcome"] and a["conclusion"] is None]
         for claim in claims:
             claim["pending_feedback"] = pending
-            for key in ("evidence", "counterevidence"):
-                for ref in claim.get(key, []):
-                    path = (self.bindings.artifact_root / self.project.project_id /
-                            self.task.task_id / ref["run_id"] / "attempts" /
-                            ("a%06d" % ref["attempt"]) / ref["artifact"])
-                    ref["source"] = str(path)
-                    ref["availability"] = "not_expanded" if path.is_file() else "missing"
-        return claims
+        from .results import claim_sources
+        return claim_sources(claims, self.bindings.artifact_root, self.project.project_id)
 
     def validate_claims(self, output: dict) -> str | None:
         claims = output.get("claims", [])
@@ -1470,6 +1494,9 @@ class Engine:
                                               session_id=prior_session["session_id"], reason="Run materials directory relocated; rebuild from persisted inputs")
                         else:
                             ctx["session_id"] = prior_session["session_id"]
+                if not replay:
+                    ctx["knowledge"] = self.knowledge_context(tree / "research.json")
+                    ctx["claims"] = ctx["knowledge"].pop("claims")
                 write_json(tree / "research.json", ctx)
                 call = self.dispatch_call("expert", None, {"context": ctx}, tree, log_dir,
                                           lambda: expert.propose(ctx, tree, log_dir))
@@ -1643,6 +1670,9 @@ class Engine:
                         path = self.attempt_dir(upstream["attempt_no"]) / ("candidate.patch" if artifact == "candidate" else
                                 "decision.json" if artifact == "result" else artifact)
                         dependencies.append({**dependency, "path": str(path), "candidate": upstream["candidate"]})
+                    ctx = {key: ctx[key] for key in ("attempt", "task", "component", "parent", "champion", "budget_left")}
+                    ctx["knowledge"] = self.knowledge_context(context_path)
+                    ctx["claims"] = ctx["knowledge"].pop("claims")
                     ctx["handoff"] = {"purpose": plan["changes"], "deliverables": plan.get("deliverables", []),
                                       "inputs": dependencies, "evidence": str(self.artifact_dir())}
                     write_json(context_path, ctx)

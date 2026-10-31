@@ -156,6 +156,15 @@ def worker_policy(role: str, tree: Path, log_dir: Path, ctx: dict | None = None)
             reads.append(ctx['evidence_root'])
         reads += [prior['evidence_root'] for prior in ctx.get('prior_runs', [])]
     reads += [entry['path'] for entry in ctx.get('handoff', {}).get('inputs', [])]
+    knowledge = ctx.get('knowledge')
+    if knowledge:
+        reads += [knowledge['context'], knowledge['command'][0], knowledge['command'][1]]
+        for claim in ctx['claims']:
+            for ref in claim.get('evidence', []) + claim.get('counterevidence', []):
+                if ref.get('availability') != 'access_denied':
+                    path = Path(ref['source'])
+                    if path.resolve().is_relative_to(Path(ref['storage']).resolve()):
+                        reads.append(str(path))
     policy = tool_policy(tree, editable=comp.get('editable', []) if role == 'designer' else [],
                          scratch=comp.get('scratch', []) if role == 'designer' else [],
                          protected=['.opc', '.opc/**', *comp.get('frozen', []), *comp.get('evaluator_files', [])],

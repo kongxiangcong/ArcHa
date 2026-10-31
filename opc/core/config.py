@@ -54,7 +54,7 @@ COMPONENT_KEYS = {"component_id", "description", "editable", "frozen", "evaluato
                   "on_skip", "context_files", "focus_areas", "adapter", "deterministic"}
 GATE_KEYS = {"id", "argv", "timeout_s", "metrics", "repeat", "cwd", "env"}
 TASK_KEYS = {"task_id", "revision", "component", "goal", "direction", "requirements",
-             "acceptance", "budget", "workers", "base_ref", "preparation_review", "results_path", "profile", "hard_limits"}
+             "acceptance", "budget", "workers", "base_ref", "preparation_review", "results_path", "profile", "hard_limits", "knowledge_dependencies"}
 REQUIREMENT_KEYS = {"id", "text", "verification", "check", "gates", "required"}
 ACCEPTANCE_KEYS = {"objective", "constraints", "target", "repeats", "noise_k", "rule",
                    "rule_params"}
@@ -444,6 +444,16 @@ class TaskSpec:
         if d.get("results_path") is not None:
             from .results import entry_path
             entry_path(root, d["results_path"])
+        dependencies = d.get('knowledge_dependencies', [])
+        if not isinstance(dependencies, list):
+            raise OPCError('knowledge_dependencies must list named task claims')
+        for dep in dependencies:
+            if not isinstance(dep, dict) or set(dep) != {'task_id', 'claim_id'}:
+                raise OPCError('knowledge_dependencies requires task_id and claim_id')
+            _id(dep['task_id'], 'knowledge dependency task_id')
+            ident = dep['claim_id']
+            if not isinstance(ident, str) or not portable_path(ident) or '/' in ident:
+                raise OPCError('knowledge dependency claim_id must be a stable identifier')
         if "preparation_review" in d and type(d["preparation_review"]) is not bool:
             raise OPCError("preparation_review must be boolean")
         for i, r in enumerate(d.get("requirements") or []):

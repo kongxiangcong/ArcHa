@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — 主张登记与反馈分析贯通。
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 依据：[S3 规格](../spec.md)。本项基于已登记主张提供查询，不依赖修订冲突流程或采用声明。
 
