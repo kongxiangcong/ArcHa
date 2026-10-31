@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.model import OPCError
-from ..core.worker_config import CONFIG_PATH, load_worker_config, worker_options, load_budget_config, resolve_budget_limits
+from ..core.worker_config import CONFIG_PATH, load_worker_config, resolve_worker, load_budget_config, resolve_budget_limits
 from ..core.workspace import dirty_paths
 
 HERE = Path(__file__).resolve().parent
@@ -189,10 +189,6 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                 pass
         if reuse:
             config = load_worker_config(root)
-            if agent == "dsh":
-                from ..adapters.dsh import DshWorker as Worker
-            else:
-                from ..adapters.codex import CodexWorker as Worker
             import uuid
             log = root / ".opc/local/onboard" / uuid.uuid4().hex
             evidence = candidate["evidence"]
@@ -200,11 +196,12 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
         if not reuse:
             started = time.monotonic()
             config = load_worker_config(root)
-            if agent == "dsh":
-                from ..adapters.dsh import DshWorker as Worker
-            else:
-                from ..adapters.codex import CodexWorker as Worker
-            worker = Worker(worker_options(config, "onboard", {"timeout_s": remaining()}))
+            from ..adapters.worker import make_worker
+            from ..core.config import WorkerSpec
+            worker_spec = resolve_worker(config, "onboard", WorkerSpec(agent, {"timeout_s": remaining()}))
+            worker = make_worker(worker_spec, root)
+            ledger.event(rid, "worker_configuration", role="onboard", backend=worker_spec.kind,
+                         options=worker_spec.options, source=CONFIG_PATH)
             before = _snapshot(root)
             protected = _inputs_snapshot(root)
             frozen_tasks = {}
@@ -284,7 +281,12 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             return finish("ready", "necessary integration checks recorded; commit prepared files before execution",
                           files=files, evidence=evidence, brief_input=brief_identity)
         # Independent read-only inspection; cannot certify its own mutable drafts.
-        review = Worker(worker_options(config, "reviewer", {"timeout_s": timeout}))
+        from ..adapters.worker import make_worker
+        from ..core.config import WorkerSpec
+        review_spec = resolve_worker(config, "reviewer", WorkerSpec(agent, {"timeout_s": timeout}))
+        review = make_worker(review_spec, root)
+        ledger.event(rid, "worker_configuration", role="reviewer", backend=review_spec.kind,
+                     options=review_spec.options, source=CONFIG_PATH)
         files = preparation_files(root, task_id, revision)
         rc, reply = review._run("reviewer", "Review the task-required preparation checks and probe receipts. "
             "Verify against the confirmed brief without executing formal device experiments. "
