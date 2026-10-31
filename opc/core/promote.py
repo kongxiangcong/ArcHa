@@ -17,13 +17,22 @@ from typing import Any
 
 from . import accept as acceptance
 from .engine import Engine
-from .model import Cost, Measurements, OPCError, write_json, write_text
+from .model import Measurements, OPCError, write_json, write_text
 from .workspace import cas_update_ref, git, read_ref
 
 
 def checked_out_branches(repo: Path) -> set[str]:
     out = str(git("worktree", "list", "--porcelain", cwd=repo))
     return {l.split(" ", 1)[1] for l in out.splitlines() if l.startswith("branch ")}
+
+
+def _drop_finished_workspaces(engine: Engine, ws) -> None:
+    # An unreceipted or explicitly unknown Call may still own its checkout.
+    if any(c["state"] in ("dispatched", "unknown") and
+           Path(c["input"]["tree"]).is_relative_to(ws.root)
+           for c in engine.ledger.calls(engine.run_id)):
+        return
+    ws.drop_all()
 
 
 def validate_standards_confirmation(engine: Engine, run: dict, confirmation: dict) -> None:
@@ -49,6 +58,14 @@ def validate_standards_confirmation(engine: Engine, run: dict, confirmation: dic
 
 def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
             apply_to: str | None = None, source_run: str | None = None, standards_confirmation: str | Path | None = None) -> dict[str, Any]:
+    """Delivery owns the same project writer as execution and measurement."""
+    with engine.ledger.writer():
+        return _promote(engine, confirm_repeats, review, apply_to, source_run, standards_confirmation)
+
+
+def _promote(engine: Engine, confirm_repeats: int, review: str | None,
+             apply_to: str | None, source_run: str | None,
+             standards_confirmation: str | Path | None) -> dict[str, Any]:
     run = engine.ledger.run(source_run) if source_run else engine.ledger.select_run(engine.task.task_id, engine.task.revision)
     if run is None:
         raise OPCError("task %s has no run" % engine.task.task_id)
@@ -134,7 +151,7 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
             evidence = {"failure": ev.failure.value if ev.failure else None, "reason": ev.reason,
                         "gates": [g.as_dict() for g in ev.gates], "metrics": meas.as_dict() if meas else None}
         finally:
-            ws.drop_all()
+            _drop_finished_workspaces(engine, ws)
     diagnostic_gates = engine.diagnostic_gates()
     expected = {g.gate_id if not g.repeat or task.acceptance.repeats <= 1 else
                 "%s#%d" % (g.gate_id, r + 1)
@@ -177,7 +194,7 @@ def promote(engine: Engine, confirm_repeats: int = 0, review: str | None = None,
                         break
                     samples[label].append(meas.values[m])
         finally:
-            ws.drop_all()
+            _drop_finished_workspaces(engine, ws)
         if samples["baseline"] and samples["champion"]:
             worst = acceptance.relative_gain(task.acceptance,
                                              min(samples["baseline"]) if task.acceptance.direction
@@ -312,7 +329,6 @@ def _is_ancestor(repo: Path, a: str, b: str) -> bool:
 
 def run_reviewer(engine: Engine, kind: str, out: Path, patch: str, base: dict, best: dict,
                  coverage: list[dict], task_results: dict | None = None) -> dict[str, Any]:
-    engine.hard_check()
     if kind not in ("codex", "dsh"):
         raise OPCError("the reviewer must be codex or dsh")
     schema = {"type": "object", "additionalProperties": False,
@@ -343,31 +359,41 @@ Cumulative diff (baseline -> champion):
 {patch[:60000]}
 ```
 The working directory is a read-only checkout of the champion."""
-    ws = engine.workspaces("review")
-    try:
-        tree = ws.checkout("reviewer", best["commit_sha"])
-        from ..adapters.worker import make_worker
-        from .config import WorkerSpec
-        spec = engine.worker_spec("reviewer")
-        if kind != spec.kind:
-            raise OPCError("reviewer backend conflict: Run froze %s, requested %s" % (spec.kind, kind))
+    from ..adapters.worker import make_worker
+    from .config import WorkerSpec
+    spec = engine.worker_spec("reviewer")
+    if kind != spec.kind:
+        raise OPCError("reviewer backend conflict: Run froze %s, requested %s" % (spec.kind, kind))
+    log_dir = out / "reviewer"
+    ws = engine.workspaces()
+    name = "reviewer/" + out.name
+    previous = next((c for c in engine.ledger.calls(engine.run_id)
+                     if c["receipt_path"] == str(log_dir / "receipt.json")), None)
+    tree = Path(previous["input"]["tree"]) if previous else ws.root / name
+    def invoke():
+        ws.checkout(name, best["commit_sha"])
         options = dict(spec.options)
-        if engine.preparation or engine.delivery_accounting():
-            options["timeout_s"] = engine.budget_left()["wall_seconds"]
+
         options["tool_policy"] = {"read": [str(tree.resolve()), str(engine.artifact_dir().resolve())],
                                   "write": [], "network": False, "limitations": []}
         worker = make_worker(WorkerSpec(spec.kind, options), tree)
-        call, text = worker._run("reviewer", prompt, tree, out / "reviewer", "read-only", schema)
+        call, text = worker._run("reviewer", prompt, tree, log_dir, "read-only", schema)
+        call.output = {"reply": text}
+        return call
+    try:
+        call = engine.dispatch_call("reviewer", None,
+                    {"purpose": "delivery review", "selected_commit": best["commit_sha"],
+                     "baseline_commit": engine.ledger.run(engine.run_id)["base_commit"],
+                     "prompt_path": str(log_dir / "reviewer-prompt.md")},
+                    tree, log_dir, invoke)
     finally:
-        ws.drop_all()
-    engine.ledger.charge(engine.run_id, None, "reviewer", call.cost)
-    engine.ledger.event(engine.run_id, "worker_call", None, role="reviewer",
-                        call_id=call.call_id, ok=call.ok, tokens=call.cost.tokens,
-                        error=call.error[:300])
-    if not call.extra.get("usage_complete", False):
-        engine.ledger.event(engine.preparation or engine.run_id, "accounting_unknown", None, reason="reviewer usage missing")
-        if engine.accounting_required():
-            call.ok, call.error = False, "reviewer usage missing; no further dispatch"
+        record = next((c for c in engine.ledger.calls(engine.run_id)
+                       if c["receipt_path"] == str(log_dir / "receipt.json")), None)
+        if record and record["result"] is not None and record["state"] not in ("unknown", "dispatched"):
+            ws.drop(tree)
+    text = (call.output or {}).get("reply", "")
+    if not call.extra.get("usage_complete", False) and engine.accounting_required():
+        return {"ok": False, "error": "reviewer usage missing; no further dispatch", "call_id": call.call_id}
     if not call.ok:
         return {"ok": False, "error": call.error, "call_id": call.call_id}
     try:
