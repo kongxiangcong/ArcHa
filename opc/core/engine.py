@@ -1,8 +1,9 @@
 """The engine: the only owner of "the next attempt".
 
-One attempt:
+Run-level Expert decisions interpret results and select Attempt DAG nodes.
+The controller advances their phases and owns every ledger write; workers only
+execute fixed inputs and save receipts. One selected Attempt:
 
-    EXPERT     research materials + results -> retrospective and next plan or stop
     PLAN_CHECK optional file hints within scope, not a repeat
     DESIGN     writable tree cut from the selected parent -> edits or measurement
     SANDBOX    every change classified; any non-editable change fails the attempt
@@ -21,8 +22,11 @@ import json
 import math
 import time
 import sqlite3
+import threading
+import shutil
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from contextlib import closing
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -31,8 +35,8 @@ from ..domain import DomainAdapter, Evaluation, bounded_data, experimental_data,
 from . import accept as acceptance
 from .config import Bindings, Budget, ComponentConfig, ProjectConfig, TaskSpec, WorkerSpec
 from .ledger import Ledger
-from .platform import execution_control
-from .worker_config import load_worker_config, resolve_worker
+from .platform import execution_control, portable_path
+from .worker_config import load_worker_config, load_max_concurrency, resolve_worker
 from .model import (BudgetExhausted, DispatchStopped, Cost, GateResult, Measurements, OPCError, Outcome, Verdict,
                     canonical_json, write_json, write_text)
 from .workspace import (Workspaces, apply_patch, cas_update_ref, commit_tree, dirty_paths, git,
@@ -68,6 +72,24 @@ def run_compatibility(frozen: Path, run) -> dict[str, Any]:
     elif run["state"] == "closed":
         report["execution"] = {"state": "closed", "reason": "closed Run is observed without reopening"}
     return report
+
+
+@dataclass
+class CallExecution:
+    role: str
+    attempt: int | None
+    inputs: dict
+    tree: Path
+    log_dir: Path
+    invoke: Callable[[], WorkerCall]
+    call_id: str = ""
+    usage_default: bool = False
+    wall_limits: list = field(default_factory=list)
+
+
+@dataclass
+class EvaluationExecution:
+    invoke: Callable
 
 
 class Engine:
@@ -117,6 +139,11 @@ class Engine:
         self._rule = None
         self._workers: tuple[Worker, Worker] | None = None
         self._eval_tree: Path | None = None
+        self.max_concurrency = load_max_concurrency(self.root, self.task.configuration_sources) if source is None else 3
+        self._inflight: dict[str, tuple[float, float | None]] = {}
+        self._execution_lock = threading.Lock()
+        self._abort_execution = threading.Event()
+        self._abort_reason = ""
 
     # ------------------------------------------------------------------ paths
     def evaluator_patterns(self) -> list[str]:
@@ -164,72 +191,139 @@ class Engine:
         return ({"state": "legacy_unknown", "reason": "legacy preparation receipt lacks a unique checked contract identity"}
                 if unidentified else {})
 
+    def prepare_call(self, request: CallExecution) -> WorkerCall | None:
+        """Only the controller allocates identities and reconciles stored receipts."""
+        receipt = request.log_dir / "receipt.json"
+        previous = next((c for c in self.ledger.calls(self.run_id)
+                         if c["receipt_path"] == str(receipt)), None)
+        if previous:
+            if previous["result"] is None:
+                if not receipt.is_file():
+                    raise OPCError("Call %s execution unknown; inspect original execution before retry" % previous["call_id"])
+                self.ledger.finish_call(previous["call_id"], json.loads(receipt.read_text(encoding="utf-8")))
+                previous = next(c for c in self.ledger.calls(self.run_id) if c["call_id"] == previous["call_id"])
+            return self.call_from_receipt(previous["call_id"], previous["result"])
+        self.hard_check()
+        request.call_id = self.ledger.begin_call(self.run_id, request.attempt, request.role,
+                    {**request.inputs, "tree": str(request.tree), "owner_pid": __import__("os").getpid()}, str(receipt))
+        kind = self.worker_spec(request.role if request.role in self.resolved_workers else "expert").kind
+        request.usage_default = kind == "scripted" or request.role == "evaluator"
+        request.wall_limits = self.execution_wall_limits()
+        with self._execution_lock:
+            self._inflight[request.call_id] = (time.monotonic(), None)
+        return None
+
+    @staticmethod
+    def call_from_receipt(call_id: str, result: dict) -> WorkerCall:
+        return WorkerCall(result["role"], result["ok"], Cost(**result["cost"]), call_id=call_id,
+                          output=result.get("output"), error=result.get("error", ""),
+                          exhausted=result.get("exhausted", False), log_dir=result.get("log_dir", ""),
+                          extra=result.get("extra", {}))
+
+    def execution_wall_limits(self) -> list[tuple[str, tuple, float]]:
+        """Use the same quota ownership and lifetime scopes as persisted accounting."""
+        task_sql = "SELECT COALESCE(SUM(c.wall_seconds),0) FROM charges c WHERE c.run_id IN (SELECT run_id FROM runs WHERE task_id=?) OR c.run_id=?"
+        task_args = (self.task.task_id, "preparation:" + self.task.task_id)
+        limits = []
+        cap = self.effective_budget().max_wall_seconds
+        if cap is not None:
+            if self._budget_origin:
+                sql = ("SELECT COALESCE(SUM(c.wall_seconds),0) FROM charges c JOIN runs r ON c.run_id=r.run_id "
+                       "WHERE r.task_id=? AND r.revision!='preparation' AND r.rowid > (SELECT rowid FROM runs WHERE run_id=?)")
+                args = (self.task.task_id, self._budget_origin["source_run"])
+            else:
+                sql, args = task_sql, task_args
+            limits.append((sql, args, cap))
+        for values, project_scope in ((self.task.raw.get("hard_limits", {}), False), (self._project_hard_limits, True)):
+            cap = values.get("max_wall_seconds")
+            if cap is not None:
+                sql, args = (("SELECT COALESCE(SUM(wall_seconds),0) FROM charges", ()) if project_scope else (task_sql, task_args))
+                limits.append((sql, args, cap))
+        return limits
+
+    def execute_call(self, request: CallExecution) -> dict:
+        """Worker side: execute fixed input and save a receipt; never write the ledger."""
+        with self._execution_lock:
+            self._inflight[request.call_id] = (time.monotonic(), None)
+        limits = request.wall_limits
+        try:
+            with closing(sqlite3.connect("file:%s?mode=ro" % self.ledger.path, uri=True)) as reader:
+                def cancellation():
+                    if self._abort_execution.is_set():
+                        return self._abort_reason
+                    row = reader.execute("SELECT command FROM control WHERE run_id=?", (self.run_id,)).fetchone()
+                    if row and row[0] == "stop":
+                        return "stopped by user"
+                    with self._execution_lock:
+                        active = sum((end or time.monotonic()) - start for start, end in self._inflight.values())
+                        if any(reader.execute(sql, args).fetchone()[0] + active >= cap for sql, args, cap in limits):
+                            return "budget_exhausted: max_wall_seconds"
+                    return None
+                with execution_control(cancellation, request.log_dir) as control:
+                    call = request.invoke()
+            if control.unknown:
+                raise OPCError("cannot confirm execution termination: " + control.unknown)
+            if control.cancelled and not call.extra.get("terminal_completed"):
+                call.ok = False
+                call.extra.update(cancelled=True, cancel_reason=control.cancelled)
+                call.error = control.cancelled
+            session_id = call.extra.get("session_id") or (call.call_id if call.call_id != "scripted" else None)
+            if session_id:
+                call.extra["session_id"] = session_id
+            result = dict(role=request.role, ok=call.ok, cost=call.cost.as_dict(), session_id=session_id,
+                          output=call.output, error=call.error, exhausted=call.exhausted,
+                          log_dir=call.log_dir or str(request.log_dir), extra=call.extra,
+                          usage_complete=call.extra.get("usage_complete", request.usage_default),
+                          state=("not_started" if call.extra.get("not_started") else
+                                 "unknown" if call.extra.get("execution_unknown") and not control.cancelled else
+                                 "cancelled" if call.extra.get("cancelled") else "completed"))
+            write_json(request.log_dir / "receipt.json", result)
+            return result
+        finally:
+            with self._execution_lock:
+                start, _ = self._inflight[request.call_id]
+                self._inflight[request.call_id] = (start, time.monotonic())
+
+    def complete_call(self, request: CallExecution, result: dict) -> WorkerCall:
+        with self._execution_lock:
+            self.ledger.finish_call(request.call_id, result)
+            self._inflight.pop(request.call_id, None)
+        call = self.call_from_receipt(request.call_id, result)
+        if result["state"] == "unknown":
+            raise OPCError("Call %s execution unknown; retain workspace and reconcile execution" % request.call_id)
+        if call.extra.get("cancelled") and not call.extra.get("terminal_completed"):
+            reason = call.extra.get("cancel_reason", "stopped by user")
+            if reason.startswith("budget_exhausted"):
+                raise BudgetExhausted(reason.removeprefix("budget_exhausted: ").split(":", 1)[0],
+                                      "cancelled in-flight execution")
+            raise DispatchStopped("closed", reason)
+        return call
+
     def dispatch_call(self, role: str, attempt: int | None, inputs: dict[str, Any],
                       tree: Path, log_dir: Path, invoke: Callable[[], WorkerCall]) -> WorkerCall:
-        """Persist dispatch before execution and receipt before atomic accounting.
+        request = CallExecution(role, attempt, inputs, tree, log_dir, invoke)
+        replay = self.prepare_call(request)
+        if replay is not None:
+            return replay
+        try:
+            return self.complete_call(request, self.execute_call(request))
+        except BaseException:
+            with self._execution_lock:
+                self._inflight.pop(request.call_id, None)
+            raise
 
-        The unique log directory identifies this dispatch on replay; a deliberate
-        retry supplies a new directory and therefore receives a new ArcHa Call ID.
-        """
-        receipt = log_dir / "receipt.json"
-        previous = [c for c in self.ledger.calls(self.run_id)
-                    if c["receipt_path"] == str(receipt)]
-        if previous:
-            record = previous[-1]
-            if record["result"] is None:
-                if not receipt.is_file():
-                    raise OPCError("Call %s execution unknown; inspect running processes and original logs before retry" % record["call_id"])
-                self.ledger.finish_call(record["call_id"], json.loads(receipt.read_text(encoding="utf-8")))
-                record = next(c for c in self.ledger.calls(self.run_id) if c["call_id"] == record["call_id"])
-            result = record["result"]
-            return WorkerCall(role, result["ok"], Cost(**result["cost"]),
-                              call_id=record["call_id"], output=result.get("output"),
-                              error=result.get("error", ""), exhausted=result.get("exhausted", False),
-                              log_dir=result.get("log_dir", str(log_dir)), extra=result.get("extra", {}))
-        self.hard_check()
-        call_id = self.ledger.begin_call(self.run_id, attempt, role,
-                    {**inputs, "tree": str(tree), "owner_pid": __import__("os").getpid()}, str(receipt))
-        remaining = self.budget_left()["wall_seconds"]
-        started = time.monotonic()
-        def cancellation():
-            row = reader.execute("SELECT command FROM control WHERE run_id=?", (self.run_id,)).fetchone()
-            if row and row[0] == "stop":
-                return "stopped by user"
-            if remaining is not None and time.monotonic() - started >= remaining:
-                return "budget_exhausted: max_wall_seconds"
-            return None
-        # The read connection belongs to this execution thread; only the Engine
-        # writes the ledger. Polling never touches its writer connection.
-        with closing(sqlite3.connect("file:%s?mode=ro" % self.ledger.path, uri=True)) as reader:
-            with execution_control(cancellation, log_dir) as control:
-                call = invoke()
-        if control.unknown:
-            raise OPCError("cannot confirm execution termination: " + control.unknown)
-        if control.cancelled and not call.extra.get("terminal_completed"):
-            call.ok = False
-            call.extra.update(cancelled=True, cancel_reason=control.cancelled)
-            call.error = control.cancelled
-
-        session_id = call.extra.get("session_id") or (call.call_id if call.call_id != "scripted" else None)
-        call.call_id = call_id
-        if session_id:
-            call.extra["session_id"] = session_id
-        kind = self.worker_spec(role if role in self.resolved_workers else "expert").kind
-        usage_complete = call.extra.get("usage_complete", kind == "scripted" or role == "evaluator")
-        result = dict(role=role, ok=call.ok, cost=call.cost.as_dict(), session_id=session_id,
-                      output=call.output, error=call.error, exhausted=call.exhausted,
-                      log_dir=call.log_dir or str(log_dir), extra=call.extra,
-                      usage_complete=usage_complete,
-                      state=("not_started" if call.extra.get("not_started") else
-                             "unknown" if call.extra.get("execution_unknown") and not control.cancelled else
-                             "cancelled" if call.extra.get("cancelled") else "completed"))
-        write_json(receipt, result)
-        self.ledger.finish_call(call_id, result)
-        if control.cancelled and not call.extra.get("terminal_completed"):
-            if control.cancelled.startswith("budget_exhausted"):
-                raise BudgetExhausted("max_wall_seconds", "cancelled in-flight execution")
-            raise DispatchStopped("closed", control.cancelled)
-        return call
+    def check_unknown_executions(self) -> None:
+        """Unresolved execution owns the shared resource across all Runs in this project."""
+        for row in self.ledger.db.execute("SELECT call_id, state, receipt_path FROM calls WHERE state IN ('dispatched','unknown')").fetchall():
+            with self._execution_lock:
+                active = self._inflight.get(row["call_id"])
+            if active is not None:
+                continue
+            path = Path(row["receipt_path"])
+            if row["state"] == "dispatched" and path.is_file():
+                self.ledger.finish_call(row["call_id"], json.loads(path.read_text(encoding="utf-8")))
+            else:
+                raise OPCError("Call %s execution unknown; shared compute remains blocked until reconciled" % row["call_id"])
 
     def reconcile_calls(self) -> None:
         for call in self.ledger.calls(self.run_id):
@@ -516,6 +610,8 @@ class Engine:
                  base_ref: str | None = None, *, switch_backend: bool = False) -> str:
         if switch_backend and not new_run:
             raise OPCError("explicit backend switch requires a new Run")
+        if new_run:
+            self.check_unknown_executions()
         if new_run and self.requested_run_id:
             raise OPCError("--run-id selects an existing Run; it cannot create a new Run")
         if new_run:
@@ -523,6 +619,7 @@ class Engine:
             self.task = TaskSpec.load(self.root, self.task.task_id, self.requested_revision)
             self.worker_config = load_worker_config(self.root)
             self.resolved_workers = self.resolve_workers()
+            self.max_concurrency = load_max_concurrency(self.root, self.task.configuration_sources)
             self._workers = None
             self.comp = ComponentConfig.load(self.root, self.task.component)
         previous = self.ledger.latest_run(self.task.task_id)
@@ -605,6 +702,7 @@ class Engine:
                                   "project_hard_limits": self._project_hard_limits,
                                   "workers": self.resolved_workers,
                                   "worker_config": self.worker_config,
+                                  "max_concurrency": self.max_concurrency,
                                   "bindings": {"artifact_root": str(self.bindings.artifact_root),
                                                "workspace_root": str(self.bindings.workspace_root)}},
                     "startpoint": {"kind": "explicit_base" if base_ref else "task_base",
@@ -640,6 +738,7 @@ class Engine:
             self.task.budget = Budget(**execution["budget"])
             self.task.digest = execution["task_digest"]
             self.worker_config = execution["worker_config"]
+            self.max_concurrency = execution.get("max_concurrency", 3)
             self.resolved_workers = execution["workers"]
             if any(v["kind"] != "scripted" and not v.get("frozen_config") for v in self.resolved_workers.values()) and run["state"] != "closed":
                 raise OPCError("legacy Run remains readable but cannot resume: CLI installation was not frozen")
@@ -893,19 +992,22 @@ class Engine:
     def hard_check(self) -> None:
         """Between steps of one attempt: stop as soon as a cap is crossed."""
         self.dispatch_boundary()
+        self.check_unknown_executions()
         b, s = self.effective_budget(), self.spent()
+        with self._execution_lock:
+            active_wall = sum((end or time.monotonic()) - start for start, end in self._inflight.values())
         for key, cap in self.task.raw.get("hard_limits", {}).items():
             total_key = {"max_tokens": "tokens", "max_wall_seconds": "wall_seconds"}[key]
             if self.task.configuration_sources.get("hard_limits." + key) == "project":
                 used = self.ledger.db.execute("SELECT COALESCE(SUM(%s),0) FROM charges" % total_key).fetchone()[0]
             else:
                 used = self.ledger.task_totals(self.task.task_id)[total_key]
-            if used >= cap:
+            if used + (active_wall if key == "max_wall_seconds" else 0) >= cap:
                 raise BudgetExhausted(key, "lifetime hard limit reached")
         for key, cap in self._project_hard_limits.items():
             total_key = {"max_tokens": "tokens", "max_wall_seconds": "wall_seconds"}[key]
             used = self.ledger.db.execute("SELECT COALESCE(SUM(%s),0) FROM charges" % total_key).fetchone()[0]
-            if cap is not None and used >= cap:
+            if cap is not None and used + (active_wall if key == "max_wall_seconds" else 0) >= cap:
                 raise BudgetExhausted(key, "project lifetime hard limit reached")
         if self._project_hard_limits.get("max_tokens") is not None:
             scopes = [row[0] for row in self.ledger.db.execute(
@@ -923,7 +1025,7 @@ class Engine:
                 raise OPCError("preparation is not ready; no formal dispatch")
         if self.preparation and self.accounting_required() and self.unresolved_usage(self.preparation):
             raise OPCError("usage accounting incomplete; no new dispatch")
-        if b.max_wall_seconds is not None and s["wall_seconds"] >= b.max_wall_seconds:
+        if b.max_wall_seconds is not None and s["wall_seconds"] + active_wall >= b.max_wall_seconds:
             raise BudgetExhausted("max_wall_seconds", "crossed mid-attempt")
         if b.max_tokens is not None and s["tokens"] >= b.max_tokens:
             raise BudgetExhausted("max_tokens", "crossed mid-attempt")
@@ -1164,6 +1266,79 @@ class Engine:
             seen.add(row["attempt"])
         return None
 
+    def validate_work_batch(self, works: list[dict]) -> str | None:
+        existing = self.attempt_records()
+        graph = {(a["plan"] or {}).get("work_id") or "a%d" % a["attempt_no"]:
+                 (a["plan"] or {}).get("dependencies") or [] for a in existing}
+        new_ids = []
+        first = self.ledger.next_attempt_no(self.run_id)
+        for index, work in enumerate(works):
+            work_id = work.get("work_id") or "a%d" % (first + index)
+            if not isinstance(work_id, str) or not work_id.strip() or "/" in work_id or "\\" in work_id:
+                return "work_id must be a stable nonempty identifier"
+            if work_id in graph:
+                return "duplicate work_id: " + work_id
+            dependencies = work.get("dependencies") or []
+            directions = work.get("directions") or []
+            deliverables = work.get("deliverables") or []
+            if not isinstance(deliverables, list) or not all(isinstance(path, str) and portable_path(path)
+                    and (self.comp.is_editable(path) or self.comp.is_scratch(path)) for path in deliverables):
+                return "deliverables must be relative editable/scratch file paths"
+            if not isinstance(directions, list) or not all(isinstance(d, str) and d.strip() for d in directions):
+                return "directions must be a list of nonempty labels"
+            if not isinstance(dependencies, list) or not all(
+                    isinstance(d, dict) and isinstance(d.get("work_id"), str)
+                    and isinstance(d.get("artifact"), str) and portable_path(d["artifact"]) for d in dependencies):
+                return "dependencies must reference a work_id and relative artifact, candidate or result"
+            base_work = work.get("base_work_id")
+            if base_work is not None and (not isinstance(base_work, str) or not any(
+                    d["work_id"] == base_work and d["artifact"] == "candidate" for d in dependencies)):
+                return "base_work_id requires an explicit candidate dependency"
+            graph[work_id] = dependencies
+            new_ids.append(work_id)
+        for work_id in new_ids:
+            for dep in graph[work_id]:
+                if dep["work_id"] not in graph:
+                    return "unknown dependency: " + dep["work_id"]
+        visited, visiting = set(), set()
+        def visit(work_id):
+            if work_id in visiting:
+                return True
+            if work_id in visited:
+                return False
+            visiting.add(work_id)
+            for dependency in graph[work_id]:
+                if visit(dependency["work_id"]):
+                    return True
+            visiting.remove(work_id)
+            visited.add(work_id)
+            return False
+        if any(visit(work_id) for work_id in new_ids):
+            return "dependency cycle in selected work"
+        return None
+
+    def dag(self) -> list[dict]:
+        attempts = self.attempt_records()
+        by_id = {(a["plan"] or {}).get("work_id") or "a%d" % a["attempt_no"]: a for a in attempts}
+        nodes = []
+        for work_id, attempt in by_id.items():
+            plan = attempt["plan"] or {}
+            missing = []
+            for dependency in plan.get("dependencies") or []:
+                upstream = by_id[dependency["work_id"]]
+                artifact = dependency["artifact"]
+                available = (bool(upstream["candidate"]) if artifact == "candidate" else
+                             (self.attempt_dir(upstream["attempt_no"]) / ("decision.json" if artifact == "result" else artifact)).is_file())
+                if artifact.startswith("outputs/"):
+                    available = available and any(e["attempt"] == upstream["attempt_no"] and artifact in e["body"]["paths"]
+                                                  for e in self.ledger.events(self.run_id, "deliverables_saved"))
+                if not available:
+                    missing.append(dependency["work_id"] + ":" + artifact)
+            nodes.append(dict(work_id=work_id, attempt=attempt["attempt_no"], title=plan.get("title"),
+                              directions=plan.get("directions") or [], dependencies=plan.get("dependencies") or [],
+                              blocked_by=missing, state=attempt["state"], outcome=attempt["outcome"], parent=attempt["parent"]))
+        return nodes
+
     def choose_work(self, ws: Workspaces) -> tuple[int | None, StopDecision | None]:
         """Run-level decisions select work; receipt/decision replay never calls the expert twice."""
         while True:
@@ -1216,9 +1391,18 @@ class Engine:
                 output = call.output or {} if call.exhausted else call.output
                 why = self.validate_conclusions(output) if isinstance(output, dict) else "expert reply is not an object"
                 if why is None and not (call.exhausted or output.get("exhausted") or output.get("select_work") is False):
-                    why = validate_plan(output)
-                    if why is None and any(not self.comp.is_editable(f) for f in output.get("files") or []):
-                        why = "plan names non-editable paths"
+                    works = output.get("works") if output.get("works") is not None else [output]
+                    if not isinstance(works, list) or not works:
+                        why = "works must be a nonempty list of selected work"
+                    else:
+                        for work in works:
+                            why = validate_plan(work)
+                            if why is None and any(not self.comp.is_editable(f) for f in work.get("files") or []):
+                                why = "plan names non-editable paths"
+                            if why:
+                                break
+                        if why is None:
+                            why = self.validate_work_batch(works)
                 if why:
                     self.ledger.event(self.run_id, "expert_rejected", call_id=call.call_id, reason=why)
                     return None, StopDecision("blocked", "expert decision: " + why)
@@ -1245,14 +1429,18 @@ class Engine:
                 self.ledger.event(self.run_id, "decision_applied", call_id=call_id)
                 self.hard_check()
                 continue
+            works = output.get("works") if output.get("works") is not None else [output]
             try:
-                parent = self.development_parent(output, champ[0], ws)
+                selected = [(work, self.development_parent(work, champ[0], ws)) for work in works]
             except OPCError as exc:
                 self.ledger.event(self.run_id, "decision_applied", call_id=call_id)
                 return None, StopDecision("blocked", "selected work input: " + str(exc))
             focus = (self.comp.focus_areas[(self.ledger.next_attempt_no(self.run_id) - 1)
                                          % len(self.comp.focus_areas)] if self.comp.focus_areas else None)
-            n = self.ledger.begin_selected_attempt(self.run_id, call_id, output, parent, champ[0], focus)
+            if output.get("works") is None:
+                n = self.ledger.begin_selected_attempt(self.run_id, call_id, output, selected[0][1], champ[0], focus)
+            else:
+                n = self.ledger.begin_selected_works(self.run_id, call_id, selected, champ[0], focus)[0]
             return n, None
 
     def save_candidate(self, ws: Workspaces, n: int, parent: str, patch: str, title: str) -> str:
@@ -1305,17 +1493,10 @@ class Engine:
     def _worker_outcome(self, call: WorkerCall) -> Outcome:
         return Outcome.INFRA if call.extra.get("infra") else Outcome.WORKER_FAILED
 
-    def attempt(self, ws: Workspaces) -> tuple[Outcome, StopDecision | None]:
+    def attempt_steps(self, ws: Workspaces, n: int):
         champ = self.ledger.champion(self.run_id)
         if champ is None:
             champ = (self.working_commit(), Measurements())
-        pending = self.ledger.open_attempts(self.run_id)
-        if pending:
-            n = pending[0]["attempt_no"]
-        else:
-            n, stop = self.choose_work(ws)
-            if stop:
-                return Outcome.NO_CHANGE, stop
         selected = next(a for a in self.ledger.attempts(self.run_id) if a["attempt_no"] == n)
         plan = selected["plan"]
         focus = selected["focus"]
@@ -1343,9 +1524,15 @@ class Engine:
             return outcome, None
 
         try:
-            parent_event = next(e for e in self.ledger.events(self.run_id, "development_parent")
+            parent_event = next(e for e in reversed(self.ledger.events(self.run_id, "development_parent"))
                                 if e["attempt"] == n)
             parent = parent_event["body"]["commit"]
+            if plan.get("base_work_id"):
+                upstream = next(a for a in self.attempt_records() if (a["plan"] or {}).get("work_id") == plan["base_work_id"])
+                parent = upstream["candidate"]
+                if parent != parent_event["body"]["commit"]:
+                    self.ledger.event(self.run_id, "development_parent", n, commit=parent,
+                                      base_work_id=plan["base_work_id"])
             loader = ws.checkout("a%06d/material-source" % n, parent)
             try:
                 _, designer = self.workers(loader)
@@ -1355,8 +1542,15 @@ class Engine:
                 else:
                     ctx = self.context(n, champ, focus, loader)
                     ctx["parent"] = {"commit": parent, "base_attempt": plan.get("base_attempt")}
+                    dependencies = []
+                    for dependency in plan.get("dependencies") or []:
+                        upstream = next(a for a in self.attempt_records() if (a["plan"] or {}).get("work_id") == dependency["work_id"])
+                        artifact = dependency["artifact"]
+                        path = self.attempt_dir(upstream["attempt_no"]) / ("candidate.patch" if artifact == "candidate" else
+                                "decision.json" if artifact == "result" else artifact)
+                        dependencies.append({**dependency, "path": str(path), "candidate": upstream["candidate"]})
                     ctx["handoff"] = {"purpose": plan["changes"], "deliverables": plan.get("deliverables", []),
-                                      "inputs": plan.get("inputs", []), "evidence": str(self.artifact_dir())}
+                                      "inputs": dependencies, "evidence": str(self.artifact_dir())}
                     write_json(context_path, ctx)
             finally:
                 ws.drop(loader)
@@ -1367,12 +1561,15 @@ class Engine:
                 design_tree = ws.checkout("a%06d/designer" % n, parent)
             trees.append(design_tree)
             if plan.get("designer") is not False:
-                call = self.dispatch_call("designer", n, {"plan": plan, "context": ctx, "parent": parent},
-                                          design_tree, adir / "designer",
-                                          lambda: designer.implement(plan, ctx, design_tree, adir / "designer"))
+                call = yield CallExecution("designer", n, {"plan": plan, "context": ctx, "parent": parent},
+                                           design_tree, adir / "designer",
+                                           lambda: designer.implement(plan, ctx, design_tree, adir / "designer"))
                 charge("designer", call.cost, call)
                 self.ledger.event(self.run_id, "execution", n,
                                   **{**(call.output or {}), "completed": call.ok, "error": call.error})
+                missing = self.collect_deliverables(n, design_tree, plan)
+                if call.ok and missing:
+                    return finish(Outcome.WORKER_FAILED, missing)
                 if not call.ok:
                     out = self._worker_outcome(call)
                     finish(out, "designer: %s" % call.error)
@@ -1403,8 +1600,8 @@ class Engine:
                                   if c["attempt_no"] == n and c["role"] == "evaluator"
                                   and c["result"] and (c["result"].get("output") or {}).get("failure") == Outcome.INFRA.value]
             eval_out = adir / ("eval-%d" % (len(failed_evaluations) + 1) if failed_evaluations else "eval")
-            ev, meas, eval_tree = self.evaluate_commit(ws, candidate, "", eval_out,
-                                                       "a%06d/eval" % n, fresh=not patch.strip(), attempt=n)
+            ev, meas, eval_tree = yield EvaluationExecution(lambda: self.evaluate_commit(
+                ws, candidate, "", eval_out, "a%06d/eval" % n, fresh=not patch.strip(), attempt=n))
             trees.append(eval_tree)
             charge("evaluator", Cost(ev.seconds, 0, 0.0))
             self.ledger.event(self.run_id, "experiment", n,
@@ -1420,6 +1617,7 @@ class Engine:
             if not self.task.acceptance.objective_metric:
                 return finish(Outcome.WORK, "saved work; not numerically ranked", gates=gates,
                               metrics=meas.as_dict())
+            champ = self.ledger.champion(self.run_id) or champ
             if meas.toolchain_digest != champ[1].toolchain_digest:
                 self.remeasure_environment(ws, meas.toolchain_digest)
                 champ = self.ledger.champion(self.run_id)
@@ -1449,6 +1647,143 @@ class Engine:
             if not self.ledger.open_attempts(self.run_id):
                 for t in trees:
                     ws.drop(t)
+
+    def collect_deliverables(self, n: int, tree: Path, plan: dict) -> str | None:
+        if any(e["attempt"] == n for e in self.ledger.events(self.run_id, "deliverables_saved")):
+            return None
+        saved = []
+        for rel in plan.get("deliverables") or []:
+            source = tree / rel
+            if not source.is_file() or not source.resolve().is_relative_to(tree.resolve()):
+                return "declared deliverable missing or outside workspace: " + rel
+            target = self.attempt_dir(n) / "outputs" / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+            saved.append("outputs/" + rel)
+        if saved:
+            self.ledger.event(self.run_id, "deliverables_saved", n, paths=saved)
+        return None
+
+    def run_selected_work(self, ws: Workspaces, max_starts: int | None = None,
+                          resuming: set[int] | None = None) -> tuple[int, StopDecision | None]:
+        """Advance Attempt phases on the controller; only Worker invocations run in threads."""
+        active = {}
+        generators = {}
+        evaluations = []
+        completed = set()
+        stop = None
+        started = 0
+        session_waiting = False
+        resuming = resuming or set()
+        waiting = {}
+        def observe_waiting():
+            nodes = self.dag()
+            for node in nodes:
+                n = node["attempt"]
+                if node["outcome"] or n in generators:
+                    continue
+                reason = ("inputs" if node["blocked_by"] else "measurement" if evaluations else
+                          "concurrency" if len(active) >= self.max_concurrency else "ready")
+                fact = (reason, tuple(node["blocked_by"]))
+                if waiting.get(n) != fact:
+                    self.ledger.event(self.run_id, "node_waiting", n, reason=reason, blocked_by=node["blocked_by"])
+                    waiting[n] = fact
+            return {node["attempt"]: node for node in nodes}
+        def advance(n, value=None):
+            nonlocal stop
+            generator = generators[n]
+            try:
+                request = generator.send(value)
+            except StopIteration as finished:
+                completed.add(n)
+                _, decision = finished.value
+                stop = stop or decision
+                return
+            except (DispatchStopped, BudgetExhausted):
+                raise
+            if isinstance(request, EvaluationExecution):
+                evaluations.append((n, request))
+                return
+            replay = self.prepare_call(request)
+            if replay is not None:
+                advance(n, replay)
+            else:
+                active[pool.submit(self.execute_call, request)] = (n, request)
+        with ThreadPoolExecutor(max_workers=self.max_concurrency) as pool:
+            failure = None
+            try:
+                while True:
+                    nodes = observe_waiting()
+                    progressed = False
+                    if not evaluations:
+                        for attempt in self.ledger.open_attempts(self.run_id):
+                            n = attempt["attempt_no"]
+                            if n in generators or n in completed:
+                                continue
+                            if len(active) >= self.max_concurrency:
+                                break
+                            node = nodes[n]
+                            if node["blocked_by"]:
+                                continue
+                            if max_starts is not None and started >= max_starts and n not in resuming:
+                                session_waiting = True
+                                continue
+                            cap = self.effective_budget().max_attempts
+                            used = self.spent()["search_attempts"]
+                            if cap is not None and used + len(generators) - len(completed) >= cap:
+                                if used >= cap:
+                                    raise BudgetExhausted("max_attempts", "search allowance used; selected work remains pending")
+                                continue
+                            if waiting.get(n) != ("ready", ()):
+                                self.ledger.event(self.run_id, "node_waiting", n, reason="ready", blocked_by=[])
+                                waiting[n] = ("ready", ())
+                            self.admit()
+                            started += 1
+                            progressed = True
+                            generators[n] = self.attempt_steps(ws, n)
+                            advance(n)
+                            if evaluations:
+                                break
+                    if active:
+                        ready, _ = wait(active, timeout=.05, return_when=FIRST_COMPLETED)
+                        for future in ready:
+                            n, request = active.pop(future)
+                            result = future.result()
+                            call = self.complete_call(request, result)
+                            advance(n, call)
+                        continue
+                    if evaluations:
+                        n, request = evaluations.pop(0)
+                        self.hard_check()
+                        advance(n, request.invoke())
+                        continue
+                    if not self.ledger.open_attempts(self.run_id):
+                        break
+                    if progressed:
+                        continue
+                    stop = stop or (StopDecision("paused", "session attempt limit reached") if session_waiting else
+                                    StopDecision("blocked", "selected work is waiting for inputs or a failed execution"))
+                    break
+            except BaseException as exc:
+                failure = exc
+                if not isinstance(exc, DispatchStopped) or exc.state != "paused":
+                    self._abort_reason = ("budget_exhausted: " + exc.kind if isinstance(exc, BudgetExhausted) else
+                                          str(exc) if isinstance(exc, DispatchStopped) else
+                                          "controller cancelled peers after execution failure")
+                    self._abort_execution.set()
+            finally:
+                for future, (_, request) in active.items():
+                    try:
+                        self.complete_call(request, future.result())
+                    except BaseException as exc:
+                        failure = failure or exc
+                for generator in generators.values():
+                    generator.close()
+                with self._execution_lock:
+                    self._inflight.clear()
+            if failure is not None:
+                raise failure
+            return started, stop
 
     # -------------------------------------------------------------------- run
     def repair_delivery(self, report_path: str | Path) -> dict[str, Any]:
@@ -1502,6 +1837,7 @@ class Engine:
             max_attempts_now: int | None = None, base_ref: str | None = None,
             *, switch_backend: bool = False) -> dict[str, Any]:
         with self.ledger.writer():
+            self._abort_execution.clear()
             self.open_run(new_run, direction, base_ref, switch_backend=switch_backend)
             if self.ledger.run(self.run_id)["state"] == "closed":
                 self._returned_closed = True
@@ -1517,6 +1853,7 @@ class Engine:
                 self.hard_check()
                 self.backfill_history()
                 self.reconcile(ws)
+                resuming = {a["attempt_no"] for a in self.ledger.open_attempts(self.run_id)}
                 while True:
                     ctl = self.ledger.control(self.run_id)
                     if ctl == "pause":
@@ -1534,10 +1871,14 @@ class Engine:
                         break
                     try:
                         self.admit()
-                        _, stop = self.attempt(ws)
+                        if not self.ledger.open_attempts(self.run_id):
+                            _, stop = self.choose_work(ws)
+                        if not stop:
+                            started, stop = self.run_selected_work(ws,
+                                None if max_attempts_now is None else max_attempts_now - done_now, resuming)
+                            done_now += started
                     except BudgetExhausted as exc:
                         stop = StopDecision("closed", "budget_exhausted: %s" % exc)
-                    done_now += 1
                     self.write_views()
                     if stop:
                         break
@@ -1552,7 +1893,7 @@ class Engine:
                 raise
             finally:
                 if not self.ledger.open_attempts(self.run_id) and not any(
-                        c["result"] is None for c in self.ledger.calls(self.run_id)):
+                        c["result"] is None or c["state"] == "unknown" for c in self.ledger.calls(self.run_id)):
                     ws.drop_all()
                 if stop is None:
                     stop = StopDecision("blocked", "controller error")
@@ -1624,6 +1965,8 @@ class Engine:
                 "decisions": self.ledger.events(self.run_id, "expert_decision"),
                 "materials": str(self.artifact_dir() / "materials"),
 
+                "max_concurrency": self.max_concurrency,
+                "dag": self.dag(),
                 "calls": self.ledger.calls(self.run_id),
                 "unresolved_accounting": self.ledger.unresolved_accounting(self.run_id),
                 "spent": self.spent(), "budget_left": self.budget_left(),

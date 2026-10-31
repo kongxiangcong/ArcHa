@@ -25,7 +25,7 @@ def _load_config(root: Path) -> dict[str, Any]:
         return {}
     except (OSError, ValueError) as exc:
         raise OPCError("cannot read %s: %s" % (path, exc)) from exc
-    if not isinstance(data, dict) or set(data) - set(ROLES) - {"budget"}:
+    if not isinstance(data, dict) or set(data) - set(ROLES) - {"budget", "max_concurrency"}:
         raise OPCError("%s: expected budget and role objects: %s" % (path, ", ".join(ROLES)))
     validate_limits(data.get("budget", {}))
     return data
@@ -36,7 +36,7 @@ def load_worker_config(root: Path) -> dict[str, dict[str, Any]]:
     data = _load_config(root)
     result = {}
     for role, values in data.items():
-        if role == "budget":
+        if role in ("budget", "max_concurrency"):
             continue
         if not isinstance(values, dict) or set(values) - FIELDS:
             raise OPCError("%s: %s allows only %s" % (path, role, ", ".join(sorted(FIELDS))))
@@ -139,3 +139,13 @@ def resolve_budget_limits(contract: dict, local: dict) -> dict:
         if value is not None or contract.get(key) is None:
             values[key] = value
     return validate_limits(values)
+
+
+def load_max_concurrency(root: Path, sources: dict | None = None) -> int:
+    data = _load_config(root)
+    value = data.get("max_concurrency", 3)
+    if sources is not None:
+        sources["max_concurrency"] = CONFIG_PATH if "max_concurrency" in data else "builtin:execution-v1"
+    if type(value) is not int or value < 1:
+        raise OPCError("max_concurrency must be a positive integer")
+    return value

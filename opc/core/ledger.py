@@ -310,22 +310,33 @@ class Ledger:
 
     def begin_selected_attempt(self, run_id: str, decision_call: str, plan: dict,
                                parent: str, champion: str, focus: str | None) -> int:
-        """Register selected work atomically; a recovered decision cannot duplicate it."""
-        selected = [e for e in self.events(run_id, "work_selected")
+        return self.begin_selected_works(run_id, decision_call, [(plan, parent)], champion, focus)[0]
+
+    def begin_selected_works(self, run_id: str, decision_call: str, works: list,
+                             champion: str, focus: str | None) -> list[int]:
+        """Materialize one decision's selected nodes atomically and idempotently."""
+        selected = [e["attempt"] for e in self.events(run_id, "work_selected")
                     if e["body"]["decision_call"] == decision_call]
         if selected:
-            return selected[0]["attempt"]
+            return selected
+        numbers = []
         with self.tx() as db:
-            n = (db.execute("SELECT MAX(attempt_no) FROM attempts WHERE run_id=?",
-                            (run_id,)).fetchone()[0] or 0) + 1
-            db.execute("INSERT INTO attempts (run_id, attempt_no, state, champion_before, focus, plan, "
-                       "started_at) VALUES (?,?,?,?,?,?,?)",
-                       (run_id, n, "planned", champion, focus, json.dumps(plan), now()))
-            self._event(db, run_id, "attempt_started", n, dict(champion=champion, focus=focus))
-            self._event(db, run_id, "work_selected", n, dict(decision_call=decision_call, parent=parent))
-            self._event(db, run_id, "development_parent", n,
-                        dict(commit=parent, base_attempt=plan.get("base_attempt")))
-        return n
+            first = (db.execute("SELECT MAX(attempt_no) FROM attempts WHERE run_id=?",
+                                (run_id,)).fetchone()[0] or 0) + 1
+            for offset, (plan, parent) in enumerate(works):
+                n = first + offset
+                plan = {**plan, "work_id": plan.get("work_id") or "a%d" % n}
+                db.execute("INSERT INTO attempts (run_id, attempt_no, state, champion_before, focus, plan, "
+                           "started_at) VALUES (?,?,?,?,?,?,?)",
+                           (run_id, n, "planned", champion, focus, json.dumps(plan), now()))
+                self._event(db, run_id, "attempt_started", n, dict(champion=champion, focus=focus))
+                self._event(db, run_id, "work_selected", n,
+                            dict(decision_call=decision_call, parent=parent, work_id=plan["work_id"],
+                                 dependencies=plan.get("dependencies") or [], directions=plan.get("directions") or []))
+                self._event(db, run_id, "development_parent", n,
+                            dict(commit=parent, base_attempt=plan.get("base_attempt")))
+                numbers.append(n)
+        return numbers
 
     # ---------------------------------------------------------------- attempts
     def next_attempt_no(self, run_id: str) -> int:

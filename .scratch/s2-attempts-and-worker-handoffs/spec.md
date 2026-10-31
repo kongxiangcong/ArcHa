@@ -135,3 +135,5 @@
 - 03 集成回归修订：六项旧空 Attempt 断言已改为核对 Run 失败 Call/计量及真实成果关联；无效计划保持既有成果与原始拒绝依据。完整结果模块及既有 DSH 假 CLI 回归 **39 passed**，无新增 DSH 测试或真实 DSH 运行；见 [03 交付](issues/03-run-expert-feedback.md#answer)。
 
 - 05：显式原生 Expert 会话续接及有原因的新 Call 材料重建、当前调用终态、CLI 切换额度起点已交付；普通恢复/新 Run 不重置，迟到旧用量不占新额度，项目生命周期硬限制保留。公共目标回归 77 通过，补充后最终目标回归 42 通过、Observer 新字段 2 通过。真实 Codex `0.165.0` 两独立进程以同一 session 续接成功（17811 / 35655 token），真实工具启动后取消 5.89 秒收住、无未知终止；[原件](../../work/s2-smoke/codex-05/)与 [05 明细](issues/05-cli-sessions-and-switch-budget.md#answer)。DSH 已实现、未运行验证；完整真实 Engine/并行/工具隔离留在 07，不以适配器探针替代。
+
+- 06：Attempt DAG 与默认三并发已实现；固定输入/独立工作区、声明产物归档、成果依赖放行及拒环、主线程写账本、正式计时排他、节点预算预留、并行控制与未知执行阻塞均通过夹具验证。新增 DAG **23 passed**；DAG/既有观察/提示词合批 **91 passed**，最后控制与恢复复跑 **5 passed**。既有核心相关 **179 passed**，唯一旧提示词长度失败经精简后原断言复验通过。细节见 [06 交付](issues/06-attempt-dag-concurrency.md#answer)。未进行真实 CLI 隔离/并行验收，留给 07；无新增 DSH 专用或真实验证。

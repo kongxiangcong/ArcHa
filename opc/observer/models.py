@@ -168,6 +168,7 @@ class Run(Entity):
     report_refs: list[Ref] = Field(default_factory=list)
     pending_feedback: list[int] = Field(default_factory=list)
     decisions: list[dict[str, Any]] = Field(default_factory=list)
+    max_concurrency: int | None = None
 
 
 class Attempt(Entity):
@@ -185,6 +186,11 @@ class Attempt(Entity):
     next_step: TextFact | None = None
     parent_commit: str | None = None
     candidate_commit: str | None = None
+    work_id: str | None = None
+    directions: list[str] = Field(default_factory=list)
+    dependencies: list[dict[str, str]] = Field(default_factory=list)
+    blocked_by: list[str] = Field(default_factory=list)
+    resource_wait: str | None = None
     feedback_state: str = "pending"
     selected_by_call: str | None = None
     reviewed_by_call: str | None = None
