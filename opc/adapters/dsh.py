@@ -175,6 +175,7 @@ class DshWorker:
     """A worker driven by the `dsh` launcher's one-shot headless profile."""
 
     def __init__(self, options: dict[str, Any]):
+        self.binary_unavailable = options.get("binary_unavailable", False)
         self.binary = options.get("binary") or os.environ.get("OPC_DSH_BIN", "dsh")
         self.profile = str(options.get("profile") or "headless")
         self.timeout = options.get("timeout_s")
@@ -186,7 +187,7 @@ class DshWorker:
         if self.selection and not all(self.selection.get(k) for k in ("provider", "model")):
             raise OPCError("dsh model overrides require both provider and model; "
                            "reasoning_effort is optional")
-        self.dsh_home = options.get("dsh_home") or os.environ.get("OPC_DSH_HOME")
+        self.dsh_home = options.get("dsh_home") if options.get("frozen_config") else options.get("dsh_home") or os.environ.get("OPC_DSH_HOME")
         self.env = {str(k): str(v) for k, v in (options.get("env") or {}).items()}
 
     def _env(self, tree: Path, sandbox: str) -> dict[str, str]:
@@ -228,6 +229,8 @@ class DshWorker:
         events = log_dir / ("%s-events.jsonl" % role)
         with open(events, "wb") as out, open(log_dir / ("%s-stderr.txt" % role), "wb") as err:
             try:
+                if self.binary_unavailable:
+                    raise FileNotFoundError("configured executable was unavailable when this Run was frozen: %s" % self.binary)
                 p = Process(argv, cwd=str(tree), env=self._env(tree, sandbox),
                                      stdin=subprocess.PIPE, stdout=out, stderr=err)
             except OSError as exc:

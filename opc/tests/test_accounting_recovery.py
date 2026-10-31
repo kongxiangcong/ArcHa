@@ -111,7 +111,7 @@ def test_codex_readonly_error_and_spawn_failure(tmp_path):
 
 def test_cli_reconcile_and_role_home_config(make_project, capsys):
     from opc.cli import main
-    from opc.core.worker_config import load_worker_config, worker_options
+    from opc.core.worker_config import load_worker_config, resolve_worker
     from opc.adapters.codex import CodexWorker
     root = make_project()
     kw = dict(task_id='t-toy', max_tokens=100, max_wall_seconds=600,
@@ -133,7 +133,7 @@ def test_cli_reconcile_and_role_home_config(make_project, capsys):
     home = root / '.opc/local/codex-home'
     home.mkdir()
     (root / '.opc/local/workers.json').write_text(json.dumps({'onboard': {'codex_home': str(home)}}), encoding="utf-8")
-    worker = CodexWorker(worker_options(load_worker_config(root), 'onboard'))
+    worker = CodexWorker(resolve_worker(load_worker_config(root), 'onboard').options)
     assert worker.codex_home == str(home)
 
 

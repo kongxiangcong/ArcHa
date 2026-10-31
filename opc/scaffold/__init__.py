@@ -66,8 +66,8 @@ def task_template(task_id: str, component_id: str) -> dict[str, Any]:
         },
         "budget": {"max_attempts": None, "max_wall_seconds": 7200, "max_tokens": None,
                    "max_stagnation": 6, "max_consecutive_infra": 3},
-        "workers": {"expert": {"kind": "codex", "timeout_s": None},
-                    "designer": {"kind": "codex", "timeout_s": None}},
+        "workers": {"expert": {"timeout_s": None},
+                    "designer": {"timeout_s": None}},
         "base_ref": "HEAD",
     }
 

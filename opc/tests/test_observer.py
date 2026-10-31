@@ -972,3 +972,18 @@ def test_environment_recheck_baseline_uses_its_own_measurement_source(project):
     assert detail['metrics'][0]['scopes']['baseline']['toolchain_digest'] == 'tool2'
     assert any('events.seq=' in (source.get('locator') or '')
                for source in detail['metrics'][0]['source_refs'])
+
+
+def test_run_shows_frozen_role_backends_without_exposing_cli_credentials(client, project):
+    baseline = project / '.opc/local/artifacts/test/dma/old-run/frozen/baseline.json'
+    put(baseline, {'execution': {
+        'workers': {'expert': {'kind': 'codex', 'model': 'frozen-model', 'env': {'PRIVATE_KEY': 'hidden'}},
+                    'reviewer': {'kind': 'codex', 'model': 'independent-reviewer'}},
+        'configuration_sources': {'workers.expert.kind': '.opc/local/workers.json'}}})
+    before = snapshot(project)
+    data = run(client)
+    assert data['workers'] == {'expert': {'kind': 'codex', 'model': 'frozen-model'},
+                               'reviewer': {'kind': 'codex', 'model': 'independent-reviewer'}}
+    assert data['configuration_sources']['workers.expert.kind'] == '.opc/local/workers.json'
+    assert 'hidden' not in json.dumps(data)
+    assert snapshot(project) == before

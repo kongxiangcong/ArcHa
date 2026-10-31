@@ -69,7 +69,7 @@ def cmd_run(a) -> int:
             from .core.promote import promote
             review = a.review
             if review is None and any(r.get("verification", "automated") != "automated" and r.get("required", True) for r in e.task.requirements):
-                review = e.task.expert.kind if e.task.expert.kind in ("codex", "dsh") else None
+                review = e.worker_spec("reviewer").kind
             try:
                 s["delivery"] = promote(e, review=review, source_run=s["run_id"])
                 s["complete"] = s["delivery"]["complete"]
