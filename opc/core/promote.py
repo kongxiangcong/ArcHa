@@ -17,7 +17,8 @@ from typing import Any
 
 from . import accept as acceptance
 from .engine import Engine
-from .model import Measurements, OPCError, write_json, write_text
+from .model import Measurements, OPCError, canonical_json, write_json, write_text
+from .results import acceptance_history
 from .workspace import cas_update_ref, git, read_ref
 
 
@@ -33,6 +34,23 @@ def _drop_finished_workspaces(engine: Engine, ws) -> None:
            for c in engine.ledger.calls(engine.run_id)):
         return
     ws.drop_all()
+
+
+def recorded_promotions(engine: Engine) -> list[tuple[dict, str]]:
+    records = []
+    for run in engine.ledger.runs():
+        if run['task_id'] != engine.task.task_id:
+            continue
+        for event in engine.ledger.events(run['run_id'], 'promotion_report'):
+            path = event['body']['report_path']
+            try:
+                report = json.loads(Path(path).read_text(encoding='utf-8'))
+            except (OSError, ValueError) as exc:
+                raise OPCError('acceptance history report unavailable: %s: %s' % (path, exc)) from exc
+            report.setdefault('acceptance_revision', run['revision'])
+            report.setdefault('acceptance_task_digest', run['task_digest'])
+            records.append((event['seq'], report, path))
+    return [(report, path) for _, report, path in sorted(records)]
 
 
 def target_policy(engine: Engine) -> str:
@@ -96,6 +114,10 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
             raise OPCError("cannot read standards confirmation: " + str(exc)) from exc
         validate_standards_confirmation(engine, run, confirmation)
         confirmation = dict(confirmation, sha256=hashlib.sha256(document.read_bytes()).hexdigest())
+    records = recorded_promotions(engine)
+    if any(report['acceptance_revision'] == engine.task.revision and
+           report['acceptance_task_digest'] != engine.task.digest for report, _ in records):
+        raise OPCError('frozen acceptance revision cannot be overwritten; save a new revision')
     champs = engine.ledger.champions(engine.run_id)
     selected = engine.selected_commit()
     base = {"commit_sha": run["base_commit"], "metrics": champs[0]["metrics"] if champs else {"values": {}}}
@@ -304,6 +326,16 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
               "results_review_scope": 'supplied excerpts only; omitted sources and later revisions are not covered' if review and task_results else None,
               "applied": False}
 
+    revisions = {}
+    for path in sorted((root / '.opc/tasks' / task.task_id / 'revisions').glob('r[0-9][0-9][0-9][0-9]/task.json')):
+        raw = json.loads(path.read_text(encoding='utf-8'))
+        revisions[path.parent.name] = hashlib.sha256(canonical_json(raw).encode()).hexdigest()
+    if revised:
+        report['acceptance_source_digest'] = revisions[task.revision]
+    else:
+        frozen = json.loads((engine.artifact_dir() / 'frozen/baseline.json').read_text(encoding='utf-8'))
+        report['acceptance_source_digest'] = frozen.get('source_contract_digest', task.digest)
+    report['acceptance_history'] = acceptance_history(revisions, [*records, (report, str(out / 'report.json'))])
     write_json(out / "report.json", report)
     if apply_to:
         if revised:
@@ -443,4 +475,11 @@ def render(r: dict[str, Any]) -> str:
                   (100 * r["confirm"]["worst_case_gain"])]
     lines += ["", "The decision to merge is the user's. This report does not merge anything "
               "unless --apply was given."]
+    lines += ["", "## Acceptance revision history", "",
+              "| Revision | Candidate | Result | Report |", "| --- | --- | --- | --- |"]
+    for row in r.get('acceptance_history', []):
+        path = row['report_path']
+        source = '[report](<%s>)' % path if path else '—'
+        lines.append('| %s | %s | %s | %s |' % (
+            row['revision'], row['selected_version'] or '—', row['status'], source))
     return "\n".join(lines) + "\n"

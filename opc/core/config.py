@@ -378,7 +378,7 @@ class TaskSpec:
 
     @classmethod
     def save_revision(cls, root: Path, task_id: str, revision: str, values: dict) -> "TaskSpec":
-        """Save an authorized candidate edit; executed contracts receive a new identity."""
+        """Save an authorized candidate edit; bound contracts receive a new identity."""
         from .model import write_json
         root = root.resolve()
         _id(task_id, "task_id")
@@ -402,15 +402,21 @@ class TaskSpec:
 
     @classmethod
     def frozen_digest(cls, root: Path, task_id: str, revision: str) -> str | None:
-        """Identity of the source contract first bound to execution, including legacy Runs."""
+        """Identity first bound to execution or registered acceptance, including legacy Runs."""
         from .ledger import Ledger
         from .workspace import git
         path = root / ".opc/local/ledger.sqlite3"
         if not path.is_file():
             return None
-        runs = [r for r in Ledger(path).runs()
-                if r["task_id"] == task_id and r["revision"] == revision]
+        ledger = Ledger(path)
+        task_runs = [r for r in ledger.runs() if r["task_id"] == task_id]
+        runs = [r for r in task_runs if r["revision"] == revision]
         if not runs:
+            for owner in task_runs:
+                for event in ledger.events(owner["run_id"], "promotion_report"):
+                    report = _read(Path(event["body"]["report_path"]))
+                    if report.get("acceptance_revision") == revision:
+                        return report.get("acceptance_source_digest", report["acceptance_task_digest"])
             return None
         run = runs[0]
         contract = f".opc/tasks/{task_id}/revisions/{revision}/task.json"

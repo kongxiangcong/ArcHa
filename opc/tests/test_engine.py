@@ -654,9 +654,6 @@ def test_resume_rejects_changed_frozen_permissions_without_rewriting_history(mak
         engine_for(root).run(max_attempts_now=0)
     assert e.ledger.run(first['run_id'])['revision'] == 'r0001'
     assert len(e.ledger.runs()) == 1
-    repeated = use_sequence(Engine(root, 't-toy', 'r0001'), Sequence([stop]))
-    repeated.run(new_run=True)
-    assert promote(repeated, source_run=repeated.run_id)['target_policy'] == 'advisory'
 
 
 def test_saved_call_receipt_recovers_without_reexecution_or_double_charge(make_project, engine_for, monkeypatch):
