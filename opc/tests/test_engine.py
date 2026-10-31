@@ -367,6 +367,22 @@ def test_preparation_edits_candidate_then_allocates_after_execution(make_project
     assert next_contract.goal == 'new authorized goal'
 
 
+@pytest.mark.parametrize('frozen', [False, True])
+def test_invalid_candidate_save_preserves_existing_contract(make_project, engine_for, frozen):
+    from opc.core.config import TaskSpec
+    root = make_project()
+    if frozen:
+        engine_for(root).run(max_attempts_now=0)
+    path = root / '.opc/tasks/t-toy/revisions/r0001/task.json'
+    original = path.read_bytes()
+    invalid = task()
+    del invalid['goal']
+    with pytest.raises(OPCError, match='goal'):
+        TaskSpec.save_revision(root, 't-toy', 'r0001', invalid)
+    assert path.read_bytes() == original
+    assert not (path.parent.parent / 'r0002').exists()
+
+
 def test_no_objective_missing_tool_cannot_dispatch_formal_worker(make_project):
     from opc.core.engine import Engine
     strategy = STRATEGY.replace('def propose(self, ctx, tree):', 'def propose(self, ctx, tree):\n        raise AssertionError("formal worker must not run")')
@@ -606,6 +622,12 @@ def test_environment_drift_cannot_be_certified_by_champion_alone(make_project, e
         engine_for(root).run(max_attempts_now=0)
     assert len(e.ledger.champions(first['run_id'])) == count
     assert all(path.read_bytes() == raw for path, raw in old_evidence.items())
+    failed_evidence = {p: p.read_bytes() for p in (e.artifact_dir() / 'environment').rglob('evaluation.json')}
+    assert failed_evidence
+    marker.write_text('v3')
+    resumed = engine_for(root).run(max_attempts_now=0)
+    assert resumed['run_id'] == first['run_id']
+    assert all(path.read_bytes() == raw for path, raw in failed_evidence.items())
 
 
 def test_resume_rejects_changed_frozen_permissions_without_rewriting_history(make_project, engine_for):

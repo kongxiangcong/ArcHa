@@ -396,8 +396,9 @@ class TaskSpec:
                 raise OPCError("task revision numbers exhausted")
             revision = "r%04d" % number
             values = {**values, "revision": revision}
+        candidate = cls.load(root, task_id, revision, source=values)
         write_json(tdir / revision / "task.json", values)
-        return cls.load(root, task_id, revision)
+        return candidate
 
     @classmethod
     def frozen_digest(cls, root: Path, task_id: str, revision: str) -> str | None:

@@ -762,7 +762,7 @@ class ObserverAdapter:
             if not revision and row.get('revision') != 'preparation':
                 run_meta = meta(run_meta['source_refs'], [issue('contract_missing', '未发现可核对的历史合同')], 'partial')
             from ..core.engine import run_compatibility
-            compatibility = (run_compatibility(self.root, run_dir / 'frozen', row) if run_dir else
+            compatibility = (run_compatibility(run_dir / 'frozen', row) if run_dir else
                              dict(record=dict(state='readable', reason='ledger record available'),
                                   execution=dict(state='blocked', reason='legacy: artifact source unavailable'),
                                   measurement=dict(state='unknown', reason='measurement sources unavailable')))

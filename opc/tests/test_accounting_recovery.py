@@ -298,12 +298,60 @@ def test_legacy_preparation_sha256_receipt_still_checked(make_project, engine_fo
     rid = ledger.create_run(task_id='t-toy', revision='preparation', task_digest='preparation',
                             component='preparation', base_commit='HEAD', evaluator_digest='',
                             toolchain_digest='', champion_ref='', direction='legacy receipt')
-    ledger.event(rid, 'preparation', state='ready', files={relative: digest})
+    from opc.scaffold.onboard import preparation_files
+    files = {path: hashlib.sha256(repo_git('show', 'HEAD:' + path, cwd=root, binary=True)).hexdigest()
+             for path in preparation_files(root, 't-toy', 'r0001')}
+    assert files[relative] == digest
+    ledger.event(rid, 'preparation', state='ready', files=files)
     assert engine_for(root).static_check()['ok']
-    ledger.event(rid, 'preparation', state='ready', files={relative: '0' * 64})
+    ledger.event(rid, 'preparation', state='ready', files={**files, relative: '0' * 64})
     check = engine_for(root).static_check()
     assert not check['ok']
     assert any('prepared acceptance changed' in problem for problem in check['problems'])
+
+
+@pytest.mark.parametrize('known_revision', [True, False])
+def test_legacy_receipt_cannot_prepare_a_different_or_unknown_revision(make_project, known_revision):
+    from opc.core.engine import Engine
+    from opc.core.model import OPCError
+    from opc.scaffold.onboard import preparation_files
+    from opc.tests.conftest import git, task, write
+    root = make_project()
+    files = preparation_files(root, 't-toy', 'r0001')
+    if not known_revision:
+        files = {rel: digest for rel, digest in files.items() if not rel.endswith('/task.json')}
+    ledger = Ledger(root / '.opc/local/ledger.sqlite3')
+    ledger.event(ledger.preparation_scope('t-toy'), 'preparation', state='ready', files=files)
+    write(root / '.opc/tasks/t-toy/revisions/r0002/task.json', json.dumps(task(revision='r0002')))
+    git(root, 'add', '.opc/tasks')
+    git(root, 'commit', '-qm', 'add unprepared candidate')
+    original = Engine(root, 't-toy', 'r0001', log=lambda _: None)
+    original_check = original.static_check()
+    assert original_check['ok'] is known_revision
+    if not known_revision:
+        assert any('legacy' in reason and 'identity' in reason for reason in original_check['problems'])
+    unprepared = Engine(root, 't-toy', 'r0002', log=lambda _: None)
+    with pytest.raises(OPCError, match='preparation not ready'):
+        unprepared.run(max_attempts_now=1)
+    assert not ledger.runs()
+    assert ledger.events(ledger.preparation_scope('t-toy'), 'preparation')
+
+
+def test_legacy_receipt_does_not_cover_added_evaluator_inputs(make_project):
+    from opc.core.engine import Engine
+    from opc.core.model import OPCError
+    from opc.scaffold.onboard import preparation_files
+    from opc.tests.conftest import git, write
+    root = make_project()
+    ledger = Ledger(root / '.opc/local/ledger.sqlite3')
+    ledger.event(ledger.preparation_scope('t-toy'), 'preparation', state='ready',
+                 files=preparation_files(root, 't-toy', 'r0001'))
+    write(root / '.opc/eval/added.py', 'new_dependency = True')
+    git(root, 'add', '.opc/eval/added.py')
+    git(root, 'commit', '-qm', 'add unchecked evaluation dependency')
+    with pytest.raises(OPCError, match='prepared inputs changed'):
+        Engine(root, 't-toy', 'r0001', log=lambda _: None).run(max_attempts_now=1)
+    assert not ledger.runs()
 
 
 def test_default_preparation_has_no_reviewer_and_scoped_files(make_project, monkeypatch):

@@ -85,8 +85,20 @@ def cmd_status(a) -> int:
     project = ProjectConfig.load(Path(a.project))
     bindings = Bindings.load(project)
     ledger = Ledger(project.root / ".opc" / "local" / "ledger.sqlite3")
+    runs = ledger.runs()
+    candidates_by_task = {}
+    for run in runs:
+        if run["revision"] != "preparation" and run["state"] != "closed":
+            candidates_by_task.setdefault(run["task_id"], []).append(run["run_id"])
+    totals_by_task = {}
+
+    def task_totals(task_id):
+        if task_id not in totals_by_task:
+            totals_by_task[task_id] = ledger.task_totals(task_id)
+        return totals_by_task[task_id]
+
     rows = []
-    for r in ledger.runs():
+    for r in runs:
         if ((a.task and r["task_id"] != a.task) or
                 (a.revision and r["revision"] != a.revision) or
                 (a.run_id and r["run_id"] != a.run_id)):
@@ -95,7 +107,7 @@ def cmd_status(a) -> int:
                          r["run_id"] / "frozen/baseline.json")
         from .core.engine import run_compatibility
         source = {"configuration_source": str(snapshot_path),
-                  "compatibility": run_compatibility(project.root, snapshot_path.parent, r)}
+                  "compatibility": run_compatibility(snapshot_path.parent, r)}
         if a.details:
             try:
                 snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
@@ -103,8 +115,7 @@ def cmd_status(a) -> int:
                                "startpoint": snapshot.get("startpoint")})
             except (OSError, ValueError) as exc:
                 source["source_unavailable"] = str(exc)
-        candidates = [x["run_id"] for x in ledger.runs() if x["task_id"] == r["task_id"]
-                      and x["revision"] != "preparation" and x["state"] != "closed"]
+        candidates = candidates_by_task.get(r["task_id"], [])
         source["resume_selection"] = {"requires_run_id": len(candidates) > 1,
                                       "candidates": candidates}
         champ = ledger.champion(r["run_id"])
@@ -126,8 +137,8 @@ def cmd_status(a) -> int:
                      "champion_metrics": champ[1].values if champ else None,
                      "working_version": work[-1]["body"]["commit"] if work else None,
                      "selected_version": selected[-1]["body"]["commit"] if selected else default_commit,
-                     "spent": ledger.task_totals(r["task_id"]), "accounting_scope": "task"})
-    task_ids = {r["task_id"] for r in ledger.runs()}
+                     "spent": task_totals(r["task_id"]), "accounting_scope": "task"})
+    task_ids = {r["task_id"] for r in runs}
     task_ids.update(r[0].removeprefix("preparation:") for r in ledger.db.execute(
         "SELECT DISTINCT run_id FROM events WHERE run_id LIKE 'preparation:%'"))
     for task_id in sorted(task_ids):
@@ -141,7 +152,7 @@ def cmd_status(a) -> int:
             receipts[event["body"].get("revision")] = event["body"]
         limits = ledger.events(scope, "preparation_budget")
         budget = {"scope": "task", "limits": limits[-1]["body"] if limits else {},
-                  "used": ledger.task_totals(task_id)}
+                  "used": task_totals(task_id)}
         for revision, receipt in receipts.items():
             if a.revision and revision != a.revision:
                 continue

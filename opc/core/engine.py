@@ -44,7 +44,7 @@ class StopDecision:
     reason: str
 
 
-def run_compatibility(root: Path, frozen: Path, run) -> dict[str, Any]:
+def run_compatibility(frozen: Path, run) -> dict[str, Any]:
     """Read existing sources without probing tools or changing execution state."""
     missing = [name for name in ("task.json", "component.json", "baseline.json")
                if not (frozen / name).is_file()]
@@ -57,8 +57,7 @@ def run_compatibility(root: Path, frozen: Path, run) -> dict[str, Any]:
             raise ValueError("baseline snapshot is not an object")
         if not baseline.get("execution"):
             missing.append("baseline.execution (legacy)")
-        rev_parse(root, run["base_commit"])
-    except (OSError, ValueError, OPCError) as exc:
+    except (OSError, ValueError) as exc:
         missing.append(str(exc))
     if missing:
         report["execution"] = {"state": "blocked", "reason": "missing execution source: " + "; ".join(missing)}
@@ -137,8 +136,30 @@ class Engine:
     def preparation_receipt(self) -> dict[str, Any]:
         """Select evidence for this execution contract, retaining legacy receipts."""
         events = self.ledger.events(self.preparation, "preparation") if self.preparation else []
-        matching = [e["body"] for e in events if e["body"].get("revision", self.task.revision) == self.task.revision]
-        return matching[-1] if matching else {}
+        matching = []
+        unidentified = False
+        contract = self.task.path.relative_to(self.root).as_posix()
+        for event in events:
+            receipt = event["body"]
+            if receipt.get("task_id", self.task.task_id) != self.task.task_id:
+                continue
+            revision = receipt.get("revision")
+            if revision is None:
+                # Legacy evidence can identify its checked contract without new metadata.
+                contracts = [path for path in receipt.get("files", {})
+                             if path.startswith(".opc/tasks/") and path.endswith("/task.json")]
+                if len(contracts) != 1:
+                    unidentified = True
+                    continue
+                if contracts[0] != contract:
+                    continue
+            elif revision != self.task.revision:
+                continue
+            matching.append(receipt)
+        if matching:
+            return matching[-1]
+        return ({"state": "legacy_unknown", "reason": "legacy preparation receipt lacks a unique checked contract identity"}
+                if unidentified else {})
 
     # -------------------------------------------------------------- preflight
     def static_check(self) -> dict[str, Any]:
@@ -167,10 +188,9 @@ class Engine:
                 problems.append("preparation not ready: " + receipt.get("reason", "unmetered draft"))
             else:
                 checked_files = receipt.get("files", {})
-                if receipt.get("revision"):
-                    current_files = set(files) | {self.task.path.relative_to(self.root).as_posix()}
-                    if current_files != set(checked_files):
-                        problems.append("prepared inputs changed since review; rerun affected preparation checks")
+                current_files = set(files) | {self.task.path.relative_to(self.root).as_posix()}
+                if current_files != set(checked_files):
+                    problems.append("prepared inputs changed since review; rerun affected preparation checks")
                 for rel, checked_digest in checked_files.items():
                     try:
                         if checked_digest.startswith("git-blob:"):
@@ -553,7 +573,7 @@ class Engine:
                                        % a["state"], 0.0, Cost())
             self.log("attempt %d abandoned (was %s)" % (n, a["state"]))
         current = self.toolchain_digest(run["base_commit"])
-        self._compatibility = run_compatibility(self.root, self.artifact_dir() / "frozen", run)
+        self._compatibility = run_compatibility(self.artifact_dir() / "frozen", run)
         self._compatibility["execution"] = {"state": "resumable", "reason": "frozen sources and required tools are available"}
         drift = current != run["toolchain_digest"]
         self._compatibility["measurement"] = {"state": "reusable", "reason": "toolchain matches existing measurements"}
@@ -579,8 +599,7 @@ class Engine:
     def remeasure_environment(self, ws: Workspaces, current: str) -> None:
         """Rebuild only this Run's comparison baseline and current selected work."""
         run = self.ledger.run(self.run_id)
-        sequence = len(self.ledger.events(self.run_id, "measurement_baseline")) + 1
-        out = self.artifact_dir() / "environment" / str(sequence)
+        out = self.artifact_dir() / "environment" / str(time.time_ns())
         ev, meas, tree = self.evaluate_commit(ws, run["base_commit"], "", out / "baseline", "environment-baseline", fresh=True)
         ws.drop(tree)
         self.ledger.charge(self.run_id, None, "evaluator", Cost(ev.seconds, 0, 0.0))
@@ -1301,7 +1320,7 @@ class Engine:
                 business = "no_valid_candidate"
             if best and acceptance.target_met(self.task.acceptance, best["metrics"]["values"]):
                 business = "target_met"
-        compatibility = (getattr(self, "_compatibility", None) if run["state"] != "closed" else None) or run_compatibility(self.root, self.artifact_dir() / "frozen", run)
+        compatibility = (getattr(self, "_compatibility", None) if run["state"] != "closed" else None) or run_compatibility(self.artifact_dir() / "frozen", run)
         if run["state"] == "blocked":
             compatibility["execution"] = {"state": "blocked", "reason": run["stop_reason"]}
         return {"run_id": self.run_id, "task": self.task.task_id, "revision": self.task.revision,
