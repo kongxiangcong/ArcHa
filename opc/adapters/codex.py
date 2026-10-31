@@ -74,15 +74,16 @@ class CodexWorker:
     def __init__(self, options: dict[str, Any]):
         self.session_id: str | None = None
         self.tool_scope = {"tool_policy": options["tool_policy"]} if "tool_policy" in options else {}
-        self.frozen_config = options.get("frozen_config", False)
-        self.native_model_provider = options.get("native_model_provider")
-        self.native_provider_config = options.get("native_provider_config", {})
         self.binary_unavailable = options.get("binary_unavailable", False)
+        self.native_selection_error = options.get("native_selection_error")
         self.model = options.get("model")
         self.reasoning_effort = options.get("reasoning_effort")
         if options.get("provider"):
             raise OPCError("codex uses its CLI provider configuration; provider is only for dsh")
         self.profile = options.get("profile")
+        self.native_defaults_frozen = options.get("native_defaults_frozen", False)
+        self.native_model_provider = options.get("native_model_provider")
+        self.native_provider_config = options.get("native_provider_config", {})
         self.codex_home = options.get("codex_home") if options.get("frozen_config") else options.get("codex_home") or os.environ.get("OPC_CODEX_HOME")
         self.timeout = options.get("timeout_s")
         if self.timeout is not None:
@@ -108,7 +109,7 @@ class CodexWorker:
         last.unlink(missing_ok=True)
         argv = [*command_prefix(self.binary), "--no-daemon", "exec", "--json", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules",
                 "-C", str(tree), "-o", str(last)]
-        if self.profile and not getattr(self, "frozen_config", False):
+        if self.profile and not self.native_defaults_frozen:
             argv += ["-p", self.profile]
         if role == "expert" and session_id:
             # cwd/permissions/profile are parent exec options; resume accepts the
@@ -143,7 +144,7 @@ class CodexWorker:
         if self.native_model_provider:
             argv += ["-c", "model_provider=" + json.dumps(self.native_model_provider)]
             for key, value in self.native_provider_config.items():
-                argv += ["-c", "model_providers." + self.native_model_provider + "." + key + "=" + json.dumps(value)]
+                argv += ["-c", "model_providers.%s.%s=%s" % (json.dumps(self.native_model_provider), key, json.dumps(value))]
         argv +=  ([session_id] if role == "expert" and session_id else []) + ["-"]
         if self.reasoning_effort:
             argv[-1:-1] = ["-c", "model_reasoning_effort=" + json.dumps(self.reasoning_effort)]
@@ -158,7 +159,11 @@ class CodexWorker:
                 open(log_dir / ("%s-stderr.txt" % role), "wb") as err:
             try:
                 if self.binary_unavailable:
-                    raise FileNotFoundError("configured executable was unavailable when this Run was frozen: %s" % self.binary)
+                    executable = Path(command_prefix(self.binary)[0])
+                    if not executable.is_absolute() or not executable.is_file():
+                        raise FileNotFoundError("configured executable was unavailable when this Run was frozen: %s" % self.binary)
+                if self.native_selection_error:
+                    raise OSError(self.native_selection_error)
                 p = Process(argv, cwd=str(tree), env=env, stdin=subprocess.PIPE, stdout=out, stderr=err)
             except OSError as exc:
                 return WorkerCall(role, False, Cost(time.time() - t0, 0, None),

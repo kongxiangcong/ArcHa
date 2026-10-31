@@ -57,6 +57,91 @@ def load_worker_config(root: Path) -> dict[str, dict[str, Any]]:
     return result
 
 
+
+def _freeze_codex_defaults(options: dict, role: str, sources: dict | None) -> None:
+    """Flatten only model routing/settings; native tools, permissions and credentials stay out."""
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10 uses the standard TOML backport.
+        import tomli as tomllib
+    extra = options.get("extra_args", [])
+    for index, arg in enumerate(extra):
+        assignment = (extra[index + 1] if arg in ("-c", "--config") and index + 1 < len(extra)
+                      else arg[9:] if arg.startswith("--config=") else arg[2:] if arg.startswith("-c") else "")
+        key = assignment.split("=", 1)[0].strip()
+        model_flag = arg in ("-m", "--model") or arg.startswith("--model=") or (arg.startswith("-m") and len(arg) > 2)
+        profile_flag = arg in ("-p", "--profile") or arg.startswith("--profile=") or (arg.startswith("-p") and len(arg) > 2)
+        unsupported = (profile_flag or arg in ("--oss", "--local-provider") or arg.startswith("--local-provider=")
+                       or key in ("profile", "model_provider", "model_providers")
+                       or key.startswith("model_providers.")
+                       or ((model_flag or key == "model") and not options.get("model"))
+                       or (key == "model_reasoning_effort" and not options.get("reasoning_effort")))
+        if unsupported:
+            raise OPCError("Codex model/provider/profile overrides must use role fields or native configuration, not extra_args, so the Run can freeze their selection")
+    path = Path(options["codex_home"]) / "config.toml"
+    try:
+        with path.open("rb") as stream:
+            native = tomllib.load(stream)
+    except FileNotFoundError:
+        native = {}
+    except (OSError, ValueError) as exc:
+        raise OPCError("cannot resolve Codex native model configuration %s: %s" % (path, exc)) from exc
+    profile_name = options.get("profile") or native.get("profile")
+    if profile_name is not None and not isinstance(profile_name, str):
+        raise OPCError("Codex native profile selection must be a string")
+    selected = native
+    if profile_name:
+        profiles = native.get("profiles", {})
+        if not isinstance(profiles, dict):
+            raise OPCError("Codex native profiles must be a table")
+        profile = profiles.get(profile_name)
+        if not isinstance(profile, dict):
+            raise OPCError("Codex native profile %r is unavailable in %s" % (profile_name, path))
+        selected = {**native, **profile}
+    options["native_profile"] = profile_name
+    for field, native_field in (("model", "model"), ("reasoning_effort", "model_reasoning_effort")):
+        value = selected.get(native_field)
+        if field not in options and value is not None:
+            if not isinstance(value, str) or not value.strip():
+                raise OPCError("Codex native %s must be a nonempty string" % native_field)
+            options[field] = value
+            if sources is not None:
+                sources["workers.%s.%s" % (role, field)] = str(path) + ("#profiles." + profile_name if profile_name else "")
+    provider = selected.get("model_provider", "openai")
+    if not isinstance(provider, str) or not provider:
+        raise OPCError("Codex native model_provider must be a nonempty string")
+    providers = selected.get("model_providers", {})
+    if not isinstance(providers, dict):
+        raise OPCError("Codex native model_providers must be a table")
+    provider_config = providers.get(provider, {})
+    if not isinstance(provider_config, dict):
+        raise OPCError("Codex native provider configuration must be a table")
+    supported = {"name", "base_url", "env_key", "wire_api", "requires_openai_auth",
+                 "request_max_retries", "stream_max_retries", "stream_idle_timeout_ms"}
+    if set(provider_config) - supported:
+        raise OPCError("Codex native provider %s has unsupported settings; use supported routing and environment credential selectors, never inline credentials" % provider)
+    if not provider_config and provider != "openai":
+        raise OPCError("Codex native provider %s has no freezeable routing configuration" % provider)
+    provider_config = dict(provider_config)
+    if provider == "openai" and "base_url" not in provider_config and os.environ.get("OPENAI_BASE_URL"):
+        provider_config["base_url"] = os.environ["OPENAI_BASE_URL"]
+        if sources is not None:
+            sources["workers.%s.native_provider_config.base_url" % role] = "OPENAI_BASE_URL"
+    if provider_config.get("base_url"):
+        from urllib.parse import urlsplit
+        address = urlsplit(provider_config["base_url"])
+        if address.username or address.password or address.query or address.fragment:
+            raise OPCError("Codex provider base_url cannot freeze embedded credentials or query data; use an environment credential selector")
+    options["native_model_provider"] = provider
+    options["native_provider_config"] = dict(provider_config)
+    options["native_defaults_frozen"] = True
+    if not options.get("model"):
+        options["native_selection_error"] = "Codex native model default is unknown; configure an explicit role model before creating a Run"
+    if sources is not None:
+        sources["workers.%s.native_model_provider" % role] = str(path)
+        if profile_name:
+            sources["workers.%s.native_profile" % role] = sources.get("workers.%s.profile" % role, str(path))
+
 def resolve_worker(config: dict, role: str, base=None, *, restricted: bool = False,
                    default_kind: str = "codex", sources: dict | None = None):
     """Resolve one role once; callers persist this spec instead of rereading defaults."""
@@ -100,6 +185,10 @@ def resolve_worker(config: dict, role: str, base=None, *, restricted: bool = Fal
             home = str(Path.home() / ".codex")
         options[home_key] = str(Path(home).expanduser().resolve()) if home else None
         options["frozen_config"] = True
+        if kind == "codex":
+            _freeze_codex_defaults(options, role, sources)
+        elif not (options.get("provider") and options.get("model")):
+            options["native_selection_error"] = "DSH native defaults cannot be frozen by this adapter; configure explicit provider and model for this role before creating a Run"
         if sources is not None:
             for key, env in (("binary", prefix + "_BIN"), (home_key, prefix + "_HOME")):
                 source_key = "workers.%s.%s" % (role, key)

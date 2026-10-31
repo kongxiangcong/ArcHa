@@ -138,6 +138,6 @@ def test_explicit_switch_cannot_bypass_unknown_prior_execution(make_project):
     old.ledger.set_run_state(old.run_id, 'paused')
     old.ledger.begin_call(old.run_id, None, 'expert', {'tree':'old'}, 'missing.json')
     new = Engine(root, 't-toy', log=lambda _: None)
-    with new.ledger.writer(), pytest.raises(OPCError, match='unknown execution'):
+    with new.ledger.writer(), pytest.raises(OPCError, match='execution unknown'):
         new.open_run(new_run=True, switch_backend=True)
     assert len(new.ledger.runs()) == 1

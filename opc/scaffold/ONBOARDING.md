@@ -168,7 +168,7 @@ Run 将实际解析配置及逐项来源保存在既有 `frozen/baseline.json` �
 ```
 
 以上是新项目生成的 Codex 默认配置；已有本机配置不会被自动覆盖。
-每个角色还可指定 `kind`（codex/dsh）、`binary`（可执行文件或显式 argv 数组）、`profile`、`codex_home` 或 `dsh_home`。合同省略 kind 时环境可在同一 revision 的新 Run 选择后端；合同显式 kind 是限制，与环境冲突会报错。换后端不继承原后端的模型/provider/额外参数。Run 冻结实际角色配置、安装定位和来源；恢复不用新环境默认值，缺工具如实失败。Reviewer 默认共用安装定位，模型及推理参数独立配置。
+每个角色还可指定 `kind`（codex/dsh）、`binary`（可执行文件或显式 argv 数组）、`profile`、`codex_home` 或 `dsh_home`。合同省略 kind 时环境可在同一 revision 的新 Run 选择后端；合同显式 kind 是限制，与环境冲突会报错。换后端不继承原后端的模型/provider/额外参数。Run 冻结实际角色配置、安装定位和来源；恢复不用新环境默认值，缺工具如实失败。Reviewer 默认共用安装定位，模型及推理参数独立配置。Codex 将所选原生 profile 的模型/推理设置和受支持的 provider 路由展开冻结，调用使用 `--ignore-user-config` 防止原生配置改动影响模型或工具边界。认证继续通过已选 CODEX_HOME 和环境凭据接入，不复制认证；内联凭据、特殊 provider 设置或无法确定的原生模型会明确阻止派发。DSH 需显式设置各调用角色的 provider/model，未解析的原生默认值不能当作已冻结。冻结的绝对可执行文件路径修复后可重试，恢复不会重新搜索 PATH。
 模型需当前账号和后端支持；推理强度也是后端和模型决定的，ArcHa 不把它固定成某个枚举。
 角色字段的 null 表示继承。预算默认 max_tokens=null、max_wall_seconds=7200，max_attempts 缺失或 null 表示无轮数限制；已有明确上限保留，null 不能撤销。预算按 Task 汇总准备及所有 revision、Run 的原始 charges；准备使用 ledger 内的 Task scope，不创建执行 Run。onboard 的显式预算参数记录授权变更，追加总额度不清零消耗。历史 Run 的执行配置保持冻结。仅启用 token 或金额上限时要求相应用量完整；缺省 token 无上限时保留 unknown，不阻塞。默认模型调用 timeout_s=null，评价器 gate 工具超时独立保留。
 文件缺失时保持兼容，JSON 格式、角色或字段拼写错误会报错，不会静默忽略。

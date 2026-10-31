@@ -187,6 +187,9 @@ class DshWorker:
         self.session_id: str | None = None
         self.tool_scope = {"tool_policy": options["tool_policy"]} if "tool_policy" in options else {}
         self.binary_unavailable = options.get("binary_unavailable", False)
+        self.native_selection_error = options.get("native_selection_error")
+        if options.get("frozen_config") and not (options.get("provider") and options.get("model")):
+            self.native_selection_error = "DSH native defaults cannot be frozen by this adapter; configure explicit provider and model for this role before creating a Run"
         self.binary = options.get("binary") or os.environ.get("OPC_DSH_BIN", "dsh")
         self.profile = str(options.get("profile") or "headless")
         self.timeout = options.get("timeout_s")
@@ -259,7 +262,11 @@ class DshWorker:
         with open(events, "wb") as out, open(log_dir / ("%s-stderr.txt" % role), "wb") as err:
             try:
                 if self.binary_unavailable:
-                    raise FileNotFoundError("configured executable was unavailable when this Run was frozen: %s" % self.binary)
+                    executable = Path(command_prefix(self.binary)[0])
+                    if not executable.is_absolute() or not executable.is_file():
+                        raise FileNotFoundError("configured executable was unavailable when this Run was frozen: %s" % self.binary)
+                if self.native_selection_error:
+                    raise OSError(self.native_selection_error)
                 p = Process(argv, cwd=str(tree), env=self._env(tree, sandbox),
                                      stdin=subprocess.PIPE, stdout=out, stderr=err)
             except OSError as exc:

@@ -3,7 +3,7 @@ name = "archa-opc"
 version = "0.3.0"
 description = "Domain-independent engine for automatic, budgeted, evidence-bound iteration"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["tomli>=2,<3; python_version < '3.11'"]
 
 [project.optional-dependencies]
 observer = ["fastapi==0.119.1", "uvicorn==0.38.0", "pydantic==2.12.3"]
