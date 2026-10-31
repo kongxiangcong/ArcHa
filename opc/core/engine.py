@@ -1259,7 +1259,7 @@ class Engine:
             "history": history, "claims": self.claims(),
             "basis_changes": [{"attempt": a["attempt_no"], "changes": changes}
                               for a in attempts
-                              if (changes := self.basis_changes(self.direct_basis(a["plan"] or {}, attempts)))],
+                              if (changes := self.basis_changes(self.direct_basis(a["plan"] or {}, attempts, a["adopted_claims"])))],
             "decision_conflicts": [e["body"] for e in self.ledger.events(self.run_id, "expert_conflict")],
             "background": background, "budget_left": self.budget_left(),
             "pending_feedback": [{"attempt": a["attempt_no"], "evidence": str(self.attempt_dir(a["attempt_no"]))}
@@ -1278,8 +1278,11 @@ class Engine:
                              and a["outcome"] != Outcome.INFRA.value],
         }
 
-    def direct_basis(self, plan: dict, records: list[dict]) -> list[dict]:
+    def direct_basis(self, plan: dict, records: list[dict], actual_refs=()) -> list[dict]:
         refs = list(plan.get("adopted_claims") or [])
+        for ref in actual_refs:
+            if ref not in refs:
+                refs.append(ref)
         sources = {d["work_id"] for d in plan.get("dependencies") or []}
         for a in records:
             if ((a["plan"] or {}).get("work_id") in sources or a["attempt_no"] == plan.get("base_attempt")):
@@ -1310,7 +1313,7 @@ class Engine:
         # A pending receipt replays its input; a new infrastructure retry may reconsider it.
         if self.fixed_designer_input(attempt["attempt_no"]):
             return []
-        changes = self.basis_changes(self.direct_basis(attempt["plan"] or {}, records))
+        changes = self.basis_changes(self.direct_basis(attempt["plan"] or {}, records, attempt["adopted_claims"]))
         reviewed = (attempt.get("basis_review") or {}).get("changes", [])
         return [c for c in changes if c not in reviewed]
 
@@ -1346,7 +1349,8 @@ class Engine:
             history.extend(self.authorized_claims(dep['task_id'], dep['claim_id'], history=True))
         older = {(c['task_id'], c['claim_id'], c['version']): c for c in history
                  if c['version'] < latest[(c['task_id'], c['claim_id'])]}
-        historical = results.claim_sources(list(older.values()), self.bindings.artifact_root, self.project.project_id)
+        historical = results.claim_sources(list(older.values()), self.bindings.artifact_root,
+                                           self.project.project_id, check_availability=False)
         return dict(task_ids=task_ids, claims=claims, claim_history=historical, context=str(context_path),
                     command=[str(Path(sys.executable).resolve()), str(Path(results.__file__).resolve()), str(context_path)],
                     as_of='fixed_call_input')
@@ -1378,7 +1382,8 @@ class Engine:
         for claim in claims:
             claim["pending_feedback"] = pending
         from .results import claim_sources
-        return claim_sources(claims, self.bindings.artifact_root, self.project.project_id)
+        return claim_sources(claims, self.bindings.artifact_root, self.project.project_id,
+                             check_availability=not history or version is not None)
 
     def historical_pending_feedback(self) -> list[dict]:
         return [dict(row, evidence=str(self.artifact_dir().parent / row['run_id'] /
@@ -2303,7 +2308,7 @@ class Engine:
                 "claim_history": self.claims(history=True),
                 "basis_changes": [{"attempt": a["attempt_no"], "changes": changes}
                                   for a in records
-                                  if (changes := self.basis_changes(self.direct_basis(a["plan"] or {}, records)))],
+                                  if (changes := self.basis_changes(self.direct_basis(a["plan"] or {}, records, a["adopted_claims"])))],
                 "decision_conflicts": self.ledger.events(self.run_id, "expert_conflict"),
                 "decisions": self.ledger.events(self.run_id, "expert_decision"),
                 "materials": str(self.artifact_dir() / "materials"),

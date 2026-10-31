@@ -339,13 +339,17 @@ def sync_engine(engine) -> None:
     register(engine.root, value, rows, engine.task.goal)
 
 
-def claim_sources(claims: list[dict], artifact_root: Path, project_id: str) -> list[dict]:
-    """Resolve only sources named by these claims; preserve their historical locators."""
+def claim_sources(claims: list[dict], artifact_root: Path, project_id: str, *,
+                  check_availability: bool = True) -> list[dict]:
+    """Attach source locators; inspect availability only for selected material."""
     for claim in claims:
         for ref in claim.get('evidence', []) + claim.get('counterevidence', []):
             storage = artifact_root / project_id / claim['task_id'] / ref['run_id'] / 'attempts' / ('a%06d' % ref['attempt'])
             path = storage / ref['artifact']
             ref.update(storage=str(storage), source=str(path))
+            if not check_availability:
+                ref['availability'] = 'not_expanded'
+                continue
             try:
                 if not path.resolve().is_relative_to(storage.resolve()):
                     ref.update(availability='access_denied', issue='source escaped authorized storage')

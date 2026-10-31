@@ -1,8 +1,8 @@
 # S3：证据、主张与共享知识
 
-Status: implemented
+Status: resolved
 
-需求及 Testing Decisions 中的测试边界已获用户确认（2026-10-31）。七项实现及脚本化闭环验证已完成，验证记录见下方「交付验证」；最终集成审查结果在该节补充。未启动正式研究考试。
+需求及 Testing Decisions 中的测试边界已获用户确认（2026-10-31）。七项实现、脚本化闭环验证及最终双轴审查修正已完成，验证记录见下方「交付验证」。未启动正式研究考试。
 
 ## Problem Statement
 
@@ -127,3 +127,9 @@ Expert 在已有调用中汇合新旧材料；Engine 检查并持久登记，提
 使用现有测试虚拟环境执行框架回归（`opc/tests`、`tools/tests`，排除 HTTP observer 文件及成果 HTTP 用例）：484 passed、5 skipped、1 deselected、12 subtests passed；5 个跳过项为 Windows 专用检查。另行选取不使用 HTTP fixture 的观察测试：23 passed。新增闭环、历史反馈及有效性用例通过，`git diff --check` 和既有提示词长度边界通过。
 
 验证使用临时项目、真实 SQLite/成果目录、脚本化 Worker、假 CLI 以及实际受限子进程读取。HTTP TestClient 在前序事项出现 AnyIO fixture 等待，本轮排除，未计为通过；观察事实和只读性由 ObserverAdapter 验证。没有真实模型/API 或正式研究考试；这些结果证明可观察的交接、登记、查询、恢复和原件保留行为，不证明模型理解或研究判断正确。真实后端能力限制继续以 S2 交付记录为准。
+
+### 最终审查修正
+
+Standards 轴发现历史来源被逐轮检查，Spec 轴发现仅由 Designer 回传的采用版本没有进入变化提示；两项已集中修正。历史索引仅附原定位和未展开状态，创建上下文、写视图和刷新观察入口不探查未选历史原件；明确展开及文件权限交付边界才检查相关来源。观察原件登记保留所属 Attempt 目录，在实际读取时重新核对路径，刷新元数据也不丢失这一约束。返回后的变化提示、总结及失败后的新 Call 派发检查均纳入 Designer 明确声明的实际采用版本，不从读取推断采用，不改写原交接。
+
+两项行为均先复现失败后修正，相关边界回归 20 passed；修正后的非 HTTP 框架回归 487 passed、5 skipped、1 deselected、12 subtests passed。该次框架回归后补入 Designer 单独采用的基础设施重试检查，以及观察来源延迟读取的目录约束；最终窄范围复验 8 passed，覆盖继续/调整重试、在途返回、历史按需读取及链接改向拒绝。最终观察回归 23 passed，`git diff --check` 通过。没有新增服务、全库扫描、重复状态报告或真实模型调用。

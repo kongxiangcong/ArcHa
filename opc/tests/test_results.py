@@ -590,3 +590,54 @@ def test_fixed_claim_query_expands_explicit_historical_revision(make_project, en
     historical = query_claims(context, claim_id='copy', version=1)
     assert historical['claims'][0]['status'] == 'unresolved'
     assert historical['claims'][0]['reason'] == 'Need comparable evidence'
+
+
+def test_historical_source_index_is_lazy_until_explicit_expansion(make_project, engine_for, monkeypatch):
+    from opc.core.results import query_claims
+    from opc.observer.adapter import ObserverAdapter, ObserverError
+    claim = dict(claim_id='copy', statement='Less copying helps', scope='fixed fields',
+                 status='supported', reason='Historical observation')
+    original = None
+    inspections = []
+    is_file = Path.is_file
+    def track(path):
+        if path == original:
+            inspections.append(str(path))
+        return is_file(path)
+    def register(ctx):
+        nonlocal original
+        original = engine.attempt_dir(1) / 'archive/original.txt'
+        original.parent.mkdir()
+        original.write_text('Historical original measurement')
+        return dict(select_work=False, claims=[dict(claim, evidence=[dict(
+            run_id=engine.run_id, attempt=1, artifact='archive/original.txt')])])
+    def revise(ctx):
+        monkeypatch.setattr(Path, 'is_file', track)
+        return dict(select_work=False, claims=[dict(claim, base_version=1,
+                    evidence=[], status='unresolved', reason='New validity concern')])
+    def inspect(ctx):
+        assert inspections == []  # Creating the next input and views did not probe the old source.
+        old = ctx['claim_history'][0]['evidence'][0]
+        assert old['availability'] == 'not_expanded'
+        before = engine.ledger.path.read_bytes()
+        observer = ObserverAdapter(engine.root)
+        observed = observer.run(observer._id('run', engine.run_id))['data']
+        assert inspections == []
+        historical = observed['claim_history'][0]['evidence'][0]
+        assert historical['availability'] == 'not_expanded'
+        expanded = query_claims(ctx, claim_id='copy', version=1, source=0)
+        assert expanded['source']['content'] == 'Historical original measurement'
+        assert observer.artifact_bytes(historical['artifact_id']) == b'Historical original measurement'
+        assert inspections  # Actual expansion inspects just this chosen source.
+        secret = engine.root / '.env'
+        secret.write_text('unrelated private input')
+        original.unlink()
+        original.symlink_to(secret)
+        assert query_claims(ctx, claim_id='copy', version=1, source=0)['source']['availability'] == 'access_denied'
+        with pytest.raises(ObserverError) as denied:
+            observer.artifact_bytes(historical['artifact_id'])
+        assert denied.value.code == 'path_denied'
+        assert engine.ledger.path.read_bytes() == before
+        return stop(ctx)
+    engine = use_sequence(engine_for(make_project()), Sequence([plan(1), register, revise, inspect], [4]))
+    assert engine.run()['state'] == 'closed'
