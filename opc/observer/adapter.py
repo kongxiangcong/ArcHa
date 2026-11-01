@@ -5,6 +5,7 @@ contract; only registered artifact IDs can cross the HTTP file boundary.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 import base64
 import datetime as dt
 import hashlib
@@ -67,6 +68,7 @@ class ObserverAdapter:
     def __init__(self, root: Path | str, demo=False):
         self.root = Path(root).resolve()
         self.demo = demo
+        self.control_enabled = False
         self.project_key = 'p_' + digest(str(self.root))[:16]
         self.lock = threading.RLock()
         self.artifact_registry: dict[str, dict] = {}
@@ -78,6 +80,7 @@ class ObserverAdapter:
         self.revisions: dict[str, dict] = {}
         self.calls: dict[str, dict] = {}
         self.call_sources: dict[str, dict] = {}
+        self.activity_cache = OrderedDict()
         self.run_rows: list[dict] = []
         self.snapshots: dict[str, dict] = {}
         self.source_at = None
@@ -195,7 +198,7 @@ class ObserverAdapter:
                         self.issues.append(issue('source_unsupported', '账本缺少表：' + name))
                         continue
                     columns = {r[1] for r in con.execute('PRAGMA table_info(' + name + ')')}
-                    required = {'runs': {'run_id', 'task_id', 'revision', 'state'}, 'events': {'seq', 'run_id', 'at', 'kind', 'attempt_no', 'body'}, 'attempts': {'run_id', 'attempt_no'}, 'champions': {'run_id', 'seq', 'commit_sha'}, 'charges': {'run_id', 'tokens', 'wall_seconds', 'usd', 'usd_known'}}[name]
+                    required = {'runs': {'run_id', 'task_id', 'revision', 'state'}, 'events': {'seq', 'run_id', 'at', 'kind', 'attempt_no', 'body'}, 'attempts': {'run_id', 'attempt_no'}, 'champions': {'run_id', 'seq', 'commit_sha'}, 'charges': {'run_id', 'tokens', 'wall_seconds', 'usd', 'usd_known'}, 'calls': {'call_id', 'run_id', 'input', 'result'}}[name]
                     if not required <= columns:
                         result[name] = []
                         self.issues.append(issue('source_unsupported', '账本缺少必要列：' + name))
@@ -312,6 +315,7 @@ class ObserverAdapter:
                     self.project['source_mode'] = 'snapshot'
                 if self.snapshots:
                     self.issues.append(issue('snapshot_only', '账本不可用；仅显示已有 views 快照，时间与内容可能滞后'))
+        self.run_numbers = {r['run_id']: n for n, r in enumerate(sorted(self.run_rows, key=lambda r: (r.get('created_at') or '', r['run_id'])), 1)}
         self.source_at = max((e['at'] for e in db['events'] if e.get('at')), default=None)
         self._link_revisions()
         self.discovery_at = __import__('time').monotonic()
@@ -512,7 +516,14 @@ class ObserverAdapter:
                                                         requirement_results='partial', numeric_measurements='partial')))
 
     def _run_ref(self, row):
-        return dict(id=self._id('run', row['run_id']), label=row['run_id'], source_run_id=row['run_id'],
+        if row['run_id'] not in self.run_numbers:
+            rows = self._db(tables_to_read=('runs',))['runs']
+            self.run_numbers = {r['run_id']: n for n, r in enumerate(sorted(rows, key=lambda r: (r.get('created_at') or '', r['run_id'])), 1)}
+        number = self.run_numbers[row['run_id']]
+        kind = '准备记录' if row.get('revision') == 'preparation' else '运行'
+        at = row.get('created_at')
+        display_label = f'{kind} {number}' + (' · ' + at.replace('T', ' ') if at else ' · 时间未记录')
+        return dict(id=self._id('run', row['run_id']), label=row['run_id'], display_label=display_label, source_run_id=row['run_id'],
                     execution_task_id=row.get('task_id'), revision=row.get('revision'),
                     kind='preparation' if row.get('revision') == 'preparation' else 'execution',
                     recorded_state=row.get('state'), stop_reason=row.get('stop_reason'))
@@ -939,6 +950,26 @@ class ObserverAdapter:
                 raise ObserverError(404, 'not_found', '未知轮次')
             return self.envelope(self._attempt_cache[ident])
 
+    def inspection(self, ident, number, call=None):
+        from .inspection import inspection
+        with self.lock:
+            return inspection(self, ident, number, call)
+
+    def activity(self, ident, cursor=None, limit=100):
+        from .activity import activity
+        with self.lock:
+            return activity(self, ident, cursor, limit)
+
+    def workbench(self, ident):
+        from .workbench import workbench
+        with self.lock:
+            return workbench(self, ident)
+
+    def work_items(self, ident, cursor=None, limit=100, scope='all'):
+        from .workbench import work_items
+        with self.lock:
+            return work_items(self, ident, cursor, limit, scope)
+
     def _log_reused_after(self, event, log_dir, role):
         """Use the globally ordered ledger event identity, never a reusable session ID."""
         path = self.root / '.opc/local/ledger.sqlite3'
@@ -946,9 +977,11 @@ class ObserverAdapter:
             con = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=0.5)
             try:
                 con.execute('PRAGMA query_only=ON')
-                for (body,) in con.execute("SELECT body FROM events WHERE kind='worker_call' AND seq>?", (event['seq'],)):
+                for owner_run, body in con.execute("SELECT run_id,body FROM events WHERE kind IN ('worker_call','call_dispatched') AND seq>?", (event['seq'],)):
                     value = parsed(body, {})
-                    if isinstance(value, dict) and value.get('role') == role and value.get('log_dir') and self._path(value['log_dir']) == self._path(log_dir):
+                    directory = value.get('log_dir') or (str(Path(value['receipt_path']).parent) if value.get('receipt_path') else None)
+                    if ((owner_run != event['run_id'] or value.get('call_id') != event['body'].get('call_id')) and value.get('role') == role
+                            and directory and self._path(directory) == self._path(log_dir)):
                         return True
             finally:
                 con.close()
@@ -962,7 +995,7 @@ class ObserverAdapter:
                          and e['body'].get('call_id') == body.get('call_id')), None)
         ident = self._id('call', row['run_id'] + ':' + str(dispatch['seq'] if dispatch else event['seq']))
         role = body.get('role') if isinstance(body.get('role'), str) else 'unknown'
-        provider_id = body.get('session_id') or (body.get('call_id') if isinstance(body.get('call_id'), str) else None)
+        provider_id = body.get('session_id') or (body.get('call_id') if not dispatch and isinstance(body.get('call_id'), str) else None)
         log_dir = body.get('log_dir') if isinstance(body.get('log_dir'), str) else None
         provider = None
         log_path = None
@@ -988,6 +1021,8 @@ class ObserverAdapter:
             # the first complete line has not yet been written by the replacement.
             later = [e for e in events if e.get('kind') == 'worker_call' and e.get('seq', 0) > event['seq'] and e['body'].get('log_dir') == log_dir and e['body'].get('role') == role]
             header_ids = self._header_ids(raw_events)
+            if not provider_id and dispatch and mapping(dispatch['body'].get('activity_log')).get('provider') in ('codex', 'dsh'):
+                provider_id = next(iter(header_ids), None)
             reused = bool(later) or self._log_reused_after(event, log_dir, role)
             if reused or not provider_id or not header_ids or provider_id not in header_ids:
                 availability = 'unreadable'
@@ -1186,6 +1221,8 @@ class ObserverAdapter:
 
     def artifact(self, ident):
         with self.lock:
+            if self.artifact_registry.get(ident, {}).get('task_material'):
+                return self.envelope(self.artifact_registry[ident]['dto'])
             if ident not in self.artifact_registry:
                 # Deep links need discovery without filesystem-wide scanning.
                 self._discover()
@@ -1250,6 +1287,9 @@ class ObserverAdapter:
 
     def content(self, ident, offset=0, limit=262144):
         with self.lock:
+            if self.artifact_registry.get(ident, {}).get('task_material'):
+                from .inspection import content
+                return content(self, ident, offset, limit)
             if offset < 0 or not 1 <= limit <= 1048576:
                 raise ObserverError(422, 'invalid_range', 'offset 或 limit 超出允许范围')
             raw = self.artifact_bytes(ident)

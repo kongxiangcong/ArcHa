@@ -1,7 +1,9 @@
-"""Local GET-only observer HTTP boundary and static application hosting."""
+"""Local observer HTTP boundary with explicitly enabled run control."""
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field
 
 from fastapi import FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError, ResponseValidationError
@@ -12,12 +14,21 @@ from starlette.exceptions import HTTPException
 from .adapter import ObserverAdapter, ObserverError
 
 from .models import (Envelope, Overview, ResearchDetail, RevisionDetail, Run, Attempt,
-                     Call, CallContent, Artifact, ArtifactContent)
+                     Call, CallContent, Artifact, ArtifactContent, Workbench, WorkItems, CallActivity, Inspection, ControlRequestView)
 
 
-def create_app(root: Path | str, demo=False):
+class ControlInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    request_id: str = Field(pattern=r'^[A-Za-z0-9_-]{1,128}$')
+    action: Literal['pause', 'resume', 'stop']
+
+
+def create_app(root: Path | str, demo=False, *, control=False):
     adapter = ObserverAdapter(root, demo=demo)
-    app = FastAPI(title='ArcHa Read-only Observer', version='1.0', docs_url=None, redoc_url=None)
+    adapter.control_enabled = bool(control and not demo)
+    from .control import ControlService, validate_write
+    controller = ControlService(adapter)
+    app = FastAPI(title='ArcHa Workbench', version='1.0', docs_url=None, redoc_url=None)
     app.state.adapter = adapter
     prefix = '/api/observer/v1'
 
@@ -42,6 +53,11 @@ def create_app(root: Path | str, demo=False):
 
     @app.middleware('http')
     async def safety_headers(request: Request, call_next):
+        if request.method == 'POST' and request.url.path.startswith('/api/control/v1/'):
+            try:
+                validate_write(request)
+            except ObserverError as exc:
+                return error(exc.status, exc.code, exc.message)
         response = await call_next(request)
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'no-referrer'
@@ -65,13 +81,29 @@ def create_app(root: Path | str, demo=False):
     def run(ident: str):
         return adapter.run(ident)
 
+    @app.get(prefix + '/runs/{ident}/workbench', response_model=Envelope[Workbench])
+    def workbench(ident: str):
+        return adapter.workbench(ident)
+
+    @app.get(prefix + '/runs/{ident}/work-items', response_model=Envelope[WorkItems])
+    def work_items(ident: str, cursor: str | None = None, limit: int = Query(100, ge=1, le=200), scope: str = 'all'):
+        return adapter.work_items(ident, cursor, limit, scope)
+
     @app.get(prefix + '/runs/{ident}/attempts/{number}', response_model=Envelope[Attempt])
     def attempt(ident: str, number: int = 1):
         return adapter.attempt(ident, number)
 
+    @app.get(prefix + '/runs/{ident}/attempts/{number}/inspection', response_model=Envelope[Inspection])
+    def inspection(ident: str, number: int, call: str | None = None):
+        return adapter.inspection(ident, number, call)
+
     @app.get(prefix + '/calls/{ident}', response_model=Envelope[Call])
     def call(ident: str):
         return adapter.call(ident)
+
+    @app.get(prefix + '/calls/{ident}/activity', response_model=Envelope[CallActivity])
+    def activity(ident: str, cursor: str | None = None, limit: int = Query(100, ge=1, le=200)):
+        return adapter.activity(ident, cursor, limit)
 
     @app.get(prefix + '/calls/{ident}/messages', response_model=Envelope[CallContent])
     def messages(ident: str, cursor: str | None = None, limit: int = Query(100, ge=1, le=200)):
@@ -91,6 +123,15 @@ def create_app(root: Path | str, demo=False):
             return Response(adapter.artifact_bytes(ident), media_type='application/octet-stream',
                             headers={'Content-Disposition': "attachment; filename=artifact.bin"})
         return adapter.content(ident, offset, limit)
+
+    @app.post('/api/control/v1/runs/{ident}/requests', response_model=Envelope[ControlRequestView], responses={202: {'model': Envelope[ControlRequestView]}})
+    def submit_control(ident: str, body: ControlInput, request: Request):
+        result, created = controller.submit(ident, body.request_id, body.action)
+        return JSONResponse(status_code=202 if created else 200, content=result)
+
+    @app.get('/api/control/v1/runs/{ident}/requests/{request_id}', response_model=Envelope[ControlRequestView])
+    def query_control(ident: str, request_id: str):
+        return controller.query(ident, request_id)
 
     # Unknown API routes must not fall through to SPA HTML.
     @app.get('/api/{unknown:path}')

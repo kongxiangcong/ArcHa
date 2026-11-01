@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS calls (
   call_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, attempt_no INTEGER, role TEXT NOT NULL,
   state TEXT NOT NULL, input TEXT NOT NULL, receipt_path TEXT NOT NULL,
   session_id TEXT, result TEXT, created_at TEXT NOT NULL, finished_at TEXT);
+CREATE TABLE IF NOT EXISTS control_requests (
+  request_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, action TEXT NOT NULL,
+  status TEXT NOT NULL, reason TEXT NOT NULL, accepted_seq INTEGER NOT NULL,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS control (
   run_id TEXT PRIMARY KEY, command TEXT NOT NULL, at TEXT NOT NULL);
 """
@@ -80,10 +84,10 @@ class ClaimConflict(OPCError):
 
 
 class Ledger:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, timeout: float = 30):
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(str(path), isolation_level=None, timeout=30)
+        self.db = sqlite3.connect(str(path), isolation_level=None, timeout=timeout)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA foreign_keys=ON")
@@ -195,6 +199,17 @@ class Ledger:
             db.execute("UPDATE runs SET state=?, stop_reason=?, closed_at=? WHERE run_id=?",
                        (state, stop_reason, now() if state == "closed" else None, run_id))
             self._event(db, run_id, "run_" + state, None, {"stop_reason": stop_reason})
+            command = db.execute("SELECT command FROM control WHERE run_id=?", (run_id,)).fetchone()
+            if state == "paused" and command and command["command"] == "pause":
+                unknown = db.execute("SELECT 1 FROM calls WHERE run_id=? AND (state='unknown' OR result IS NULL) LIMIT 1", (run_id,)).fetchone()
+                self._finish_control(db, run_id, "pause", "unknown" if unknown else "applied",
+                                     "运行已暂停，但仍有执行结果待确认" if unknown else "已暂停；当前调用已收尾")
+
+            if state in ("closed", "blocked") and command and command["command"] == "stop":
+                unknown = db.execute("SELECT 1 FROM calls WHERE run_id=? AND (state='unknown' OR result IS NULL) LIMIT 1", (run_id,)).fetchone()
+                self._finish_control(db, run_id, "stop", "unknown" if unknown else "applied" if state == "closed" else "failed",
+                                     "停止后仍有执行结果待确认，已有工作与结果保留" if unknown else
+                                     "运行已停止，已有结果保留；停止不代表任务已完成" if state == "closed" else "停止未完成，已有工作与结果保留")
 
     def update_toolchain(self, run_id: str, digest: str) -> None:
         previous = self.run(run_id)["toolchain_digest"]
@@ -280,7 +295,7 @@ class Ledger:
 
     # ------------------------------------------------------------------- calls
     def begin_call(self, run_id: str, attempt: int | None, role: str,
-                   inputs: dict[str, Any], receipt_path: str) -> str:
+                   inputs: dict[str, Any], receipt_path: str, activity_log: dict | None = None) -> str:
         call_id = "call-" + uuid.uuid4().hex
         with self.tx() as db:
             db.execute("INSERT INTO calls (call_id, run_id, attempt_no, role, state, input, "
@@ -288,7 +303,7 @@ class Ledger:
                        (call_id, run_id, attempt, role, "dispatched",
                         json.dumps(inputs, default=str), receipt_path, now()))
             self._event(db, run_id, "call_dispatched", attempt,
-                        dict(call_id=call_id, role=role, inputs=inputs, receipt_path=receipt_path))
+                        dict(call_id=call_id, role=role, inputs=inputs, receipt_path=receipt_path, activity_log=activity_log))
         return call_id
 
     def calls(self, run_id: str) -> list[dict[str, Any]]:
@@ -521,6 +536,93 @@ class Ledger:
             db.execute("INSERT INTO control VALUES (?,?,?) ON CONFLICT(run_id) DO UPDATE SET "
                        "command=excluded.command, at=excluded.at", (run_id, command, now()))
             self._event(db, run_id, "control_" + command, None, {})
+            self._supersede_control(db, run_id, command)
+
+    def _supersede_control(self, db, run_id, command):
+        action = {"run": "resume", "pause": "pause", "stop": "stop"}[command]
+        db.execute("UPDATE control_requests SET status='superseded', reason=?, updated_at=? "
+                   "WHERE run_id=? AND action<>? AND status IN ('accepted','processing')",
+                   ("请求已被后续运行指令替代", now(), run_id, action))
+
+    def _finish_control(self, db, run_id, action, status, reason):
+        pending = db.execute("SELECT request_id FROM control_requests WHERE run_id=? AND action=? "
+                             "AND status IN ('accepted','processing')", (run_id, action)).fetchall()
+        for request in pending:
+            db.execute("UPDATE control_requests SET status=?, reason=?, updated_at=? WHERE request_id=?",
+                       (status, reason, now(), request['request_id']))
+            self._event(db, run_id, "control_request_result", None,
+                        dict(request_id=request['request_id'], action=action, status=status, reason=reason))
+
+    def accept_control_request(self, run_id, request_id, action, *, already_running=False):
+        """Idempotency and the effective instruction are committed together."""
+        with self.tx() as db:
+            previous = db.execute("SELECT * FROM control_requests WHERE request_id=?", (request_id,)).fetchone()
+            if previous:
+                if previous['run_id'] != run_id or previous['action'] != action:
+                    raise ValueError("request_conflict")
+                return dict(previous), False
+            run = db.execute("SELECT state FROM runs WHERE run_id=?", (run_id,)).fetchone()
+            if run is None:
+                raise ValueError("run_not_found")
+            if run['state'] == 'closed' and action != 'stop':
+                raise ValueError("state_conflict")
+            if action == 'resume':
+                pending = db.execute("SELECT status FROM control_requests WHERE run_id=? ORDER BY accepted_seq DESC LIMIT 1", (run_id,)).fetchone()
+                unknown = db.execute("SELECT 1 FROM calls WHERE run_id=? AND (state='unknown' OR result IS NULL) LIMIT 1", (run_id,)).fetchone()
+                if pending and pending['status'] in ('accepted', 'processing', 'unknown'):
+                    raise ValueError('execution_unconfirmed')
+                if run['state'] not in ('paused', 'blocked') and not already_running:
+                    raise ValueError('state_conflict')
+                if unknown and not already_running:
+                    raise ValueError('execution_unconfirmed')
+            command = {"pause": "pause", "resume": "run", "stop": "stop"}[action]
+            self._event(db, run_id, "control_" + command, None, dict(request_id=request_id))
+            seq = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+            stamp = now()
+            db.execute("INSERT INTO control_requests VALUES (?,?,?,?,?,?,?,?)",
+                       (request_id, run_id, action, 'accepted', '请求已收到，等待运行端处理', seq, stamp, stamp))
+            db.execute("INSERT INTO control VALUES (?,?,?) ON CONFLICT(run_id) DO UPDATE SET "
+                       "command=excluded.command, at=excluded.at", (run_id, command, stamp))
+            self._supersede_control(db, run_id, command)
+            if action == 'resume' and already_running:
+                self._finish_control(db, run_id, action, 'applied', '原运行已在执行，未重复启动')
+            if action == 'stop' and run['state'] == 'closed':
+                unknown = db.execute("SELECT 1 FROM calls WHERE run_id=? AND (state='unknown' OR result IS NULL) LIMIT 1", (run_id,)).fetchone()
+                self._finish_control(db, run_id, action, 'unknown' if unknown else 'applied',
+                                     '运行已结束，但仍有执行结果待确认' if unknown else '运行已经结束，未启动任何工作')
+            if action == 'pause' and run['state'] == 'paused':
+                unknown = db.execute("SELECT 1 FROM calls WHERE run_id=? AND (state='unknown' OR result IS NULL) LIMIT 1", (run_id,)).fetchone()
+                self._finish_control(db, run_id, action, 'unknown' if unknown else 'applied',
+                                     '运行已暂停，但仍有执行结果待确认' if unknown else '运行已经暂停')
+            return dict(db.execute("SELECT * FROM control_requests WHERE request_id=?", (request_id,)).fetchone()), True
+
+    def finish_control_request(self, request_id, status, reason):
+        with self.tx() as db:
+            record = db.execute("SELECT * FROM control_requests WHERE request_id=?", (request_id,)).fetchone()
+            if record and record['status'] in ('accepted', 'processing'):
+                db.execute("UPDATE control_requests SET status=?, reason=?, updated_at=? WHERE request_id=?",
+                           (status, reason, now(), request_id))
+                self._event(db, record['run_id'], "control_request_result", None,
+                            dict(request_id=request_id, action=record['action'], status=status, reason=reason))
+
+    def mark_control_processing(self, run_id, action):
+        with self.tx() as db:
+            db.execute("UPDATE control_requests SET status='processing', reason=?, updated_at=? "
+                       "WHERE run_id=? AND action=? AND status='accepted'",
+                       ('正在等待已派发调用收尾', now(), run_id, action))
+
+    def claim_control_execution(self, run_id, request_id):
+        """Claim the received execution intent without clearing a later instruction."""
+        with self.tx() as db:
+            record = db.execute("SELECT * FROM control_requests WHERE request_id=?", (request_id,)).fetchone()
+            latest = db.execute("SELECT seq FROM events WHERE run_id=? AND kind IN ('control_run','control_pause','control_stop') ORDER BY seq DESC LIMIT 1", (run_id,)).fetchone()
+            if (not record or record['run_id'] != run_id or record['action'] not in ('resume', 'stop')
+                    or record['status'] != 'accepted' or not latest or latest['seq'] != record['accepted_seq']):
+                return False
+            db.execute("UPDATE control_requests SET status='processing',reason=?,updated_at=? WHERE request_id=?",
+                       ('正在处理停止请求，尚未确认停止生效' if record['action'] == 'stop' else '正在恢复原运行，尚未确认恢复生效', now(), request_id))
+            self._event(db, run_id, 'control_execution_started', None, dict(request_id=request_id, owner_pid=os.getpid()))
+            return True
 
     def control(self, run_id: str) -> str:
         row = self.db.execute("SELECT command FROM control WHERE run_id=?", (run_id,)).fetchone()

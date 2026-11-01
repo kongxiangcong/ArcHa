@@ -1,5 +1,6 @@
 export interface Ref {
   id: string;
+  display_label?: string;
   label: string;
   kind?: string;
   revision?: string;
@@ -255,4 +256,120 @@ export interface MessagePage {
   items: MessageItem[];
   reset: boolean;
   reset_reason: string | null;
+}
+
+export interface WorkItem {
+  id: string;
+  attempt_no: number;
+  work_id: string;
+  title: string;
+  goal: string | null;
+  stage: string;
+  reason: string | null;
+  dependencies: {
+    work_id: string;
+    attempt_no: number | null;
+    title: string | null;
+  }[];
+  blocked_by: string[];
+  calls: string[];
+  summary: string | null;
+  outcome: string | null;
+  needs_attention: boolean;
+  availability: string;
+}
+export interface WorkerSummary {
+  id: string;
+  attempt_no: number | null;
+  role: string;
+  state: string;
+  started_at: string | null;
+  ended_at: string | null;
+  error: string | null;
+  activity_available: boolean;
+  activity_note: string;
+}
+export interface Workbench {
+  id: string;
+  display_label: string;
+  source_run_id: string;
+  execution: string;
+  goal: string | null;
+  stop_reason: string | null;
+  result: {
+    complete: boolean | null;
+    reason: string | null;
+    gaps: string | null;
+  };
+  control: Record<
+    "pause" | "resume" | "stop",
+    { enabled: boolean; reason: string }
+  >;
+  control_request: ControlRequestView | null;
+  workers: WorkerSummary[];
+  workers_truncated: boolean;
+  work_count: number;
+  availability: string;
+  observation_note: string;
+}
+export interface WorkItemsPage {
+  items: WorkItem[];
+  total: number;
+  scope: string;
+}
+
+export interface ToolAction {
+  id: string;
+  category: string;
+  name: string | null;
+  object: string | null;
+  state: "pending" | "completed" | "failed" | "unconfirmed";
+  started_at: string | null;
+  ended_at: string | null;
+  summary: string | null;
+  exit_code: number | null;
+}
+export interface CallActivity {
+  call_id: string;
+  actions: ToolAction[];
+  availability: string;
+  note: string | null;
+  reset: boolean;
+  truncated: boolean;
+  has_more: boolean;
+}
+
+export type Material = {
+  id: string;
+  name: string;
+  purpose: string;
+  availability: string;
+  note: string | null;
+};
+export type InspectionData = {
+  attempt_no: number;
+  calls: WorkerSummary[];
+  call_id: string | null;
+  error: string | null;
+  input_note: string;
+  input: {
+    title: string | null;
+    goal: string | null;
+    purpose: string | null;
+    hypothesis: string | null;
+    deliverables: string[];
+  } | null;
+  output: { summary: string | null; completed: boolean | null } | null;
+  materials: Material[];
+  material_note?: string;
+};
+
+export interface ControlRequestView {
+  request_id: string;
+  run_id: string;
+  action: "pause" | "resume" | "stop";
+  status: string;
+  sequence: number;
+  reason: string;
+  run: { state: string; execution_unknown: boolean };
 }

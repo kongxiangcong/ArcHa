@@ -12,7 +12,7 @@
 | Attempt | 专家选定的一项有边界工作；可以检验不同假设，也可以推进同一方向 |
 | Call | 一次 Worker CLI 派发；不同于逻辑 session，也不同于会话内工具调用 |
 
-目标或验收含义改变：回 Task 更新 Brief，Onboard 准备新 revision，再新建 Run。意图不变的接入问题交 Onboard；范围内研究和计划调整留在 Loop；方向或任务依赖需要重整时回 Map。同一 revision 可有多个独立 Run；兼容条件下暂停继续沿用原 Run。预算按既有授权累计，不因重启重置。
+目标或验收含义改变：回 Task 更新 Brief，Onboard 准备新 revision，再新建 Run。意图不变的接入问题交 Onboard；范围内研究和计划调整留在 Loop；方向或任务依赖需要重整时回 Map。同一 revision 可有多个独立 Run；兼容条件下暂停继续沿用原 Run。预算按既有授权累计，不因重启重置；后续显式 CLI 切换的执行额度例外见 [S2 已确认决定](../02-attempts-and-worker-handoffs/README.md#grill-with-docs已确认决定)，历史用量仍保留。
 
 Expert 在 **Run 层**解释证据、提出假设和选择工作；选定后才创建 Attempt 并调用 Designer。Expert 按需 Call，续接同一 Run 的逻辑会话，CLI 不空闲常驻；后端不支持续接时从持久材料恢复。Designer 默认按工作使用独立上下文，局部实现、测量和调试不再机械拆 Attempt。准备与终验调用归其实际范围，不强塞进普通 Attempt。
 

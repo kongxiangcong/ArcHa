@@ -1,39 +1,32 @@
-# S3 证据、结论、共享空间与上下文反馈
+# S3 证据、主张与共享知识
 
-状态：S0 已确定共同边界，本阶段接口与实现细节待设计；本阶段可以在讨论后形成多份 spec 与多张 tickets。
+状态：需求讨论及测试边界已确认（2026-10-31），[规格](../../../.scratch/s3-evidence-and-shared-knowledge/spec.md)及 [7 个实现事项](../../../.scratch/s3-evidence-and-shared-knowledge/issues/)已发布，状态为 `ready-for-agent`。当前可从事项 01 开始，后续按各事项的阻塞依赖推进；未实施或执行本阶段验收。
 
-入口：[总规划](../ArcHa_Phased_Development_Plan.md)。整体文档依据：[§4](../ArcHa_Overall_Architecture_and_Task_Policies.md#s04)、[§9](../ArcHa_Overall_Architecture_and_Task_Policies.md#s09)、[§10](../ArcHa_Overall_Architecture_and_Task_Policies.md#s10)、[§11](../ArcHa_Overall_Architecture_and_Task_Policies.md#s11)、[§14](../ArcHa_Overall_Architecture_and_Task_Policies.md#s14)。
+本页保留阶段导航和设计取舍；实现与验收要求以规格为唯一权威来源，术语以根 [GLOSSARY.md](../../../GLOSSARY.md) 为准。
 
-**依赖：** S2。目标是让后续工作能利用真实经验，并能修正旧判断。
+## 阅读入口
 
-## S0 已确认的记录与披露原则
+- 实现前阅读：[S3 规格](../../../.scratch/s3-evidence-and-shared-knowledge/spec.md#implementation-decisions)。
+- 验收与测试边界：[Testing Decisions](../../../.scratch/s3-evidence-and-shared-knowledge/spec.md#testing-decisions)。
+- 范围与减法：[Out of Scope](../../../.scratch/s3-evidence-and-shared-knowledge/spec.md#out-of-scope)。
+- 阶段安排：[总规划](../ArcHa_Phased_Development_Plan.md)；后续方向：[S4](../04-task-policies-and-delivery/README.md)。
 
-提示词/skills 只补充项目特有的材料入口、索引覆盖与省略内容、原件定位/读取方式，避免重复维护。优先依靠清楚的材料组织与 Agent 自主选择，暂不新增通用阅读纪律、固定阅读顺序或数量。若实际测试暴露全量读取、漏查证据或无法定位原件，再诊断组织、访问能力或提示的具体缺口并修正；不把所有读取问题都归因于提示不足。
+## 接续依据
 
-记录保持轻量，结果、实验数据和 trace 均按“简短入口 → 单项详情 → 原件”组织，Agent 在角色授权内自主选择读取深度和顺序。入口保留结果的必要条件、关键失败/反例、待分析或缺失状态和详情引用；不全量注入历史，也不只展示赢家。代码采用、证据保存和结论状态可分别表达，不要求每轮填写多份报告或完整状态表。
+S3 依赖 S2，目标是让后续工作利用真实经验并修正旧判断。共同语义与披露原则沿用 [S0 定稿](../00-foundations-and-test-methods/README.md)；契约、结果反馈、恢复与工具边界以 [S1 交付记录](../../../.scratch/s1-task-contracts-and-onboarding/spec.md#交付验证)及 [S2 交付记录](../../../.scratch/s2-attempts-and-worker-handoffs/spec.md#交付验证)为准。本轮仅核查代码及测试结构，没有重新运行这些验证。
 
-Markdown 负责导航和解释；实验数据、调用记录与 trace 保留原生格式。小记录可合并，体量增长后才拆文件/索引或提供范围读取；视觉折叠不能代替实际按需加载。框架自动关联身份、版本与原件，既有 Worker 输出必要分析，不新增总结角色、账本或强制每条结论一个文件。复用 `opc/core/results.py` 的成果登记和原件链接，以及已有 context/evidence 连接；S3 需要补齐可发现、可选择的读取方式，不能把固定历史窗口或无提示截断当作渐进式披露。S2/S5 复用相同 trace 来源与导航。
+整体架构背景见 [§4](../ArcHa_Overall_Architecture_and_Task_Policies.md#s04)、[§9](../ArcHa_Overall_Architecture_and_Task_Policies.md#s09)、[§10](../ArcHa_Overall_Architecture_and_Task_Policies.md#s10)、[§11](../ArcHa_Overall_Architecture_and_Task_Policies.md#s11)及 [§14](../ArcHa_Overall_Architecture_and_Task_Policies.md#s14)。整体文档中的早期方案仅保留背景，S3 的收敛要求以规格为准。
 
-## 需要讨论的方向
+## 讨论依据与取舍
 
-- 规定原始观测、实验条件、执行记录、分析、Claim、经验、决策和未知项各自的权威来源与关联方式；Experiment 可跨 Attempt/Run，测量仍绑定实际执行条件。
-- 规定发布与写入责任、结论修订、支持/反证、冲突、失效影响和审核范围。保存成功、证据有效、结论获支持、独立审核通过必须分别表达。
-- 设计最小共享空间管理：登记、查询、更新当前解释、标记替代关系和追溯历史；复用已有成果入口与单写入机制。原件保留与可再生成视图区分，保留/清理规则先明确再执行。
-- 定义渐进式上下文：先给当前任务与相关摘要、条件、反证和引用，再按需读原件；记录实际交接内容及未展开/缺失项。Expert 在下一次已有调用中解释新证据并继续规划。
-- 同步提供“结论—证据—审核—下一步”的查询与最小展示，方便检查反馈是否真的影响下一轮。
+**保存结果不等于修正认识。** 讨论以虚构 CSV 测量案例区分长字段提速、短字段退化及资源争用干扰；该案例没有实测。只追加最新摘要成本较低，但无法保证旧主张被修正、两次观测可比或反证进入后续选择，因此将实际交接与下一步选择纳入验收，案例细节统一见规格。
 
-## 拟议结束条件
+**主张身份不能随范围漂移。** 把“全部输入提速”直接改成“长字段提速”，会悄悄改变历史引用的含义；反馈分析与持续主张也不能压成每次 Attempt 一条记录。本轮据此澄清术语和身份边界，具体规则已纳入规格。
 
-一个连续案例产生证据、形成暂定解释、被新反证修订，下一轮使用修订后的认识；旧原件与旧审核仍可取回，代码回退不抹除知识，缺失来源和待分析状态可见。
+**复用底座，补齐消费路径。** 已有成果登记、原件引用、SQLite 账本及单写入机制，无需再建文件系统或知识服务；但带预算的顺序展开并不等于按问题查询。纯 Markdown/JSON 承载所有结构化状态会重复实现已有查询与写入协调，因此沿既有持久记录扩展。
 
-**本阶段不做：** 知识图谱、向量服务、Memory Agent、强制 E0–E3 分级、每条结论一个文件或自动提升为跨任务通用技能。
+**采用由判断者声明，冲突以整份决策处理。** 材料传入或读取不证明它成为决策依据；部分提交又需要额外表达反馈、修订与工作选择之间的生效关系。首版接受同份回复中无冲突部分也需等待的代价，换取一致的登记与恢复边界。
 
-## 优先收敛的问题
+**外部材料管理已撤回。** 早前提出的外部资料归档、版本或读取时间登记方案均不构成需求；这项减法不改变 ArcHa 自产必要证据的保存约定。具体排除范围统一见规格。
 
-1. 原始数据、解释、审核与当前知识各由谁维护，如何保留反证并修订旧结论？
-2. 共享空间怎样登记、查询和更新，哪些内容只保存引用，哪些必须能取回原件？
-3. 怎样按当前问题选择交接材料，既减少上下文又保留必要条件、反证和待分析项？
-
-本阶段使用必要的框架回归、夹具或轻量案例获得反馈；DeepStack 正式建模探索留到 S6。方法变化回写总规划中的测试方法约定，不在此提前运行研究。
-
-下一方向：[S4](../04-task-policies-and-delivery/README.md)。
+前轮参考了 [W3C PROV-DM](https://www.w3.org/TR/2013/REC-prov-dm-20130430/) 的来源关联思路及 [MLflow Architecture Overview](https://mlflow.org/docs/latest/self-hosting/architecture/overview/) 的元数据与原件存储职责分离。这些仅是讨论参照，不构成引入 RDF、完整 PROV 或 MLflow 的理由；本轮规格发布未重新核查外部资料。

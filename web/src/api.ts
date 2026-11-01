@@ -19,6 +19,9 @@ export async function get<T>(
     signal,
     headers: { Accept: "application/json" },
   });
+  return decode<T>(response);
+}
+async function decode<T>(response: Response): Promise<Envelope<T>> {
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new ApiError(
@@ -32,7 +35,31 @@ export async function get<T>(
     throw new Error("观察接口主版本不兼容");
   return body;
 }
-export function useResource<T>(path: string | null, interval = 0, refresh = 0) {
+export async function controlRequest<T>(
+  run: string,
+  requestId: string,
+  action?: string,
+  signal?: AbortSignal,
+): Promise<Envelope<T>> {
+  const path = `/api/control/v1/runs/${enc(run)}/requests`;
+  const response = await fetch(action ? path : path + "/" + enc(requestId), {
+    method: action ? "POST" : "GET",
+    headers: {
+      Accept: "application/json",
+      ...(action ? { "Content-Type": "application/json" } : {}),
+    },
+    body: action
+      ? JSON.stringify({ request_id: requestId, action })
+      : undefined,
+    signal,
+  });
+  return decode<T>(response);
+}
+export function useResource<T>(
+  path: string | null,
+  interval = 0,
+  refresh: number | string = 0,
+) {
   const [state, setState] = useState<{
     path: string | null;
     value?: Envelope<T>;

@@ -1054,3 +1054,294 @@ def test_observer_distinguishes_switched_execution_allowance_from_history(projec
     assert current['task_usage']['recorded_tokens'] == 12
     assert current['execution_usage']['recorded_tokens'] == 2
     assert current['budget_origin']['source_run'] == 'old-run'
+
+
+def test_workbench_projects_real_stages_dependencies_and_filtered_pages(project):
+    from opc.observer.adapter import ObserverAdapter
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        for n, stage, plan in [(3, 'planned', {'title': '等待前序', 'work_id': 'consumer', 'dependencies': [{'work_id': 'producer', 'artifact': 'result'}]}),
+                               (4, 'designed', {'title': '等待评价', 'work_id': 'producer'}),
+                               (5, 'decided', {'title': '等待反馈'}),
+                               (6, 'planned', {'title': '失败重试'})]:
+            db.execute('INSERT INTO attempts(run_id,attempt_no,state,champion_before,plan,outcome,started_at) VALUES(?,?,?,?,?,?,?)',
+                       ('new-run', n, stage, 'a'*40, json.dumps(plan), 'work' if n == 5 else None, AT))
+        event(db, 'new-run', 'node_waiting', 3, reason='inputs', blocked_by=['producer:result'])
+        event(db, 'new-run', 'node_waiting', 4, reason='inputs', blocked_by=['removed'])
+        event(db, 'new-run', 'node_waiting', 4, reason='ready', blocked_by=[])
+        event(db, 'new-run', 'execution', 6, completed=False, error='worker unavailable')
+        event(db, 'new-run', 'worker_call', 6, call_id='failed-call', role='designer', ok=False, error='worker unavailable')
+        event(db, 'new-run', 'call_dispatched', 4, call_id='parallel-one', role='designer', receipt_path='unused/receipt.json')
+        event(db, 'new-run', 'call_dispatched', 4, call_id='parallel-two', role='designer', receipt_path='unused/receipt.json')
+        event(db, 'new-run', 'call_dispatched', call_id='run-expert', role='expert', receipt_path='unused/receipt.json')
+    adapter = ObserverAdapter(project)
+    rid = next(r['id'] for r in adapter.overview()['data']['unlinked_runs'] if r['source_run_id'] == 'new-run')
+    before = snapshot(project)
+    scene = adapter.workbench(rid)['data']
+    assert scene['execution'] == 'active'
+    assert scene['control']['pause']['enabled'] is False
+    assert len(scene['workers']) == 4
+    assert sum(c['attempt_no'] is None for c in scene['workers']) == 1
+    assert all('artifacts' not in c and 'payload' not in c for c in scene['workers'])
+    first = adapter.work_items(rid, limit=2)
+    assert [(x['title'], x['stage']) for x in first['data']['items']] == [('等待前序', 'waiting'), ('等待评价', 'executing')]
+    assert first['data']['items'][0]['dependencies'][0]['attempt_no'] == 4
+    assert first['data']['items'][1]['blocked_by'] == []
+    second = adapter.work_items(rid, cursor=first['next_cursor'], limit=2)
+    assert [(x['title'], x['stage']) for x in second['data']['items']] == [('等待反馈', 'pending_feedback'), ('失败重试', 'failed')]
+    attention = adapter.work_items(rid, scope='attention', limit=1)
+    assert attention['data']['items'][0]['title'] == '等待前序'
+    assert attention['next_cursor']
+    attention2 = adapter.work_items(rid, scope='attention', cursor=attention['next_cursor'], limit=1)
+    assert attention2['data']['items'][0]['title'] == '失败重试'
+    assert snapshot(project) == before
+
+
+def test_workbench_discards_historical_dependency_wait_after_saved_result(project):
+    from opc.observer.adapter import ObserverAdapter
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        for n, plan in [(3, {'title': '前序', 'work_id': 'upstream'}), (4, {'title': '后序', 'work_id': 'downstream', 'dependencies': [{'work_id': 'upstream', 'artifact': 'candidate'}]})]:
+            db.execute('INSERT INTO attempts(run_id,attempt_no,state,champion_before,plan,started_at) VALUES(?,?,?,?,?,?)', ('new-run', n, 'planned', 'a'*40, json.dumps(plan), AT))
+        event(db, 'new-run', 'node_waiting', 4, reason='inputs', blocked_by=['upstream:candidate'])
+        event(db, 'new-run', 'candidate_saved', 3, commit='b'*40)
+    adapter = ObserverAdapter(project)
+    rid = next(r['id'] for r in adapter.overview()['data']['unlinked_runs'] if r['source_run_id'] == 'new-run')
+    item = adapter.work_items(rid)['data']['items'][-1]
+    assert item['blocked_by'] == []
+    assert item['reason'] == '等待派发'
+    assert item['needs_attention'] is False
+
+
+def test_activity_reads_inflight_call_and_pairs_parallel_tools_without_fabricated_time(project):
+    from opc.observer.adapter import ObserverAdapter
+    log = project / '.opc/local/artifacts/test/dma/new-run/calls/live'
+    log.mkdir(parents=True)
+    path = log / 'designer-events.jsonl'
+    rows = [dict(type='thread.started', thread_id='native-session'),
+            dict(type='item.started', item=dict(id='read', type='command_execution', command='cat task.py')),
+            dict(type='item.started', item=dict(id='test', type='command_execution', command='pytest task_test.py')),
+            dict(type='item.started', item=dict(id='internal', type='command_execution', command='cat ' + str(project / '.opc/research/tasks/r01/evidence/boundary.md'))),
+            dict(type='item.started', item=dict(id='internal-relative', type='command_execution', command='cat .opc/research/tasks/r01/../r01/evidence/boundary.md')),
+            dict(type='future.secret', secret='NEVER_RENDER_THIS')]
+    path.write_text(''.join(json.dumps(r) + '\n' for r in rows))
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        event(db, 'new-run', 'call_dispatched', 3, call_id='archa-call-live', role='designer',
+              receipt_path=str(log / 'receipt.json'), activity_log=dict(provider='codex', path=str(path)))
+    adapter = ObserverAdapter(project)
+    rid = next(r['id'] for r in adapter.overview()['data']['unlinked_runs'] if r['source_run_id'] == 'new-run')
+    call = adapter.workbench(rid)['data']['workers'][-1]
+    page = adapter.activity(call['id'])
+    assert page['data']['availability'] == 'available'
+    assert [(a['object'], a['state']) for a in page['data']['actions']] == [('cat task.py', 'pending'), ('pytest task_test.py', 'pending')]
+    assert all(a['started_at'] is None for a in page['data']['actions'])
+    assert 'NEVER_RENDER_THIS' not in json.dumps(page)
+    with path.open('a') as out:
+        out.write(json.dumps(dict(type='item.completed', item=dict(id='test', type='command_execution', command='pytest task_test.py', exit_code=1, aggregated_output='assertion failed'))) + '\n')
+        out.write('{"type":"item.completed"')
+    update = adapter.activity(call['id'], page['next_cursor'])
+    assert [(a['object'], a['state']) for a in update['data']['actions']] == [('cat task.py', 'pending'), ('pytest task_test.py', 'failed')]
+    assert update['data']['actions'][-1]['summary'] == '动作失败'
+    assert call['state'] == 'pending'  # tool failure is not the Call outcome
+    with path.open('a') as out:
+        out.write(',"item":{"id":"read","type":"command_execution","command":"cat task.py","exit_code":0}}\n')
+    final = adapter.activity(call['id'], update['next_cursor'])
+    assert all(a['state'] == 'completed' or a['state'] == 'failed' for a in final['data']['actions'])
+
+
+def test_activity_is_bounded_resets_replaced_logs_and_rejects_wrong_ownership(project):
+    from opc.observer.adapter import ObserverAdapter
+    log = project / '.opc/local/artifacts/test/dma/new-run/calls/bounded'
+    log.mkdir(parents=True)
+    path = log / 'designer-events.jsonl'
+    with path.open('w') as out:
+        out.write(json.dumps(dict(type='thread.started', thread_id='native')) + '\n')
+        for n in range(3000):
+            out.write(json.dumps(dict(type='item.completed', item=dict(id=str(n), type='command_execution', command='test ' + str(n), exit_code=0, aggregated_output='ok' * 200))) + '\n')
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        event(db, 'new-run', 'call_dispatched', 3, call_id='bounded', role='designer', receipt_path=str(log / 'receipt.json'), activity_log=dict(provider='codex', path=str(path)))
+    adapter = ObserverAdapter(project)
+    rid = next(r['id'] for r in adapter.overview()['data']['unlinked_runs'] if r['source_run_id'] == 'new-run')
+    ident = adapter.workbench(rid)['data']['workers'][-1]['id']
+    first = adapter.activity(ident)
+    assert first['data']['truncated'] is True
+    assert first['data']['actions'][-1]['object'] == 'test 2999'
+    assert len(first['data']['actions']) < 200
+    old = path.with_suffix('.old')
+    path.rename(old)
+    path.write_text(json.dumps(dict(type='item.started', item=dict(id='new', type='command_execution', command='new action'))) + '\n')
+    reset = adapter.activity(ident, first['next_cursor'])
+    assert reset['data']['reset'] is True
+    assert [a['object'] for a in reset['data']['actions']] == ['new action']
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        event(db, 'new-run', 'call_dispatched', 4, call_id='replacement-owner', role='designer', receipt_path=str(log / 'receipt.json'), activity_log=dict(provider='codex', path=str(path)))
+    refused = adapter.activity(ident, reset['next_cursor'])['data']
+    assert refused['availability'] == 'unreadable' and refused['actions'] == []
+
+
+def test_activity_legacy_session_and_dsh_tools_are_scoped(project):
+    from opc.observer.adapter import ObserverAdapter
+    adapter = ObserverAdapter(project)
+    current = observed_run(adapter, 'old-run')
+    ident = current['calls'][0]['id']
+    page = adapter.activity(ident)['data']
+    assert page['actions'][0]['object'] == 'pytest'
+    assert page['actions'][0]['state'] == 'completed'
+    path = project / '.opc/local/artifacts/test/dma/old-run/attempts/a000002/expert-events.jsonl'
+    with path.open('a') as out:
+        for row in [dict(type='tool_call', callId='c1', tool='read', input={'file_path': 'params.json'}),
+                    dict(type='tool_result', callId='c1', status='completed', result='{}')]:
+            out.write(json.dumps(row) + '\n')
+    dsh = adapter.activity(current['calls'][1]['id'])['data']
+    assert dsh['actions'][0]['object'] == 'params.json'
+    assert dsh['actions'][0]['summary'] == '动作完成'
+    assert dsh['actions'][0]['state'] == 'completed'
+    path.write_text('{"type":"session","sessionId":"different-owner"}\n')
+    assert adapter.activity(current['calls'][1]['id'])['data']['availability'] == 'unreadable'
+
+
+def test_inspection_binds_saved_call_input_and_material_purpose(project):
+    from opc.observer.adapter import ObserverAdapter, ObserverError
+    log = project / '.opc/local/artifacts/test/dma/old-run/attempts/a000002'
+    outputs = log / 'outputs'
+    outputs.mkdir(exist_ok=True)
+    (outputs / 'answer.md').write_text('# 用户产出\n\n[内部材料](../decision.json)\n', encoding='utf-8')
+    (outputs / 'internal.json').write_text('{"audit":"not user content"}')
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        for call_id, purpose, ok in [('first-try', '修复第一次输入', False), ('retry', '修复第二次输入', True)]:
+            inputs = dict(plan=dict(title='修复解析', changes=purpose, deliverables=['answer.md']),
+                          context=dict(task=dict(goal='用户任务'), handoff=dict(purpose=purpose, evidence='internal-secret'), claims=['internal-claim']))
+            result = dict(ok=ok, output=dict(summary=purpose + '结果', evidence_files=['internal.json']), error='' if ok else 'parser failed')
+            db.execute('INSERT INTO calls(call_id,run_id,attempt_no,role,state,input,result,receipt_path,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
+                       (call_id, 'old-run', 2, 'designer', 'completed', json.dumps(inputs), json.dumps(result), str(log / call_id / 'receipt.json'), AT))
+            event(db, 'old-run', 'call_dispatched', 2, call_id=call_id, role='designer', inputs=inputs)
+            event(db, 'old-run', 'worker_call', 2, call_id=call_id, role='designer', ok=ok, error=result['error'])
+            if ok:
+                event(db, 'old-run', 'deliverables_saved', 2, paths=['outputs/answer.md', 'outputs/internal.json'])
+    adapter = ObserverAdapter(project)
+    rid = adapter._id('run', 'old-run')
+    page = adapter.inspection(rid, 2)['data']
+    assert page['input']['purpose'] == '修复第二次输入'
+    assert [m['name'] for m in page['materials']] == ['answer.md']
+    first = next(c for c in page['calls'] if c['error'] == 'parser failed')
+    earlier = adapter.inspection(rid, 2, first['id'])['data']
+    assert earlier['input']['purpose'] == '修复第一次输入'
+    assert earlier['output']['summary'] == '修复第一次输入结果'
+    assert earlier['materials'] == []
+    assert 'internal-secret' not in json.dumps(page) and 'internal-claim' not in json.dumps(page)
+    with pytest.raises(ObserverError, match='调用不属于'):
+        adapter.inspection(rid, 1, first['id'])
+    material = page['materials'][0]
+    content = adapter.content(material['id'], 0, 20)['data']
+    assert content['content'].startswith('# 用户产出') and not content['eof']
+    assert adapter.artifact(material['id'])['data'].get('link_targets', {}) == {}
+
+
+def test_inspection_code_uses_registered_version_and_old_outputs_do_not_read_replacements(project):
+    import subprocess
+    from opc.observer.adapter import ObserverAdapter, ObserverError
+    def git(*args):
+        return subprocess.check_output(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', *args], cwd=project, text=True).strip()
+    git('init', '-q')
+    (project / 'parser.py').write_text('old input\n')
+    git('add', 'parser.py'); git('commit', '-qm', 'base')
+    parent = git('rev-parse', 'HEAD')
+    (project / 'parser.py').write_text('saved result\n')
+    git('commit', '-qam', 'candidate')
+    candidate = git('rev-parse', 'HEAD')
+    (project / 'parser.py').write_text('current unrelated content\n')
+    adir = project / '.opc/local/artifacts/test/dma/old-run/attempts/a000002'
+    (adir / 'outputs').mkdir(exist_ok=True)
+    (adir / 'outputs/answer.txt').write_text('newer replacement')
+    put(adir.parent.parent / 'frozen/component.json', dict(editable=['*.py'], frozen=[], evaluator_files=[]))
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        event(db, 'old-run', 'call_dispatched', 2, call_id='old-material-call', role='designer', inputs=dict(plan=dict(changes='saved input', deliverables=['answer.txt'])))
+        event(db, 'old-run', 'worker_call', 2, call_id='old-material-call', role='designer', ok=True)
+        event(db, 'old-run', 'candidate_saved', 2, parent=parent, commit=candidate)
+        event(db, 'old-run', 'deliverables_saved', 2, paths=['outputs/answer.txt'])
+        event(db, 'old-run', 'call_dispatched', 2, call_id='later-material-call', role='designer', inputs=dict(plan=dict(changes='later input', deliverables=['answer.txt'])))
+        event(db, 'old-run', 'deliverables_saved', 2, paths=['outputs/answer.txt'])
+    adapter = ObserverAdapter(project)
+    rid = adapter._id('run', 'old-run')
+    page = adapter.inspection(rid, 2)['data']
+    old = next(c for c in page['calls'] if c['state'] == 'finished' and c['role'] == 'designer')
+    page = adapter.inspection(rid, 2, old['id'])['data']
+    materials = {m['name']:m for m in page['materials']}
+    assert materials['answer.txt']['availability'] == 'missing'
+    with pytest.raises(ObserverError, match='不可用'):
+        adapter.content(materials['answer.txt']['id'])
+    assert adapter.content(materials['parser.py']['id'])['data']['content'] == 'saved result\n'
+    (adir / 'outputs/answer.txt').unlink()
+    missing = adapter.inspection(rid, 2)['data']['materials'][0]
+    assert missing['availability'] == 'missing'
+
+
+def test_workbench_delivery_result_is_structured_and_does_not_expose_report(project):
+    from opc.observer.adapter import ObserverAdapter
+    adir = project / '.opc/local/artifacts/test/dma/old-run'
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        task_digest = db.execute("SELECT task_digest FROM runs WHERE run_id='old-run'").fetchone()[0]
+        report = dict(candidate=dict(commit='b'*40), acceptance_task_digest=task_digest, complete=False,
+                      next_step=dict(action='repair_candidate', gaps=[dict(text='internal-report-marker')]))
+        path = adir / 'promotion/result.json'
+        put(path, report)
+        event(db, 'old-run', 'promotion_report', selected_commit='b'*40, complete=False, report_path=str(path))
+    adapter = ObserverAdapter(project)
+    scene = adapter.workbench(adapter._id('run', 'old-run'))['data']
+    assert scene['result']['complete'] is False and scene['result']['reason'] == '交付内容仍需修正'
+    assert 'internal-report-marker' not in json.dumps(scene)
+    assert scene['stop_reason'] == '本次运行已结束'
+    # S4 may register delivery against a later acceptance revision on this same Run.
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        revised_digest = db.execute("SELECT task_digest FROM runs WHERE run_id='new-run'").fetchone()[0]
+    report.update(acceptance_revision='r0002', acceptance_task_digest=revised_digest, acceptance_source_digest=revised_digest, complete=True)
+    put(path, report)
+    assert adapter.workbench(adapter._id('run', 'old-run'))['data']['result']['complete'] is True
+
+
+def test_inspection_allows_declared_dependency_output_but_not_internal_dependency(project):
+    from opc.observer.adapter import ObserverAdapter
+    run_dir = project / '.opc/local/artifacts/test/dma/old-run'
+    (run_dir / 'attempts/a000001/outputs').mkdir(exist_ok=True)
+    (run_dir / 'attempts/a000001/outputs/input.txt').write_text('registered task input')
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        db.execute("UPDATE attempts SET plan=? WHERE run_id='old-run' AND attempt_no=1", (json.dumps(dict(work_id='upstream',deliverables=['input.txt'])),))
+        event(db, 'old-run', 'deliverables_saved', 1, paths=['outputs/input.txt'])
+        event(db, 'old-run', 'call_dispatched', 2, call_id='dependency-call', role='designer', inputs=dict(plan=dict(changes='use input'), context=dict(handoff=dict(inputs=[dict(work_id='upstream', artifact='outputs/input.txt'),dict(work_id='upstream',artifact='decision.json')]))))
+    adapter=ObserverAdapter(project)
+    page=adapter.inspection(adapter._id('run','old-run'),2)['data']
+    assert [(m['name'],m['purpose']) for m in page['materials']] == [('input.txt','传入任务材料')]
+    assert adapter.content(page['materials'][0]['id'])['data']['content'] == 'registered task input'
+
+
+def test_task_material_rejects_changed_and_binary_content(project):
+    from opc.observer.adapter import ObserverAdapter, ObserverError
+    path = project / '.opc/local/artifacts/test/dma/old-run/attempts/a000002/outputs/answer.txt'
+    path.parent.mkdir()
+    path.write_text('saved task content')
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        event(db, 'old-run', 'call_dispatched', 2, call_id='content-call', role='designer', inputs=dict(plan=dict(deliverables=['answer.txt'])))
+        event(db, 'old-run', 'deliverables_saved', 2, paths=['outputs/answer.txt'])
+    adapter = ObserverAdapter(project)
+    rid = adapter._id('run', 'old-run')
+    item = adapter.inspection(rid, 2)['data']['materials'][0]
+    path.write_text('replacement task content')
+    with pytest.raises(ObserverError, match='已变化'):
+        adapter.content(item['id'])
+    path.write_bytes(b'\x00\xff\xfe')
+    item = adapter.inspection(rid, 2)['data']['materials'][0]
+    with pytest.raises(ObserverError, match='不支持文本预览'):
+        adapter.content(item['id'])
+
+
+def test_workbench_run_display_is_stable_and_refreshes_for_newly_recorded_runs(project):
+    from opc.observer.adapter import ObserverAdapter
+    first = ObserverAdapter(project)
+    original = next(r for r in first.overview()['data']['unlinked_runs'] if r['source_run_id'] == 'new-run')
+    assert original['source_run_id'] not in original['display_label']
+    assert first.workbench(original['id'])['data']['display_label'] == original['display_label']
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        db.execute("INSERT INTO runs SELECT 'run-7eaf1f6341ac',task_id,revision,task_digest,component,base_commit,evaluator_digest,toolchain_digest,champion_ref,direction,state,stop_reason,'2026-11-02T00:00:00Z',closed_at FROM runs WHERE run_id='new-run'")
+    second = ObserverAdapter(project)
+    added = next(r for r in second.overview()['data']['unlinked_runs'] if r['source_run_id'] == 'run-7eaf1f6341ac')
+    assert added['display_label'] != original['display_label']
+    assert first.workbench(added['id'])['data']['display_label'] == added['display_label']
+    assert first.workbench(original['id'])['data']['display_label'] == original['display_label']

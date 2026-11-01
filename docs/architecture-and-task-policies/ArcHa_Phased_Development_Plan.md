@@ -124,9 +124,9 @@
 
 本轮修订承接用户两项纠偏：阶段是大方向；最终目标为改造完成后的 DeepStack 底层建模探索。早期曾缩减真实任务范围，现已由 S0 四题安排替代；执行顺序仍替代 [2026-10-29 前序方向](../plans/archa-next-stage-goals.md) 中“先跑 DeepStack，再改框架”的执行顺序。旧文档保留历史状态，当前顺序以本规划为准。
 
-**当前状态：** 方向复核与目录生成完成；S0 已收束；已进行环境自检，未运行正式考试；S1 七票已实现并验证，S2–S5 尚待实现。
+**当前状态：** 方向复核与目录生成完成；S0 已收束；已进行环境自检，未运行正式考试；S1 七票已实现并验证；S2 需求经 grill-with-docs 澄清收敛，代码与 CLI 能力只读核查完成，真实后端运行验证未做；S2–S5 尚待实现。
 
-**下一步：** 依据 [S1 交付验证](01-task-contracts-and-onboarding/README.md#实现入口与验证)，讨论 S2 Attempt 与 Worker 交接；四题正式考试仍后置。
+**下一步：** [S2 实现规格](../../.scratch/s2-attempts-and-worker-handoffs/spec.md)已发布为 ready-for-agent，作为后续拆票与实施依据；背景及能力核查见 [S2 专题](02-attempts-and-worker-handoffs/README.md)。已发布 [7 张实现事项](../../.scratch/s2-attempts-and-worker-handoffs/issues/)，尚未实施；DSH 当前按规格例外仅实现、不新增专用测试或真实验证，四题正式考试仍后置。
 
 ## 7. 核查依据与验证范围
 

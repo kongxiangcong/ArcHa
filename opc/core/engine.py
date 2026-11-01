@@ -110,6 +110,7 @@ class Engine:
                          and r["revision"] != "preparation" and r["state"] != "closed"]
             if len(resumable) == 1:
                 selected = resumable[0]
+        self._selected_run_id = selected["run_id"] if selected is not None else None
         source = None
         if selected is not None:
             revision = selected["revision"]
@@ -207,9 +208,11 @@ class Engine:
                 raise OPCError('Call %s execution unknown; retain workspace and reconcile execution' % previous['call_id'])
             return self.call_from_receipt(previous["call_id"], previous["result"])
         self.hard_check()
-        request.call_id = self.ledger.begin_call(self.run_id, request.attempt, request.role,
-                    {**request.inputs, "tree": str(request.tree), "owner_pid": __import__("os").getpid()}, str(receipt))
         kind = self.worker_spec(request.role if request.role in self.resolved_workers else "expert").kind
+        activity_log = (dict(provider=kind, path=str(request.log_dir / (request.role + "-events.jsonl")))
+                        if kind in ("codex", "dsh") and request.role != "evaluator" else None)
+        request.call_id = self.ledger.begin_call(self.run_id, request.attempt, request.role,
+                    {**request.inputs, "tree": str(request.tree), "owner_pid": __import__("os").getpid()}, str(receipt), activity_log=activity_log)
         request.usage_default = kind == "scripted" or request.role == "evaluator"
         request.wall_limits = self.execution_wall_limits()
         with self._execution_lock:
@@ -1017,6 +1020,7 @@ class Engine:
         if self.run_id:
             command = self.ledger.control(self.run_id)
             if command == "pause":
+                self.ledger.mark_control_processing(self.run_id, "pause")
                 raise DispatchStopped("paused", "paused by user at call boundary")
             if command == "stop":
                 raise DispatchStopped("closed", "stopped by user at call boundary")
@@ -2304,82 +2308,112 @@ class Engine:
 
     def run(self, new_run: bool = False, direction: str | None = None,
             max_attempts_now: int | None = None, base_ref: str | None = None,
-            *, switch_backend: bool = False) -> dict[str, Any]:
+            *, switch_backend: bool = False, control_request_id: str | None = None) -> dict[str, Any]:
         with self.ledger.writer():
-            self._abort_execution.clear()
-            self._returned_closed = False
-            self.open_run(new_run, direction, base_ref, switch_backend=switch_backend)
-            if self.ledger.run(self.run_id)["state"] == "closed":
-                self._returned_closed = True
-                return self.summary()
-            if self.ledger.control(self.run_id) != "run":
-                self.ledger.set_control(self.run_id, "run")
-            self.ledger.set_run_state(self.run_id, "active")
-            ws = self.workspaces()
-            stop: StopDecision | None = None
-            done_now = 0
-            try:
-                self.reconcile_calls()
-                self.hard_check()
-                self.backfill_history()
-                self.reconcile(ws)
-                resuming = {a["attempt_no"] for a in self.ledger.open_attempts(self.run_id)}
-                while True:
-                    ctl = self.ledger.control(self.run_id)
-                    if ctl == "pause":
-                        stop = StopDecision("paused", "paused by user")
-                        break
-                    if ctl == "stop":
-                        stop = StopDecision("closed", "stopped by user")
-                        break
-                    stop = self.stop_condition()
-                    if stop:
-                        break
-                    if (max_attempts_now is not None and done_now >= max_attempts_now
-                            and not self.ledger.open_attempts(self.run_id)):
-                        stop = StopDecision("paused", "session attempt limit reached")
-                        break
-                    try:
-                        cap = self.effective_budget().max_attempts
-                        final_feedback = (cap is not None and self.spent()["search_attempts"] >= cap
-                                          and not self.ledger.open_attempts(self.run_id)
-                                          and any(a["outcome"] and a["conclusion"] is None for a in self.attempt_records()))
-                        if final_feedback:
-                            self.admit(check_attempts=False)
-                            _, stop = self.choose_work(ws, final_feedback_only=True)
-                            if stop and stop.state == "closed":
-                                stop = StopDecision("closed", "budget_exhausted: max_attempts; final decision saved")
-                        else:
-                            self.admit()
-                            if not self.ledger.open_attempts(self.run_id):
-                                _, stop = self.choose_work(ws)
-                        if not stop:
-                            started, stop = self.run_selected_work(ws,
-                                None if max_attempts_now is None else max_attempts_now - done_now, resuming)
-                            done_now += started
-                    except BudgetExhausted as exc:
-                        stop = StopDecision("closed", "budget_exhausted: %s" % exc)
+            target = None if new_run else self.requested_run_id or self.run_id or self._selected_run_id
+            if not control_request_id and target and self.ledger.run(target)["state"] != "closed":
+                # CLI resume intent precedes restoration; a later pause/stop is never cleared.
+                if self.ledger.control(target) != "run":
+                    self.ledger.set_control(target, "run")
+            if control_request_id and not self.ledger.claim_control_execution(self.requested_run_id, control_request_id):
+                return dict(self.ledger.run(self.requested_run_id))
+            if control_request_id:
+                requested = self.ledger.db.execute("SELECT action FROM control_requests WHERE request_id=?", (control_request_id,)).fetchone()
+                if requested["action"] == "stop":
+                    # Stop a quiescent run without restoration reconciliation or dispatch.
+                    self.restore_run(target)
+                    unknown = any(c["state"] == "unknown" or c["result"] is None for c in self.ledger.calls(target))
+                    self.ledger.set_run_state(target, "blocked" if unknown else "closed",
+                                              "execution termination unconfirmed" if unknown else "stopped by user")
                     self.write_views()
-                    if stop:
-                        break
-            except BudgetExhausted as exc:
-                stop = StopDecision("closed", "budget_exhausted: %s" % exc)
-            except DispatchStopped as exc:
-                stop = StopDecision(exc.state, str(exc))
-            except KeyboardInterrupt:
-                stop = StopDecision("paused", "interrupted by user")
-            except Exception as exc:
-                stop = StopDecision("blocked", "%s: %s" % (type(exc).__name__, str(exc)[:400]))
-                raise
+                    return self.summary()
+            if target and self.ledger.run(target)["state"] != "closed":
+                self.ledger.event(target, "controller_started", request_id=control_request_id)
+            try:
+                return self._run_locked(new_run, direction, max_attempts_now, base_ref,
+                                        switch_backend=switch_backend, control_request_id=control_request_id, controller_started=bool(target))
             finally:
-                if not self.ledger.open_attempts(self.run_id) and not any(
-                        c["result"] is None or c["state"] == "unknown" for c in self.ledger.calls(self.run_id)):
-                    ws.drop_all()
-                if stop is None:
-                    stop = StopDecision("blocked", "controller error")
-                self.ledger.set_run_state(self.run_id, stop.state, stop.reason)
-                self.write_views()
+                if self.run_id and not self._returned_closed:
+                    self.ledger.event(self.run_id, "controller_finished", request_id=control_request_id)
+
+    def _run_locked(self, new_run, direction, max_attempts_now, base_ref, *, switch_backend, control_request_id, controller_started):
+        self._abort_execution.clear()
+        self._returned_closed = False
+        self.open_run(new_run, direction, base_ref, switch_backend=switch_backend)
+        if self.ledger.run(self.run_id)["state"] == "closed":
+            self._returned_closed = True
             return self.summary()
+        if not controller_started:
+            self.ledger.event(self.run_id, "controller_started", request_id=control_request_id)
+        self.ledger.set_run_state(self.run_id, "active")
+        ws = self.workspaces()
+        stop: StopDecision | None = None
+        done_now = 0
+        try:
+            self.reconcile_calls()
+            self.hard_check()
+            self.backfill_history()
+            self.reconcile(ws)
+            if control_request_id:
+                self.ledger.finish_control_request(control_request_id, "applied", "已恢复原运行，接续未完成工作")
+            resuming = {a["attempt_no"] for a in self.ledger.open_attempts(self.run_id)}
+            while True:
+                ctl = self.ledger.control(self.run_id)
+                if ctl == "pause":
+                    stop = StopDecision("paused", "paused by user")
+                    break
+                if ctl == "stop":
+                    stop = StopDecision("closed", "stopped by user")
+                    break
+                stop = self.stop_condition()
+                if stop:
+                    break
+                if (max_attempts_now is not None and done_now >= max_attempts_now
+                        and not self.ledger.open_attempts(self.run_id)):
+                    stop = StopDecision("paused", "session attempt limit reached")
+                    break
+                try:
+                    cap = self.effective_budget().max_attempts
+                    final_feedback = (cap is not None and self.spent()["search_attempts"] >= cap
+                                      and not self.ledger.open_attempts(self.run_id)
+                                      and any(a["outcome"] and a["conclusion"] is None for a in self.attempt_records()))
+                    if final_feedback:
+                        self.admit(check_attempts=False)
+                        _, stop = self.choose_work(ws, final_feedback_only=True)
+                        if stop and stop.state == "closed":
+                            stop = StopDecision("closed", "budget_exhausted: max_attempts; final decision saved")
+                    else:
+                        self.admit()
+                        if not self.ledger.open_attempts(self.run_id):
+                            _, stop = self.choose_work(ws)
+                    if not stop:
+                        started, stop = self.run_selected_work(ws,
+                            None if max_attempts_now is None else max_attempts_now - done_now, resuming)
+                        done_now += started
+                except BudgetExhausted as exc:
+                    stop = StopDecision("closed", "budget_exhausted: %s" % exc)
+                self.write_views()
+                if stop:
+                    break
+        except BudgetExhausted as exc:
+            stop = StopDecision("closed", "budget_exhausted: %s" % exc)
+        except DispatchStopped as exc:
+            stop = StopDecision(exc.state, str(exc))
+        except KeyboardInterrupt:
+            stop = StopDecision("paused", "interrupted by user")
+        except Exception as exc:
+            stop = StopDecision("blocked", "%s: %s" % (type(exc).__name__, str(exc)[:400]))
+            raise
+        finally:
+            if not self.ledger.open_attempts(self.run_id) and not any(
+                    c["result"] is None or c["state"] == "unknown" for c in self.ledger.calls(self.run_id)):
+                ws.drop_all()
+            if stop is None:
+                stop = StopDecision("blocked", "controller error")
+            self.ledger.set_run_state(self.run_id, stop.state, stop.reason)
+            self.write_views()
+        return self.summary()
+
 
     # ------------------------------------------------------------------ views
     def startpoint(self) -> dict[str, Any]:

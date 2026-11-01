@@ -252,9 +252,9 @@ opc onboard -p . --brief <brief> --prepare --task <task-id> --revision <revision
 
 每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，保留对应候选的检查回执。
 
-## 只读观察工作台（可选）
+## 工作台（可选，默认只读）
 
-观察工作台显示研究地图、任务合同、历史运行/轮次、已有产物、终验和 agent 调用内容。它没有执行控制或消息发送能力，不启动研究任务，也不生成缺失报告。准备、执行、验收分别展示；账单或实时活动缺失时明确显示未知。
+工作台聚焦工作阶段与 Worker 具体活动；可选择历史调用，读取当时必要交接和已登记的任务材料，再返回原现场。所有入口均不展示内部审计或检验材料。默认只读，显式控制模式支持暂停、继续同一运行和停止；请求收到与实际结果分别反馈。暂停允许在途调用收尾，停止单独确认后取消当前调用并阻止后续派发，均保留已保存结果。
 
 从干净 checkout 构建并安装（Node 20.19+ 或 22.12+；Python 3.10+）：
 
@@ -273,18 +273,20 @@ python -m opc.observer --demo
 
 ```bash
 python -m opc.observer --project /absolute/path/to/project
+# 显式启用本机运行控制（支持暂停、继续同一运行及停止）
+python -m opc.observer --project /absolute/path/to/project --control
 # 端口可通过 --port 8766 指定
 ```
 
-观察器不创建缺失项目或数据库。默认且仅允许绑定 loopback；远程使用既有 SSH 隧道。项目配置明确指定的外置 `artifact_root` 也可读取，其他路径和越界符号链接会被拒绝。Markdown 不执行原始 HTML，外部图片不自动加载，HTML/SVG 原件仅显示源码或下载。页面 URL 保存任务、合同、run、阶段、轮次和所选产物/调用；刷新保留阅读位置。
+观察器不创建缺失项目或数据库。默认且仅允许绑定 loopback；远程使用既有 SSH 隧道。项目配置明确指定的外置 `artifact_root` 也可读取，其他路径和越界符号链接会被拒绝。Markdown 不执行原始 HTML，外部图片不自动加载，HTML/SVG 原件仅显示源码或下载。页面 URL 保存任务、run、工作、筛选与所选调用；局部刷新保留阅读位置。控制接口只接受同源 JSON 和固定项目目标；重试先查询原请求，不自动补发。继续使用独立本地执行进程，保留原运行、冻结配置、成功回执与累计用量，不依赖页面或 HTTP 连接存活；恢复失败或执行未确认时保留现场，不自动重启。已暂停运行停止时直接由运行端关闭，不先恢复工作；无法确认执行结束时明确提示，停止不代表任务交付成功。演示、只读和缺少执行来源的历史不能控制。
 
 前端开发可运行 `npm --prefix web run dev`，Vite 会将 API 转发至本地 Python 服务。生产构建输出到 `opc/observer/static/`，该目录不提交，但构建后打包的 wheel 包含它；安装这种 wheel 后运行观察器不需要 Node。没有安装 observer extra 时原有 `opc` CLI 继续独立工作。只安装源包而未构建前端时，观察服务会明确提示构建命令。
 
-后端可选依赖锁定在 `pyproject.toml`，前端与传递依赖锁定在 `web/package-lock.json`。升级 ArcHa 时，在 `opc/observer/adapter.py` 核对变化的路径、账本列、冻结合同和 provider 日志映射；前端只消费 `/api/observer/v1` DTO。实体及接口模型见 `opc/observer/models.py`，服务的 `/openapi.json` 可读取生成的合同。升级后运行以下离线检查，不要求模型密钥：
+后端可选依赖锁定在 `pyproject.toml`，前端与传递依赖锁定在 `web/package-lock.json`。升级 ArcHa 时，在 `opc/observer/adapter.py` 核对变化的路径、账本列、冻结合同和 provider 日志映射；前端消费 `/api/observer/v1` DTO，控制模式另使用 `/api/control/v1` 的请求与查询。实体及接口模型见 `opc/observer/models.py`，服务的 `/openapi.json` 可读取生成的合同。升级后运行以下离线检查，不要求模型密钥：
 
 ```bash
 python -m pip install -e '.[observer]' pytest httpx
-python -m pytest opc/tests/test_observer.py opc/tests/test_results.py -q
+python -m pytest opc/tests/test_observer.py opc/tests/test_observer_control.py opc/tests/test_results.py -q
 npm --prefix web run typecheck
 npm --prefix web run build
 # 浏览器验收另需 Playwright 与本机 Chromium
@@ -295,13 +297,4 @@ python tools/observer_browser_smoke.py
 未安装 FastAPI 或 HTTPX 时只跳过依赖它们的 HTTP 测试，观察器文件适配器测试仍运行。
 CI 在基础安装和安装 observer 测试依赖后分别运行完整回归，并显式检查 HTTP 测试依赖可导入。
 
-实施/验收记录及已知边界见 [观察工作台 tickets](docs/design/observer-workbench/tickets.md)。当前格式的离线夹具验证不代表用户实际部署已验证；未识别来源以 partial/unsupported 和具体诊断降级，不迁移源数据。
-
-当前来源适配只采纳可核对的明确关联。例如 `.opc/context/DECISIONS.md` 中一条 `task=<执行任务ID> revision=r0001 brief=<项目内简报路径> sha256=<完整SHA256>` 可绑定合同和简报；同一绑定出现多个不同 SHA 会标记歧义，不按标题或时间猜测。现有材料不满足该约定时仍可作为未关联对象浏览，观察器不会补写关联。
-
-
-### 准备、终验与标准重审
-
-准备默认执行必要接入检查；任务可声明 `preparation_review: true` 保留独立准备审核。正常 loop 使用 `opc run -p PROJECT --task TASK --deliver`，完成结论来自 `delivery.complete`，不会自动 apply。失败后的范围内修复使用 `--repair-promotion <promotion/report.json> --deliver`；仅 reviewer 不可用时重试 `opc promote --source-run RUN --review codex`。
-
-用户明确修订标准后，以新 revision 调用 `opc promote -p PROJECT --task TASK --revision NEW --source-run OLD_RUN --standards-confirmation confirmation.json`。旧合同和失败报告保留；仅允许纯验收变化，预算和执行语义不可通过该入口修改。格式、测试和边界见 [实施方案与说明](docs/design/task-delivery/spec.md)。
+当前规格与逐票验收见 [S5 规格和事项](.scratch/s5-debugging-workbench/spec.md)，旧版只读实现记录见 [观察工作台 tickets](docs/design/observer-workbench/tickets.md)。受控执行验证框架行为，不代表真实模型或用户部署已验证；未识别来源明确提示，不迁移源数据。

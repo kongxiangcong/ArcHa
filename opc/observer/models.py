@@ -292,6 +292,117 @@ class RevisionDetail(DTO):
     artifacts: list[Artifact]
 
 
+class ControlCapability(DTO):
+    enabled: bool
+    reason: str
+
+
+class WorkerSummary(DTO):
+    id: str
+    attempt_no: int | None
+    role: str
+    state: str
+    started_at: str | None = None
+    ended_at: str | None = None
+    error: str | None = None
+    activity_available: bool
+    activity_note: str
+
+
+class WorkItem(DTO):
+    id: str
+    attempt_no: int
+    work_id: str
+    title: str
+    goal: str | None = None
+    stage: str
+    reason: str | None = None
+    dependencies: list[dict]
+    blocked_by: list[str]
+    calls: list[str]
+    summary: str | None = None
+    outcome: str | None = None
+    needs_attention: bool
+    availability: str
+
+
+class WorkItems(DTO):
+    items: list[WorkItem]
+    total: int
+    scope: str
+
+
+class ControlRequestView(DTO):
+    request_id: str
+    run_id: str
+    action: str
+    status: str
+    sequence: int
+    reason: str
+    created_at: str
+    updated_at: str
+    run: dict
+
+
+class Workbench(DTO):
+    id: str
+    display_label: str
+    source_run_id: str
+    execution: str
+    goal: str | None = None
+    stop_reason: str | None = None
+    result: dict
+    control: dict[str, ControlCapability]
+    control_request: ControlRequestView | None = None
+    workers: list[WorkerSummary]
+    workers_truncated: bool
+    work_count: int
+    availability: str
+    observation_note: str
+
+
+class ToolAction(DTO):
+    id: str
+    category: str
+    name: str | None = None
+    object: str | None = None
+    state: str
+    started_at: str | None = None
+    ended_at: str | None = None
+    summary: str | None = None
+    exit_code: int | None = None
+
+
+class CallActivity(DTO):
+    call_id: str
+    actions: list[ToolAction]
+    availability: str
+    note: str | None = None
+    reset: bool
+    truncated: bool
+    has_more: bool
+
+
+class TaskMaterial(DTO):
+    id: str
+    name: str
+    purpose: str
+    availability: str
+    note: str | None = None
+
+
+class Inspection(DTO):
+    attempt_no: int
+    calls: list[WorkerSummary]
+    call_id: str | None
+    error: str | None
+    input: dict | None
+    output: dict | None
+    input_note: str
+    materials: list[TaskMaterial]
+    material_note: str | None = None
+
+
 T = TypeVar('T')
 
 

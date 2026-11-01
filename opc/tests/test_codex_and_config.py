@@ -376,3 +376,83 @@ def test_codex_designer_preserves_structured_observation(make_project, engine_fo
     actual = e.attempt_records()[0]['execution']
     assert actual['summary'] == 'structured observation'
     assert actual['adopted_claims'] == [] and actual['evidence_files'] == []
+
+
+def test_http_activity_is_readable_while_real_engine_fake_cli_is_inflight(make_project, fake_codex, tmp_path, monkeypatch):
+    """Only the external CLI is controlled; Engine/ledger/process/HTTP are real."""
+    import socket
+    import threading
+    import time
+    from urllib.parse import quote
+    from urllib.request import urlopen
+    import uvicorn
+    from opc.core.engine import Engine
+    from opc.observer.api import create_app
+
+    release = tmp_path / 'release-worker'
+    monkeypatch.setenv('ACTIVITY_RELEASE', str(release))
+    binary = Path(fake_codex)
+    binary.write_text(binary.read_text().replace('if mode == "limit":', '''if os.environ.get("ACTIVITY_RELEASE"):
+    import time
+    print(json.dumps({"type":"item.started","item":{"id":"read-task","type":"command_execution","command":"cat params.json"}}), flush=True)
+    deadline = time.monotonic() + 20
+    while not Path(os.environ["ACTIVITY_RELEASE"]).exists():
+        if time.monotonic() > deadline: raise RuntimeError("test release deadline")
+        time.sleep(.02)
+    print(json.dumps({"type":"item.completed","item":{"id":"read-task","type":"command_execution","command":"cat params.json","exit_code":0}}), flush=True)
+if mode == "limit":'''))
+    root = make_project(tsk=codex_task(fake_codex, max_attempts=1))
+    results = []
+    errors = []
+    def execute():
+        try:
+            engine = Engine(root, 't-toy', log=lambda _: None)
+            results.append(engine.run(max_attempts_now=1))
+            engine.ledger.close()
+        except BaseException as exc:
+            errors.append(exc)
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(create_app(root), host='127.0.0.1', port=port, log_level='warning'))
+    http = threading.Thread(target=server.run, daemon=True)
+    execution = threading.Thread(target=execute, daemon=True)
+    http.start(); execution.start()
+    def get(path):
+        with urlopen(f'http://127.0.0.1:{port}/api/observer/v1' + path, timeout=3) as response:
+            return json.load(response)
+    try:
+        deadline = time.monotonic() + 15
+        call = None
+        while time.monotonic() < deadline:
+            if errors: raise errors[0]
+            if server.started:
+                refs = get('/overview')['data']['unlinked_runs']
+                if refs:
+                    scene = get('/runs/' + quote(refs[0]['id'], safe='') + '/workbench')['data']
+                    pending = [w for w in scene['workers'] if w['state'] == 'pending' and w['activity_available']]
+                    if pending:
+                        call = pending[0]
+                        activity = get('/calls/' + quote(call['id'], safe='') + '/activity')['data']
+                        if activity['actions']: break
+            time.sleep(.03)
+        else:
+            raise AssertionError('inflight tool did not reach real HTTP')
+        assert execution.is_alive()
+        native = get('/calls/' + quote(call['id'], safe=''))['data']['provider_call_id']
+        assert native and not native.startswith('call-')
+        assert call['state'] == 'pending' and call['attempt_no'] is None
+        assert activity['actions'][0]['object'] == 'cat params.json'
+        assert activity['actions'][0]['state'] == 'pending'
+        assert activity['actions'][0]['started_at'] is None
+        release.touch()
+        execution.join(timeout=20)
+        assert not execution.is_alive() and not errors
+        done = get('/calls/' + quote(call['id'], safe='') + '/activity')['data']
+        assert done['actions'][0]['state'] == 'completed'
+        assert results and results[0]['run_id']
+    finally:
+        release.touch()
+        execution.join(timeout=20)
+        server.should_exit = True
+        http.join(timeout=10)
+        assert not http.is_alive() and not execution.is_alive()
