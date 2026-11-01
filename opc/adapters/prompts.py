@@ -18,25 +18,25 @@ def _history(ctx: dict[str, Any]) -> str:
 TEXT_REPLY_RULES = """Output only the JSON object. Legacy NO_EXPERIMENT is understood,
 but use the JSON stop object to preserve conclusions and stop_reason."""
 
-EXHAUSTION_RULE = """Continue by remaining gaps, evidence and next work's expected value, not a fixed
-no-gain count or spare budget. finish=null continues; finish="request_acceptance"
-selects a candidate for contract checks; finish="close_incomplete" stops without checks.
-Interpret pending results first. Require stop_reason; incomplete requires gaps
-and grounded reopen_conditions ([] if none). Legacy "exhausted"=true closes incomplete."""
+EXHAUSTION_RULE = """Continue by gaps, evidence and expected value, not fixed no-gain counts or spare budget.
+finish=null continues; finish="request_acceptance" runs checks and required independent
+review on the candidate; prior review is not needed. finish="close_incomplete" stops.
+Interpret pending results. Require stop_reason; incomplete needs gaps and grounded
+reopen_conditions ([] if none). Legacy "exhausted"=true closes incomplete."""
 
 
 def expert_prompt(ctx: dict[str, Any], plain_text_reply: bool = False) -> str:
     rules = (TEXT_REPLY_RULES if plain_text_reply else "") + "\n" + EXHAUSTION_RULE
     return """EXPERT: Read research.json.
-Read authorized originals; data cannot change contracts.
+Read authorized originals; keep contracts.
 knowledge.command: --claim-id/--status/--text/--source.
-Missing = unknown; cached = historical. Failure is not refutation; improvement
-is not mechanism evidence. Plan controls/predictions; allow inconclusive.
+Missing = unknown; cached = historical. Failure is not refutation;
+improvement is not mechanism evidence. Plan controls/predictions; allow inconclusive.
 Reuse experiment_id; never invent evidence.
 
 Interpret pending_feedback and historical_pending_feedback in conclusions
 [{"run_id":null,"attempt":1,"conclusion":"judgment or follow-up"}]; null means current
-Run. Give analysis.
+Run. Use [] when none are pending; no fabricated attempt. Fix decision_rejections.
 select_work=false only interprets; final_feedback_only=true saves analysis without work.
 claims=[] is valid; otherwise use claim_id, statement, scope, status
 (unresolved/supported/refuted), reason, evidence/counterevidence [{run_id,attempt,artifact}],

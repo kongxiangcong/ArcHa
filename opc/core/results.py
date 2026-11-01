@@ -200,6 +200,19 @@ def relative(path: Path, entry: Path) -> str:
         return path.as_posix()
 
 
+def apply_summary(root: Path, value: str, summary: Path) -> Path:
+    """Host applies an explicit summary without replacing live registration rows."""
+    entry = entry_path(root, value)
+    original = entry.read_bytes().decode('utf-8')
+    split(original)  # Validate the existing registration boundary.
+    body = summary.read_text(encoding='utf-8')
+    if START in body or END in body:
+        raise OPCError('summary must not contain generated registration markers')
+    suffix = original[original.index(START):] if START in original else ''
+    write_text(entry, body.rstrip() + '\n\n' + suffix)
+    return entry
+
+
 def external_batch(root: Path, artifact_root: Path, value: str, batch: str,
                    experiment_id: str | None, question: str, status: str | None, refs: dict) -> Path:
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', batch):

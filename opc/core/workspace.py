@@ -146,6 +146,13 @@ def sandbox(comp: ComponentConfig, wt: Path, base: str) -> SandboxReport:
     cannot reach evaluation, which runs on a clean tree.
     """
     stage_all(wt)
+    # The contract, rather than a broad generated-output ignore rule, identifies
+    # durable candidate files. Never force-stage scratch or frozen paths.
+    ignored = str(git('ls-files', '--others', '--ignored', '--exclude-standard', '-z',
+                      '--', *comp.editable, cwd=wt))
+    deliverables = [path for path in ignored.split('\0') if path and comp.is_editable(path) and not comp.is_scratch(path)]
+    if deliverables:
+        git('add', '-f', '--', *deliverables, cwd=wt)
     names = str(git("diff", "--cached", "--name-only", "-z", "--no-renames", base, cwd=wt))
     rep = SandboxReport()
     for path in sorted(p for p in names.split("\0") if p):

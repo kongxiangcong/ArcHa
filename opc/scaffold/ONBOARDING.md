@@ -89,6 +89,10 @@
 
 研究任务需要跨 run 累计成果时，在 task 顶层设置可选 `results_path`，值为项目相对 Markdown 路径（例如 `research/results/task-a/README.md`）。已有成果优先复用原位置；跨 revision 沿用同一稳定入口，目录名不表示合同 revision。旧任务无此字段保持原行为。对已冻结合同启用入口时建新 revision，不回写旧合同或重置预算。通过 `results --initialize` 建最小入口，在人工区域链接现有 specs、批次计划和 evidence-index。没有 specs 时在 README 直接写结论与适用条件。
 
+合同要求的结论正文必须有明确的写入与集成责任：由 Designer 交付时将其文件纳入 editable；入口由主流程维护时，保存独立的拟发布正文，主流程通过 `results --summary <正文文件>` 应用，保留实时自动登记及其后内容。入口仍为占位时不能以登记成功代替交付完成。需要把集成结果带回候选验收时，用包含该结果的明确基线开启新 Run，沿用 Task 累计预算；不原地改写已有候选或冻结合同。
+
+同 Task 的新 Run 需要继续核对旧原件时，用 `run --new-run --base <集成提交> --source-run <已关闭Run>` 明确交接。Expert、Designer 和独立 Reviewer 只读访问这条交接及其修复来源链，不自动继承旧反馈或采用旧主张。原生 delivery repair 同样提供来源原件；旧材料仍须按实际身份、版本和作用域审阅，不能视作本轮新执行。
+
 成果 README 由主流程维护，运行登记自动更新。只将确需 designer 修改的规格路径纳入 editable；不要把整个 research 或 .opc 放开。成果管理不要求数值 objective；实验有效性和推断质量可以作为验收条件，不能要求机制研究必须得到预期数字。
 
 ```json

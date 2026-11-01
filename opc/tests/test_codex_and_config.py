@@ -1,6 +1,7 @@
 import json
 import os
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -101,6 +102,59 @@ def codex_task(binary: str, **budget) -> dict:
                     "designer": {"kind": "codex", "binary": binary}}
     t["budget"].update({"max_tokens": 100000, **budget})
     return t
+
+
+def test_resume_recovers_terminal_codex_stream_without_redispatch(make_project, engine_for, fake_codex):
+    first = engine_for(make_project(tsk=codex_task(fake_codex)))
+    execute = first.execute_call
+    def lose_controller(request):
+        if request.role == 'expert':
+            request.invoke()
+            raise KeyboardInterrupt()
+        return execute(request)
+    first.execute_call = lose_controller
+    assert first.run(max_attempts_now=1)['state'] == 'paused'
+    call = next(c for c in first.ledger.calls(first.run_id) if c['role'] == 'expert')
+    stream = Path(call['receipt_path']).parent / 'expert-events.jsonl'
+    original = stream.read_bytes()
+    assert not Path(call['receipt_path']).exists()
+    resumed = engine_for(first.root)
+    resumed.run(max_attempts_now=1)
+    assert stream.read_bytes() == original
+    assert len([c for c in resumed.ledger.calls(resumed.run_id) if c['role'] == 'expert']) == 1
+    assert resumed.summary()['spent']['tokens'] == 2400
+    assert resumed.attempt_records()[0]['candidate']
+
+
+@pytest.mark.skipif(sys.platform != 'linux', reason='Linux native file-write root adaptation')
+def test_native_file_alias_restores_bytes_and_rejects_outside_symlink(tmp_path):
+    from opc.adapters.codex import file_write_aliases, restore_file_writes
+    from opc.core.tool_boundary import tool_policy, runner_argv
+    tree, logs = tmp_path / 'tree', tmp_path / 'logs'
+    tree.mkdir(); logs.mkdir()
+    target = tree / 'editable.py'
+    target.write_text('before')
+    target.chmod(0o755)
+    policy = tool_policy(tree, editable=['editable.py'])
+    policy = file_write_aliases(policy, logs)
+    assert target.is_symlink()
+    assert all(Path(path).is_dir() for path in policy['write'])
+    policy_path = logs / 'policy.json'
+    policy_path.write_text(json.dumps(policy))
+    result = subprocess.run(runner_argv(policy_path, [str(Path(sys.executable).resolve()), '-c',
+        'from pathlib import Path; Path("editable.py").write_text("after")']), cwd=tree, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    restore_file_writes(logs)
+    assert not target.is_symlink() and target.read_text() == 'after'
+    assert target.stat().st_mode & 0o111
+    policy = file_write_aliases(tool_policy(tree, editable=['editable.py']), logs)
+    staged = target.resolve()
+    outside = tmp_path / 'private'
+    outside.write_text('private')
+    staged.unlink(); staged.symlink_to(outside)
+    with pytest.raises(OSError):
+        restore_file_writes(logs)
+    assert outside.read_text() == 'private'
 
 
 def test_codex_worker_loop_records_identity_and_tokens(make_project, engine_for, fake_codex):

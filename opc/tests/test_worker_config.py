@@ -119,9 +119,17 @@ def test_reviewer_does_not_inherit_expert(make_project, engine_for, monkeypatch,
     engine = engine_for(root)
     # Set up a ledger run without invoking an optimization worker.
     engine.open_run()
+    source = root / '.opc/local/selected-old-run'
+    source.mkdir()
+    (source / 'original.txt').write_text('saved original')
 
     def run(self, role, *args):
         assert role == "reviewer"
+        assert "read their originals before judging" in args[0]
+        assert "selected checkout" in args[0]
+        assert self.tool_scope["tool_policy"]["write"] == []
+        assert str(source) in self.tool_scope['tool_policy']['read']
+        assert str(source.parent) not in self.tool_scope['tool_policy']['read']
         expected = ("review-model", "high") if configured else ("native-model", "low")
         assert (self.model, self.reasoning_effort) == expected
         return WorkerCall("reviewer", True, Cost(0, 0, None), call_id="fake", extra={"usage_complete": True}), '{"verdict":"accept"}'
@@ -129,7 +137,8 @@ def test_reviewer_does_not_inherit_expert(make_project, engine_for, monkeypatch,
     monkeypatch.setattr(CodexWorker, "_run", run)
     commit = engine.ledger.run(engine.run_id)["base_commit"]
     result = run_reviewer(engine, "codex", root / ".opc/local/review",
-                          "", {"metrics": {}}, {"metrics": {}, "commit_sha": commit}, [])
+                          "", {"metrics": {}}, {"metrics": {}, "commit_sha": commit}, [],
+                          {'source_materials':[dict(run_id='old-run', path=str(source))]})
     assert result["verdict"] == "accept"
 
 

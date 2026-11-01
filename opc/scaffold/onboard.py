@@ -269,9 +269,25 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                 paths.append(path)
             if not paths:
                 return finish("pending", "preparation needs observed evidence, including negative controls")
+            # Project-level registration belongs to the trusted host, not the
+            # preparation worker's write authority. Validate the new candidate
+            # before adding its component; leave every other project field intact.
+            from ..core.config import TaskSpec, ComponentConfig, ProjectConfig
+            project = ProjectConfig.load(root)
+            host_actions = []
+            if contract_path.is_file():
+                draft = json.loads(contract_path.read_text(encoding='utf-8'))
+                if draft.get('component') not in project.components:
+                    candidate_task = TaskSpec.load(root, task_id, revision)
+                    ComponentConfig.load(root, candidate_task.component)
+                    write_json(root / '.opc/project.json', {**project.raw,
+                        'components': [*project.components, candidate_task.component]})
+                    host_actions.append('registered component ' + candidate_task.component)
+                    ledger.event(rid, 'component_registered', task_id=task_id, revision=revision,
+                                 component=candidate_task.component)
             if result.get("state") != "ready":
                 return finish("external_blocked" if result.get("state") == "external_blocked" else "pending",
-                              result.get("reason", "preparation remains"), evidence=evidence)
+                              result.get("reason", "preparation remains"), evidence=evidence, host_actions=host_actions)
             try:
                 timeout = remaining()
             except OPCError as exc:

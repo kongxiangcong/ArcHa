@@ -60,6 +60,12 @@ def tool_policy(tree: Path, *, editable=(), scratch=(), protected=(), reads=()) 
                 writes.append(str(contained(target)))
             elif target.is_file() and not target.is_symlink():
                 writes.append(str(contained(target)))
+            elif not target.exists():
+                # Materialize the exact authorized file without granting its
+                # parent directory (which may contain frozen siblings).
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.touch()
+                writes.append(str(contained(target)))
             else:
                 limitations.append('new file requires an existing editable subtree: ' + pattern)
             continue
@@ -151,6 +157,7 @@ def worker_policy(role: str, tree: Path, log_dir: Path, ctx: dict | None = None)
     ctx = ctx or {}
     comp = ctx.get('component') or {}
     reads = ([ctx['source_root']] if ctx.get('source_root') else [])
+    reads += [source['path'] for source in ctx.get('source_materials', [])]
     if role == 'expert':
         if ctx.get('evidence_root'):
             reads.append(ctx['evidence_root'])

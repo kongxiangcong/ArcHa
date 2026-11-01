@@ -114,6 +114,45 @@ def test_onboard_without_budget_or_usage_dispatches_and_preserves_unknown(make_p
     assert onboard(root, 'codex', task_id='t-toy', record_usage_only=True)['ok']
 
 
+@pytest.mark.parametrize('state', ['ready', 'pending'])
+def test_onboard_host_registers_new_component_without_worker_project_write(make_project, monkeypatch, state):
+    from opc.tests.conftest import component
+    root = make_project()
+    def run(self, role, prompt, tree, log, sandbox, schema):
+        value = task(component='new-component')
+        write(root / '.opc/tasks/t-toy/revisions/r0001/task.json', json.dumps(value))
+        write(root / '.opc/components/new-component.json', json.dumps(component(component_id='new-component')))
+        log.mkdir(parents=True)
+        evidence = log / 'checks.txt'
+        evidence.write_text('new component integration and negative controls')
+        return SimpleNamespace(ok=True, cost=Cost(0.01, 7, None), extra={'usage_complete': True}, error=''), json.dumps({
+            'state': state, 'reason': 'host registry needed', 'evidence': [evidence.relative_to(root).as_posix()]})
+    monkeypatch.setattr(CodexWorker, '_run', run)
+    original = json.loads((root / '.opc/project.json').read_text())
+    result = onboard(root, 'codex', task_id='t-toy')
+    current = json.loads((root / '.opc/project.json').read_text())
+    assert current['components'] == [*original['components'], 'new-component']
+    assert {k:v for k,v in current.items() if k != 'components'} == {k:v for k,v in original.items() if k != 'components'}
+    assert result['ok'] == (state == 'ready')
+    if state == 'pending':
+        assert result['host_actions'] == ['registered component new-component']
+
+
+def test_pending_new_task_can_preserve_progress_before_contract_exists(make_project, monkeypatch):
+    root = make_project()
+    original = (root / '.opc/project.json').read_bytes()
+    def run(self, role, prompt, tree, log, sandbox, schema):
+        log.mkdir(parents=True)
+        evidence = log / 'checks.txt'
+        evidence.write_text('observed preparation prerequisite')
+        return SimpleNamespace(ok=True, cost=Cost(0.01, 7, None), extra={'usage_complete': True}, error=''), json.dumps({
+            'state': 'pending', 'reason': 'candidate integration still being prepared', 'evidence': [evidence.relative_to(root).as_posix()]})
+    monkeypatch.setattr(CodexWorker, '_run', run)
+    result = onboard(root, 'codex', task_id='t-later')
+    assert result['preparation'] == 'pending'
+    assert (root / '.opc/project.json').read_bytes() == original
+
+
 def test_onboard_explicit_token_only_cap_persists(make_project):
     root = make_project()
     settings(root, {'max_wall_seconds': None})

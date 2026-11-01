@@ -11,6 +11,17 @@ from opc.core.tool_boundary import tool_policy, runner_argv
 from opc.tests.test_codex_and_config import fake_codex
 
 
+def test_new_literal_deliverable_gets_only_its_exact_file_grant(tmp_path):
+    tree = tmp_path / 'work'
+    tree.mkdir()
+    policy = tool_policy(tree, editable=['results/report.md'], protected=['results/frozen.md'])
+    target = tree / 'results/report.md'
+    assert target.is_file()
+    assert str(target) in policy['write']
+    assert str(target.parent) not in policy['write']
+    assert not (tree / 'results/frozen.md').exists()
+
+
 def test_task_tool_can_change_editable_input_but_not_frozen_or_sibling(tmp_path):
     tree = tmp_path / 'work'
     tree.mkdir()

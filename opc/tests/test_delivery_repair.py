@@ -18,6 +18,58 @@ def reviewer_reply(requirements=('R',)):
                 requirement_findings=[finding(ident) for ident in requirements])
 
 
+def test_explicit_new_run_hands_originals_to_both_roles_without_replaying_feedback(make_project, engine_for):
+    from opc.core.tool_boundary import worker_policy
+    root = make_project()
+    first = use_sequence(engine_for(root), Sequence([plan(1), stop], [4]))
+    first.run()
+    original = first.attempt_dir(1) / 'context.json'
+    old_bytes = original.read_bytes()
+    second_sequence = Sequence([plan(1), stop], [5])
+    second = use_sequence(engine_for(root), second_sequence)
+    second.run(new_run=True, material_source_run=first.run_id)
+    ctx = second_sequence.contexts[0]
+    assert ctx['history'] == [] and ctx['pending_feedback'] == []
+    expected = [dict(run_id=first.run_id, path=str(first.artifact_dir()))]
+    assert ctx['source_materials'] == expected
+    designer = json.loads((second.attempt_dir(1) / 'context.json').read_text())
+    assert designer['source_materials'] == designer['handoff']['source_materials'] == expected
+    for role, context in [('expert', ctx), ('designer', designer)]:
+        policy = worker_policy(role, root, root / '.opc/local' / ('test-' + role), context)
+        assert str(first.artifact_dir()) in policy['read']
+        assert str(first.artifact_dir()) not in policy['write']
+        assert str(first.artifact_dir().parent) not in policy['read']
+    assert original.read_bytes() == old_bytes
+
+
+def test_material_handoff_cannot_select_an_active_source(make_project, engine_for):
+    root = make_project()
+    first = engine_for(root)
+    first.run(max_attempts_now=0)
+    with pytest.raises(OPCError, match='closed Run of the same Task'):
+        engine_for(root).run(new_run=True, material_source_run=first.run_id)
+
+
+def test_review_retry_reuses_patch_for_the_same_git_pair(make_project, engine_for, monkeypatch):
+    import opc.core.promote as module
+    root = make_project(tsk=task(acceptance={}, requirements=[dict(id='R', text='Scoped result', verification='review')]))
+    engine = use_sequence(engine_for(root), Sequence([plan(1), request], [4]))
+    engine.run()
+    monkeypatch.setattr(module, 'run_reviewer', lambda *a: dict(ok=False, error='temporary reviewer failure'))
+    first = promote(engine, review='codex')
+    original = Path(first['report_dir']) / 'cumulative.patch'
+    git_call = module.git
+    def no_repeated_diff(*args, **kwargs):
+        assert args[:2] != ('diff', '--binary')
+        return git_call(*args, **kwargs)
+    monkeypatch.setattr(module, 'git', no_repeated_diff)
+    monkeypatch.setattr(module, 'run_reviewer', lambda *a: dict(ok=True, **reviewer_reply()))
+    second = promote(engine, review='codex')
+    copied = Path(second['report_dir']) / 'cumulative.patch'
+    assert copied.samefile(original)
+    assert second['complete']
+
+
 @pytest.mark.parametrize('boundary', ['evaluator', 'reviewer', 'report_registration', 'unaccounted_receipt'])
 def test_promote_recovers_saved_calls_before_report_without_repeating_them(make_project, engine_for, monkeypatch, boundary):
     root = make_project(tsk=task(acceptance={}, requirements=[dict(id='R', text='Explain result', verification='review')]))

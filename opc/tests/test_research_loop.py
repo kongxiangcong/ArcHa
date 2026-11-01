@@ -337,6 +337,26 @@ def test_conclusions_cannot_be_attached_to_a_different_attempt(make_project, eng
     assert not e.ledger.events(e.run_id, 'conclusion')
 
 
+def test_resume_supplies_rejected_decision_reason_without_applying_it(make_project, engine_for):
+    root = make_project()
+    first = use_sequence(engine_for(root), Sequence([
+        dict(plan(1), conclusions=[dict(attempt=1, conclusion='No prior result exists')])]))
+    result = first.run(max_attempts_now=1)
+    assert result['state'] == 'blocked'
+    assert first.attempt_records() == []
+    def corrected(ctx):
+        rejected = ctx['decision_rejections']
+        assert len(rejected) == 1
+        assert 'pending attempts' in rejected[0]['reason']
+        assert ctx['pending_feedback'] == []
+        return dict(plan(1), conclusions=[])
+    resumed = use_sequence(engine_for(root), Sequence([corrected], [4]))
+    resumed.run(max_attempts_now=1)
+    assert resumed.run_id == first.run_id
+    assert len(resumed.attempt_records()) == 1
+    assert not resumed.ledger.events(resumed.run_id, 'conclusion')
+
+
 def test_plan_does_not_require_file_guesses():
     assert validate_plan(plan(1)) is None
     assert validate_plan(plan(1, files=[])) is None

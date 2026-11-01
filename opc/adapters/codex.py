@@ -30,6 +30,64 @@ INFRA_MARKERS = ("usage limit", "rate limit", "429", "unauthorized", "401", "not
                  "failed to initialize in-process app-server")
 
 
+def file_write_aliases(policy: dict, log_dir: Path) -> dict:
+    """Linux Codex treats write roots as directories; alias exact files only.
+
+    A writable, call-owned directory holds their bytes. The task tree remains
+    read-only except for existing directory grants; its exact file symlinks are
+    restored to regular files before the Engine inspects the candidate.
+    """
+    import sys
+    import shutil
+    if sys.platform != 'linux':
+        return policy
+    directories = [Path(p) for p in policy['write'] if Path(p).is_dir()]
+    files = [Path(p) for p in policy['write'] if Path(p).is_file()]
+    aliases = []
+    write = [str(p) for p in directories]
+    for path in files:
+        if any(path.is_relative_to(directory) for directory in directories):
+            continue
+        staging = log_dir / 'file-writes'
+        staging.mkdir(exist_ok=True)
+        target = staging / str(len(aliases))
+        shutil.copy2(path, target)
+        aliases.append({'path': str(path), 'staged': str(target)})
+    if not aliases:
+        return {**policy, 'write': write}
+    write_json(log_dir / 'file-writes.json', aliases)
+    for item in aliases:
+        path = Path(item['path'])
+        path.unlink()
+        path.symlink_to(item['staged'])
+    return {**policy, 'write': [*write, str(staging)],
+            'limitations': [*policy['limitations'], 'Exact writable files use host-owned symlink aliases. Preserve links; write their contents directly. The host restores regular files before evaluation.']}
+
+
+def restore_file_writes(log_dir: Path) -> None:
+    import os
+    metadata = log_dir / 'file-writes.json'
+    if not metadata.exists():
+        return
+    for item in json.loads(metadata.read_text()):
+        path, staged = Path(item['path']), Path(item['staged'])
+        if not path.is_symlink():
+            continue  # Already restored by the completed worker.
+        if os.readlink(path) != str(staged):
+            raise OPCError('task file alias changed: ' + str(path))
+        try:
+            fd = os.open(staged, os.O_RDONLY | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            path.unlink()  # Deletion of this exact editable file is authorized.
+            continue
+        with os.fdopen(fd, 'rb') as source:
+            data = source.read()
+            mode = os.fstat(source.fileno()).st_mode & 0o777
+        path.unlink()
+        path.write_bytes(data)
+        path.chmod(mode)
+
+
 def parse_events(text: str) -> dict[str, Any]:
     thread, tokens, errors, failed, last_agent = "", 0, [], False, ""
     unmetered_nested = False
@@ -71,6 +129,28 @@ def parse_events(text: str) -> dict[str, Any]:
 
 
 class CodexWorker:
+    @staticmethod
+    def recover_terminal(role: str, log_dir: Path, started_at: str) -> WorkerCall | None:
+        """Recover an observed completed turn, never infer an unfinished call."""
+        from datetime import datetime
+        path = log_dir / (role + '-events.jsonl')
+        if not path.is_file() or role not in ('expert', 'designer'):
+            return None
+        info = parse_events(path.read_text(encoding='utf-8', errors='replace'))
+        if not (info['terminal_completed'] and info['usage_complete'] and info['thread_id']):
+            return None
+        restore_file_writes(log_dir)
+        text = info['last_agent']
+        try:
+            output = json.loads(text) if role == 'expert' else designer_output(text)
+        except (ValueError, TypeError):
+            return None
+        return WorkerCall(role, True,
+            Cost(max(0, path.stat().st_mtime - datetime.fromisoformat(started_at).timestamp()), info['tokens'], None),
+            output=output, exhausted=role == 'expert' and isinstance(output, dict) and output.get('exhausted') is True,
+            log_dir=str(log_dir), extra={'session_id': info['thread_id'], 'terminal_completed': True,
+                                       'usage_complete': True, 'recovered_from': str(path)})
+
     def __init__(self, options: dict[str, Any]):
         self.session_id: str | None = None
         self.tool_scope = {"tool_policy": options["tool_policy"]} if "tool_policy" in options else {}
@@ -96,6 +176,13 @@ class CodexWorker:
             self.binary = (shutil.which("codex.exe") if sys.platform == "win32" else None) or "codex"
 
     def _run(self, role: str, prompt: str, tree: Path, log_dir: Path, sandbox: str,
+             schema: dict | None, *, ctx: dict | None = None) -> tuple[WorkerCall, str]:
+        try:
+            return self._run_impl(role, prompt, tree, log_dir, sandbox, schema, ctx=ctx)
+        finally:
+            restore_file_writes(log_dir)
+
+    def _run_impl(self, role: str, prompt: str, tree: Path, log_dir: Path, sandbox: str,
              schema: dict | None, *, ctx: dict | None = None) -> tuple[WorkerCall, str]:
         t0 = time.time()
         try:
@@ -123,6 +210,7 @@ class CodexWorker:
             extra = list(self.extra)
             validate_cli_boundary_args("codex", extra)
             policy = worker_policy(role, tree, log_dir, ctx or self.tool_scope)
+            policy = file_write_aliases(policy, log_dir)
             policy["read"].append(str(Path(shutil.which(command_prefix(self.binary)[0]) or command_prefix(self.binary)[0]).resolve()))
             write_json(log_dir / "tool-policy.json", policy)
             prompt += "\nTask tool boundary: only paths in tool-policy.json grants are available. " + json.dumps({k: policy[k] for k in ('read', 'write', 'limitations')})

@@ -73,19 +73,26 @@ def read_metrics(path: Path) -> dict[str, float]:
 
 
 class CommandDomain:
-    def __init__(self, comp: ComponentConfig):
+    def __init__(self, comp: ComponentConfig, tree: Path | None = None):
+        from contextvars import ContextVar
         self.comp = comp
+        self._tree = ContextVar('opc_command_tree', default=tree if tree is not None else comp.path.parents[2])
+
+    def bind_tree(self, tree: Path) -> None:
+        self._tree.set(tree)
 
     # ------------------------------------------------------------- toolchain
     def toolchain(self) -> tuple[str, dict[str, str]]:
+        tree = self._tree.get()
         details = {"_host": canonical_json({"system": platform.system(),
                    "release": platform.release(), "machine": platform.machine(),
                    "python": platform.python_version()})}
         for argv in self.comp.toolchain:
             key = " ".join(argv)
-            argv = [a.replace("{python}", sys.executable) for a in argv]
+            argv = [a.replace("{python}", sys.executable).replace('{worktree}', str(tree)) for a in argv]
             try:
-                with Process(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as p:
+                with Process(argv, cwd=str(tree), env={**os.environ, **self.comp.env},
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE) as p:
                     stdout, stderr = p.communicate(timeout=60)
                 details[key] = ("unavailable: exit %s: " % p.returncode if p.returncode else "") + ((stdout + stderr).decode("utf-8", errors="replace").strip()[:500] or "rc=%d" % p.returncode)
             except (OSError, subprocess.TimeoutExpired) as exc:

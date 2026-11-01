@@ -338,6 +338,14 @@ class Engine:
             if call["result"] is not None:
                 continue
             path = Path(call["receipt_path"])
+            if not path.is_file() and call['role'] in ('expert', 'designer') and self.worker_spec(call['role']).kind == 'codex':
+                from ..adapters.codex import CodexWorker
+                recovered = CodexWorker.recover_terminal(call['role'], path.parent, call['created_at'])
+                if recovered is not None:
+                    write_json(path, dict(role=call['role'], ok=recovered.ok, cost=recovered.cost.as_dict(),
+                        session_id=recovered.extra['session_id'], output=recovered.output, error='',
+                        exhausted=recovered.exhausted, log_dir=str(path.parent), extra=recovered.extra,
+                        usage_complete=True, state='completed'))
             if path.is_file():
                 self.ledger.finish_call(call["call_id"], json.loads(path.read_text(encoding="utf-8")))
             else:
@@ -438,6 +446,8 @@ class Engine:
         if self._domain is None:
             self._domain = load_domain(self.comp, tree)
             self._rule = acceptance.load_rule(self.task.acceptance, tree, self.evaluator_patterns())
+        elif self.comp.adapter == 'command':
+            self._domain.bind_tree(tree)
         return self._domain
 
     def resolve_workers(self) -> dict[str, dict]:
@@ -613,7 +623,12 @@ class Engine:
 
     # ------------------------------------------------------------------- runs
     def open_run(self, new_run: bool = False, direction: str | None = None,
-                 base_ref: str | None = None, *, switch_backend: bool = False, _repair: dict | None = None) -> str:
+                 base_ref: str | None = None, *, switch_backend: bool = False, _repair: dict | None = None,
+                 material_source_run: str | None = None) -> str:
+        if material_source_run:
+            source = self.ledger.run(material_source_run)
+            if not new_run or source['task_id'] != self.task.task_id or source['state'] != 'closed':
+                raise OPCError('material source must be a closed Run of the same Task, selected for a new Run')
         if switch_backend and not new_run:
             raise OPCError("explicit backend switch requires a new Run")
         if new_run:
@@ -693,6 +708,8 @@ class Engine:
             task_digest=self.task.digest, component=self.comp.component_id, base_commit=base,
             evaluator_digest=rep["evaluator_digest"], toolchain_digest=tool_digest,
             champion_ref=self.ref, direction=direction or self.task.direction, repair=_repair)
+        if material_source_run:
+            self.ledger.event(self.run_id, 'material_handoff', source_run=material_source_run)
         if self._budget_origin:
             self.ledger.event(self.run_id, "budget_origin", **self._budget_origin)
         if self.delivery_accounting():
@@ -781,7 +798,7 @@ class Engine:
             if unavailable:
                 raise OPCError("toolchain unavailable: " + "; ".join(unavailable))
             return digest
-        if self._domain is not None:
+        if self._domain is not None and self.comp.adapter != 'command':
             return checked(self._domain)
         ws = self.workspaces("toolchain")
         try:
@@ -1272,6 +1289,7 @@ class Engine:
         return {
             "attempt": n, "focus": focus,
             "delivery_repair": self.repair_context(),
+            "source_materials": self.source_materials(),
             **({"task_results": self.results_context()} if self.task.raw.get("results_path") else {}),
             "task": {"goal": self.task.goal,
                      "direction": directions[-1] if directions else run["direction"],
@@ -1296,6 +1314,7 @@ class Engine:
                               for a in attempts
                               if (changes := self.basis_changes(self.direct_basis(a["plan"] or {}, attempts, a["adopted_claims"])))],
             "decision_conflicts": [e["body"] for e in self.ledger.events(self.run_id, "expert_conflict")],
+            "decision_rejections": [e["body"] for e in self.ledger.events(self.run_id, "expert_rejected")][-HISTORY_WINDOW:],
             "background": background, "budget_left": self.budget_left(),
             "pending_feedback": [{"attempt": a["attempt_no"], "evidence": str(self.attempt_dir(a["attempt_no"]))}
                                  for a in decided if a["conclusion"] is None],
@@ -1952,12 +1971,13 @@ class Engine:
                                 "decision.json" if artifact == "result" else artifact)
                         dependencies.append({**dependency, "path": str(path), "candidate": upstream["candidate"]})
                     claim_index = ctx["claims"]
-                    ctx = {key: ctx[key] for key in ("attempt", "task", "component", "parent", "champion", "budget_left")}
+                    ctx = {key: ctx[key] for key in ("attempt", "task", "component", "parent", "champion", "budget_left", "delivery_repair", "source_materials")}
                     ctx["knowledge"] = self.knowledge_context(context_path, claim_index)
                     ctx["claims"] = ctx["knowledge"].pop("claims")
                     ctx["claim_history"] = ctx["knowledge"].pop("claim_history")
                     ctx["handoff"] = {"purpose": plan["changes"], "deliverables": plan.get("deliverables", []),
                                       "inputs": dependencies, "evidence": str(self.artifact_dir()),
+                                      "source_materials": ctx['source_materials'],
                                       "adopted_claims": plan.get("adopted_claims", []),
                                       "basis_review": selected.get("basis_review")}
                     write_json(context_path, ctx)
@@ -2308,7 +2328,8 @@ class Engine:
 
     def run(self, new_run: bool = False, direction: str | None = None,
             max_attempts_now: int | None = None, base_ref: str | None = None,
-            *, switch_backend: bool = False, control_request_id: str | None = None) -> dict[str, Any]:
+            *, switch_backend: bool = False, control_request_id: str | None = None,
+            material_source_run: str | None = None) -> dict[str, Any]:
         with self.ledger.writer():
             target = None if new_run else self.requested_run_id or self.run_id or self._selected_run_id
             if not control_request_id and target and self.ledger.run(target)["state"] != "closed":
@@ -2331,15 +2352,17 @@ class Engine:
                 self.ledger.event(target, "controller_started", request_id=control_request_id)
             try:
                 return self._run_locked(new_run, direction, max_attempts_now, base_ref,
-                                        switch_backend=switch_backend, control_request_id=control_request_id, controller_started=bool(target))
+                                        switch_backend=switch_backend, control_request_id=control_request_id, controller_started=bool(target),
+                                        material_source_run=material_source_run)
             finally:
                 if self.run_id and not self._returned_closed:
                     self.ledger.event(self.run_id, "controller_finished", request_id=control_request_id)
 
-    def _run_locked(self, new_run, direction, max_attempts_now, base_ref, *, switch_backend, control_request_id, controller_started):
+    def _run_locked(self, new_run, direction, max_attempts_now, base_ref, *, switch_backend, control_request_id, controller_started,
+                    material_source_run=None):
         self._abort_execution.clear()
         self._returned_closed = False
-        self.open_run(new_run, direction, base_ref, switch_backend=switch_backend)
+        self.open_run(new_run, direction, base_ref, switch_backend=switch_backend, material_source_run=material_source_run)
         if self.ledger.run(self.run_id)["state"] == "closed":
             self._returned_closed = True
             return self.summary()
@@ -2440,6 +2463,22 @@ class Engine:
                   if event['body']['promotion_id'] == origin['source_promotion']]
         return {**origin, 'failure': delivery_status(events, self.task.digest,
                         origin.get('candidate', dict(commit=origin['selected_commit'])))}
+
+    def source_materials(self) -> list[dict]:
+        """Read references along explicitly recorded same-Task handoffs, not new feedback."""
+        pending, seen, sources = [self.run_id], {self.run_id}, []
+        while pending:
+            owner = pending.pop()
+            for event in self.ledger.events(owner):
+                if event['kind'] not in ('material_handoff', 'delivery_repair'):
+                    continue
+                source = event['body']['source_run']
+                if source in seen:
+                    continue
+                seen.add(source)
+                pending.append(source)
+                sources.append(dict(run_id=source, path=str(self.artifact_dir().parent / source)))
+        return sources
 
     def summary(self) -> dict[str, Any]:
         run = self.ledger.run(self.run_id)

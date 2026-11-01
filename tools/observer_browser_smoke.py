@@ -223,7 +223,13 @@ def main():
                 page.screenshot(path=str(args.out / 'desktop-light.png'))
                 for width, height in [(1024, 768), (390, 844), (320, 740), (1280, 480)]:
                     page.set_viewport_size(dict(width=width, height=height))
-                    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+                    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), page.evaluate('''() => ({
+                        viewport: innerWidth,
+                        overflowing: [...document.querySelectorAll('body *')].filter(e =>
+                            e.getBoundingClientRect().right > innerWidth + 1).slice(0, 12).map(e => ({
+                            tag: e.tagName, class: e.className, right: e.getBoundingClientRect().right
+                        }))
+                    })''')
                     expect(page.get_by_role('button', name='刷新', exact=True)).to_be_visible()
                     page.screenshot(path=str(args.out / f'viewport-{width}-{height}.png'))
                 page.set_viewport_size(dict(width=1024, height=768))

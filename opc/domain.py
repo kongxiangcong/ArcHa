@@ -88,7 +88,7 @@ def load_domain(comp: ComponentConfig, evaluator_tree: Path) -> DomainAdapter:
     candidate tree, for the same reason the gates are."""
     if comp.adapter == "command":
         from .domains.command import CommandDomain
-        return CommandDomain(comp)
+        return CommandDomain(comp, evaluator_tree)
     if ":" not in comp.adapter:
         raise OPCError("component adapter must be 'command' or 'path/file.py:Class'")
     rel, cls_name = comp.adapter.rsplit(":", 1)

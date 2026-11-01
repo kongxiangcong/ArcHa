@@ -12,6 +12,39 @@ def finding(ident, status='met', evidence=None, gap=''):
                 evidence=['Selected candidate and scoped evidence'] if evidence is None else evidence, gap=gap)
 
 
+def test_reviewer_can_read_selected_formal_originals_and_their_cached_origin(make_project, engine_for, monkeypatch):
+    import json
+    from opc.adapters.worker import WorkerCall
+    from opc.core.model import Cost
+    from opc.core.promote import promote
+    root = make_project(tsk=task(acceptance={}, requirements=[dict(id='R', text='Inspect actual checks', verification='review')]))
+    engine = use_sequence(engine_for(root), Sequence([stop]))
+    engine.run()
+    originals = []
+    def review(self, role, prompt, tree, log_dir, sandbox, schema):
+        assert role == 'reviewer'
+        directories = [Path(p) for p in self.tool_scope['tool_policy']['read']
+                       if (Path(p) / 'evaluation.json').is_file()]
+        assert len(directories) == 1
+        directory = directories[0]
+        assert json.loads((directory / 'evaluation.json').read_text())['commit'] == engine.selected_commit()
+        assert (directory / 'receipt.json').is_file()
+        assert self.tool_scope['tool_policy']['write'] == []
+        originals.append(directory)
+        return WorkerCall(role, True, Cost(), extra={'usage_complete':True}), json.dumps({
+            'verdict':'accept','summary':'Read selected execution originals','overreach':[],
+            'requirement_findings':[finding('R')]})
+    monkeypatch.setattr('opc.adapters.codex.CodexWorker._run', review)
+    first = promote(engine, review='codex')
+    def no_repeat(*args, **kwargs):
+        raise AssertionError('review retry must use the actual saved execution')
+    monkeypatch.setattr(engine, 'evaluate_commit', no_repeat)
+    second = promote(engine, review='codex')
+    assert first['complete'] and second['complete']
+    assert originals[0] == originals[1]
+    assert first['task_results']['formal_evaluation'] == second['task_results']['formal_evaluation']
+
+
 def test_overall_accept_cannot_cover_omitted_required_item(make_project, engine_for, monkeypatch):
     from opc.core.promote import promote
     from opc.observer.adapter import ObserverAdapter

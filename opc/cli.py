@@ -57,7 +57,7 @@ def cmd_run(a) -> int:
         s = e.repair_delivery(a.repair_promotion)
     else:
         s = e.run(new_run=a.new_run, direction=a.direction, max_attempts_now=a.max_now,
-                  base_ref=a.base, switch_backend=a.switch_backend)
+                  base_ref=a.base, switch_backend=a.switch_backend, material_source_run=a.source_run)
     if a.deliver:
         s["complete"] = False
         reports = e.ledger.events(e.run_id, "promotion_report")
@@ -208,7 +208,7 @@ def cmd_promote(a) -> int:
 
 def cmd_results(a) -> int:
     from .core.config import TaskSpec, Bindings, ProjectConfig
-    from .core.results import register, external_batch, snapshot, writer
+    from .core.results import register, external_batch, snapshot, writer, apply_summary
     root = Path(a.project).resolve()
     task = TaskSpec.load(root, a.task, a.revision)
     value = task.raw.get('results_path')
@@ -219,6 +219,9 @@ def cmd_results(a) -> int:
         with writer(root):
             external_batch(root, bindings.artifact_root, value, a.batch, a.experiment_id,
                            a.question, a.status, {k:getattr(a, k) for k in ('plan', 'evidence', 'analysis', 'review')})
+    elif a.summary:
+        with writer(root):
+            apply_summary(root, value, Path(a.summary))
     elif a.initialize:
         with writer(root):
             register(root, value, [], task.goal)
@@ -290,6 +293,7 @@ def main(argv=None) -> int:
     p = add("results", cmd_results)
     mode = p.add_mutually_exclusive_group()
     mode.add_argument('--initialize', action='store_true', help='create minimal entry if absent')
+    mode.add_argument('--summary', help='host applies this Markdown body, preserving live registration')
     mode.add_argument('--sync-run', help='retry registration from existing run; never execute experiments')
     mode.add_argument('--batch', help='stable external batch ID; no synthetic run')
     p.add_argument('--experiment-id')
@@ -301,6 +305,7 @@ def main(argv=None) -> int:
     p = add("run", cmd_run)
     p.add_argument("--direction", default=None)
     p.add_argument("--new-run", action="store_true")
+    p.add_argument("--source-run", help="explicit closed same-Task Run whose original materials accompany a new Run")
     p.add_argument("--switch-backend", action="store_true",
                    help="acknowledge a Codex/DSH change for a new Run; start a fresh execution allowance")
     p.add_argument("--base", default=None, help="start a new run from this ref")

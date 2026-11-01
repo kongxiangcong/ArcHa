@@ -164,7 +164,7 @@ pyproject.toml           包元数据（archa-opc 0.3.0，无运行时依赖）
 
 - **合同只有一份、严格校验**：`project.json → components/<id>.json → tasks/<task>/revisions/rNNNN/task.json`。未知字段直接报错，拼错的字段不会悄悄失效；`.opc/**` 永远冻结。改合同要开新 revision 和新 run，旧修订不原地改。
 - **评价器冻结**：`evaluator_files` 的摘要决定「是否同一个评分器」；工具链版本进入每次测量。摘要不同就不比较新旧数字，工具链变了会当场重测 champion。
-- **干净树 + 最小补丁**：评测只接受 `editable` 范围内的 diff，并把它套到从专家选定 parent 生成的候选快照切出的全新树上；忽略文件、缓存、软链和构建产物都不会进入评测。
+- **干净树 + 最小补丁**：评测只接受 `editable` 范围内的 diff，并把它套到从专家选定 parent 生成的候选快照切出的全新树上。合同明确授权的成果会被收集，即使位于 Git 忽略目录；未授权的忽略文件、scratch 缓存和软链不进入候选。
 - **接纳失败关闭**：规则点名的指标缺失即拒绝（不是「没变坏」）；约束必须满足；收益要超过 `max(min_rel_gain, noise_k × 重复测量极差)`。自定义 `acceptance.rule` 必须是冻结评价器文件。
 - **单一权威与可恢复**：SQLite 账本是唯一权威，git ref、`STATE.md`、`report.json` 都只是投影；先写 intent 再 CAS 移动 ref，崩溃后按 intent 对账，第二个控制器会被拒绝。
 - **接缝可替换**：worker 三选一（`codex` / `dsh` / `scripted`），领域适配器默认是「命令门 + metrics.json」，也可在冻结文件里写 `"adapter": "path.py:Class"`；核心只经两个工厂拿到它们。

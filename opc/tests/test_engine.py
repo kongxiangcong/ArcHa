@@ -73,6 +73,29 @@ def test_ignored_files_cannot_reach_evaluation(make_project, engine_for):
     assert a["metrics"]["values"]["loss"] == 50
 
 
+def test_declared_deliverables_survive_gitignore_in_clean_evaluation(make_project, engine_for):
+    evaluate = EVALUATE + '\nif x != 3: assert Path("results/report.md").read_text() == "measured evidence"\n'
+    strategy = STRATEGY.replace(
+        '(tree / "params.json").write_text(json.dumps(plan["params"]))',
+        '(tree / "params.json").write_text(json.dumps(plan["params"])); '
+        '(tree / "results").mkdir(exist_ok=True); '
+        '(tree / "results/report.md").write_text("measured evidence"); '
+        '(tree / "results/cache.pyc").write_bytes(b"cache"); '
+        '(tree / "results/frozen.md").write_text("must not enter candidate")')
+    root = make_project(evaluate=evaluate, strategy=strategy,
+                        comp=component(editable=['params.json', 'results/**'], frozen=['results/frozen.md']))
+    (root / '.gitignore').write_text((root / '.gitignore').read_text() + '\nresults/\n')
+    git(root, 'add', '.gitignore')
+    git(root, 'commit', '-m', 'ignore generated output directory')
+    e = engine_for(root)
+    e.run(max_attempts_now=1)
+    a = e.attempt_records()[0]
+    assert a['candidate'], a['reason']
+    assert git(root, 'show', a['candidate'] + ':results/report.md') == 'measured evidence'
+    assert 'results/frozen.md' not in git(root, 'ls-tree', '-r', '--name-only', a['candidate'])
+    assert 'results/cache.pyc' not in git(root, 'ls-tree', '-r', '--name-only', a['candidate'])
+
+
 def test_infra_failures_block_without_consuming_search_budget(make_project, engine_for):
     evaluate = EVALUATE + '\nimport os\nif json.loads(Path("params.json").read_text())["x"] != 3: raise SystemExit(75)\n'
     e = engine_for(make_project(evaluate=evaluate))
@@ -158,6 +181,38 @@ def test_toolchain_change_remeasures_champion(make_project, engine_for, tmp_path
     assert "toolchain_changed" in kinds
     reasons = [c["reason"] for c in t2.ledger.champions(t2.run_id)]
     assert "re-measured: toolchain changed" in reasons
+
+
+def test_relative_toolchain_probe_uses_frozen_tree_and_component_environment(make_project, engine_for, tmp_path, monkeypatch):
+    root = make_project(comp=component(toolchain=[['{python}', '.opc/eval/version.py']],
+                                       env={'PROBE_VERSION': 'tool-v1'}))
+    write(root / '.opc/eval/version.py', 'import os\nfrom pathlib import Path\nassert Path("params.json").is_file()\nprint(os.environ["PROBE_VERSION"])\n')
+    git(root, 'add', '.opc/eval/version.py')
+    git(root, 'commit', '-m', 'freeze relative toolchain probe')
+    monkeypatch.chdir(tmp_path)
+    e = engine_for(root)
+    assert e.preflight()['toolchain']['{python} .opc/eval/version.py'] == 'tool-v1'
+    result = e.run(max_attempts_now=1)
+    assert result['state'] == 'paused'
+    assert e.attempt_records()[0]['candidate']
+
+
+def test_parallel_toolchain_probes_keep_their_own_frozen_tree(make_project, engine_for, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    probe = ['{python}', '-c', 'from pathlib import Path; print(Path("version.txt").read_text())']
+    e = engine_for(make_project(comp=component(toolchain=[probe])))
+    e.domain(e.root)
+    barrier = Barrier(2)
+    trees = [tmp_path / 'source-a', tmp_path / 'source-b']
+    for name, tree in zip(('A', 'B'), trees):
+        tree.mkdir(); (tree / 'version.txt').write_text(name)
+    def read(tree):
+        domain = e.domain(tree)
+        barrier.wait(timeout=5)
+        return domain.toolchain()[1][' '.join(probe)]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert list(pool.map(read, trees)) == ['A', 'B']
 
 
 def test_pause_then_resume(make_project, engine_for):

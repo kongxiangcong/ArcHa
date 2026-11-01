@@ -213,6 +213,8 @@ def record(root: Path, directory: str, task_id: str, revision: str, *,
         row['change'] = change
         if change == 'material':
             row['authorized'] = True
+    if entries and all(entries[-1].get(key) == value for key, value in row.items()):
+        return entries[-1]  # Retain the prior change classification on replay.
     if not entries or entries[-1] != row:
         append(path, row)
     return row

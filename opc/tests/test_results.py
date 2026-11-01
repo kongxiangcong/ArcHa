@@ -13,6 +13,26 @@ from opc.tests.test_research_loop import Sequence, plan, stop, use_sequence
 ENTRY = 'research/results/README.md'
 
 
+def test_host_summary_preserves_live_registration_and_suffix(tmp_path):
+    from opc.core.results import apply_summary, START
+    register(tmp_path, ENTRY, [dict(key='existing/a1', status='failed',
+                                  question='Preserve failed observation', refs={}, issues=['unresolved'])])
+    entry = tmp_path / ENTRY
+    entry.write_text(entry.read_text() + '\nHost follow-up.\n', encoding='utf-8')
+    suffix = entry.read_text().split(START, 1)[1]
+    summary = tmp_path / 'proposed.md'
+    summary.write_text('# Supported result\n\n[original](../raw.json)\n', encoding='utf-8')
+    apply_summary(tmp_path, ENTRY, summary)
+    assert entry.read_text().startswith('# Supported result\n')
+    assert entry.read_text().split(START, 1)[1] == suffix
+    assert split(entry.read_text())[1][0]['status'] == 'failed'
+    summary.write_text(START, encoding='utf-8')
+    original = entry.read_bytes()
+    with pytest.raises(OPCError, match='registration markers'):
+        apply_summary(tmp_path, ENTRY, summary)
+    assert entry.read_bytes() == original
+
+
 def test_external_batch_idempotence_preserves_judgments_and_originals(tmp_path):
     root = tmp_path
     raw = root / 'research/raw'
