@@ -144,9 +144,12 @@ def test_formal_measurement_waits_for_all_controlled_compute(make_project, engin
 
 
 class Processes(Branches):
-    def __init__(self, works, seconds):
+    def __init__(self, works, seconds, *, expected_processes=3, startup_delay=0):
         super().__init__(works)
         self.seconds = seconds
+        self.expected_processes = expected_processes
+        self.startup_delay = startup_delay
+        self.processes_started = 0
         self.started = threading.Event()
         self.executed = []
 
@@ -157,11 +160,14 @@ class Processes(Branches):
         started = time.monotonic()
         with self.lock:
             self.executed.append(work['work_id'])
-            if len(self.executed) == 3:
-                self.started.set()
         (tree / 'params.json').write_text('{"x":4}')
+        time.sleep(self.startup_delay)  # Optional slow-start injection, not a readiness assertion.
         with Process([sys.executable, '-c', f'import time; time.sleep({self.seconds})'],
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as process:
+            with self.lock:
+                self.processes_started += 1
+                if self.processes_started == self.expected_processes:
+                    self.started.set()  # OS process and its ownership are now established.
             process.wait()
         return WorkerCall('designer', process.returncode == 0,
                           Cost(time.monotonic() - started, 0, 0), output={'summary': 'Controlled computation ended'})
@@ -174,7 +180,6 @@ def test_parallel_control_drains_receipts_and_never_dispatches_followup(make_pro
     e = use_sequence(engine_for(make_project()), worker)
     def control():
         assert worker.started.wait(30)
-        time.sleep(.03)
         external = Ledger(e.ledger.path)
         external.set_control(e.run_id, command)
         external.close()
@@ -245,7 +250,8 @@ def test_branch_failure_does_not_starve_independent_work_beyond_cap(make_project
         assert result['state'] == 'closed' and e.attempt_records()[0]['outcome'] == 'worker_failed'
 
 
-def test_unknown_execution_cancels_peers_and_blocks_new_run(make_project, engine_for):
+@pytest.mark.parametrize('startup_delay', [0, .1])
+def test_unknown_execution_cancels_peers_and_blocks_new_run(make_project, engine_for, startup_delay):
     from opc.core.model import OPCError
     class Unknown(Processes):
         def implement(self, work, ctx, tree, log_dir):
@@ -253,11 +259,11 @@ def test_unknown_execution_cancels_peers_and_blocks_new_run(make_project, engine
                 with self.lock:
                     self.executed.append(work['work_id'])
                 assert self.started.wait(30)
-                time.sleep(.03)
                 raise RuntimeError('terminal lost')
             return super().implement(work, ctx, tree, log_dir)
     worker = Unknown([plan(0, work_id='unknown', evaluate=False),
-                      plan(1, work_id='peer-1', evaluate=False), plan(2, work_id='peer-2', evaluate=False)], 20)
+                      plan(1, work_id='peer-1', evaluate=False), plan(2, work_id='peer-2', evaluate=False)],
+                     20, expected_processes=2, startup_delay=startup_delay)
     root = make_project()
     e = use_sequence(engine_for(root), worker)
     before = time.monotonic()
