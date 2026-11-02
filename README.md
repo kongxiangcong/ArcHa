@@ -1,260 +1,312 @@
-# ArcHa
+<p align="center">
+  <img src="docs/assets/archa-icon.svg" width="96" alt="ArcHa icon" />
+</p>
 
-**ArcHa** 是一个领域无关的自动迭代框架：把一个已经能跑通基线的项目接进来，给一个优化方向，引擎就会反复执行「专家提假设 → 设计者改代码 → 冻结评价器打分 → 确定性接纳 → 反馈下一轮」，由专家决定继续或结束探索，或在资源耗尽、执行故障、用户暂停时结束。
+<h1 align="center">ArcHa · Architecture Harness</h1>
 
-核心不认识 RTL、编译器、模拟器或 PIM bank。领域只通过目标项目 `.opc/` 下的合同和脚本接入：可改范围、冻结的评价器文件、有序命令门、指标字典和一条声明式接纳规则。
+<p align="center"><strong>由人定义目标，以实验推进工作，用独立审核交付可信成果。</strong></p>
+<p align="center">探索 Exploration · 优化 Optimization · 开发 Development</p>
+<p align="center"><a href="https://github.com/kongxiangcong/ArcHa">GitHub</a> · <a href="#三步开始一个最小任务">快速开始</a> · <a href="#从一次迭代到可信交付">工作流程</a> · <a href="#当前进度与能力边界">项目状态</a></p>
 
-目标不是「让分数上涨」，而是让每一次上涨都可复核：候选只能改授权路径、只在干净树上、只由冻结的评价器和工具链打分；缺指标、越界改动、收益落在噪声内都会被拒绝——拒绝同样是结果，会留在账本里。
+---
 
-> 命名：项目现名 **ArcHa**（Python 发行包 `archa-opc`），引擎模块与命令行仍叫 `opc`。早期设计文档中的「Ge」是同一项目的旧称呼，指规划中的统一对话入口；部分文档尚未同步改名。
+## ArcHa 是什么
 
-## 当前状态
+**ArcHa（Architecture Harness）是面向探索、优化和开发的自动迭代框架。** 用户决定方向、目标与边界；专家 Worker 提出可检验的假设和实验方案；设计 Worker 完成实现、验证及结果摘要；审核 Worker 对选定成果和证据开展独立审查。框架负责把这些工作组织成可执行、可追溯、可恢复的闭环。
 
-- `opc` 引擎 0.3.0：`init / onboard / check / preflight / run / status / pause / stop / report / promote` 均已实现。
-- 仓库正从 v0.2 的「合同原型 + 示例」迁到 v0.3 引擎：`contracts/` 与 `examples/` 已从当前工作树移除，本 README 不再引用它们；旧内容见 git 提交 `2eb1dfc`。
-- 引擎支持原生 Windows 和 Linux：跨平台文件锁、进程树清理、UTF-8 文本与 Git 补丁字节传输共用同一套行为测试。使用方式和平台边界见 [跨平台运行](docs/cross-platform.md)。
+同一套流程可以用于理解一个架构机制、改善已有实现的性能，也可以完成一个尚未实现的功能。每一步都围绕明确的任务契约展开：要交付什么、允许改什么、如何验证、在什么资源范围内推进，以及什么条件下才能宣布完成。
 
-## 快速开始
+> **用户掌握“为什么做、做到什么程度”；Worker 负责“提出方案、落实工作、解释证据”；框架保证执行与交付有据可查。**
 
-要求：Python ≥ 3.10、Git；目标项目必须是 git 仓库且基线已提交。
+Python 发行包名为 `archa-opc`，底层引擎和命令行仍使用 `opc`。`archa-map`、`archa-task`、`archa-loop` 是面向用户的 Agent 技能入口。
 
-Windows 使用 Python 3.10+ 和 Git for Windows，无需 WSL；在 PowerShell 中执行 `python -m pip install -e .` 后即可使用 `opc`。下面的 Bash 示例中，`cd` 改为实际路径，`git add` 和 `git commit` 在 Windows PowerShell 5 中分两行执行。
+## 为什么需要 Architecture Harness
 
-```bash
-# 1. 安装引擎（在 ArcHa 仓库根目录）
-python -m pip install -e .          # 得到 opc 命令；也可 export PYTHONPATH=$PWD 后用 python -m opc
+架构研究和工程研发经常跨越多轮工作：先理解问题，提出解释，再修改实现、运行实验、分析反例，最后判断结果是否足以支持交付。仅有一次代码生成或一份实验报告，无法承担整个过程。
 
-# 2. 在目标项目里生成接入骨架（只写 .opc/，不覆盖、不运行项目代码）
-cd /path/to/your-project
-opc init -p . --project-id p-demo --name "Demo" --apply
+ArcHa 将持续研发所需的几个环节连接起来：
 
-# 3. 按 .opc/ONBOARDING.md 填写可改范围、评价器、门命令、指标和接纳规则
-#    也可以让 agent 起草（只允许改 .opc/，越界即失败）
-opc onboard -p . --agent codex     # 或 --agent dsh
+- **把意图落实为任务契约。** 方向转化为交付物、验收条件、可改范围和预算，Worker 有明确的工作依据。
+- **让下一步由证据驱动。** 专家结合结果选择继续开发、补测、补分析、调整假设，或有依据地结束任务。
+- **保留过程中的有效积累。** 候选版本、原始证据、反馈分析及主张版本可以追溯；失败和不确定结果也进入后续判断。
+- **将完成交给独立验收。** 运行停止、指标改善和任务完成分别记录，最终交付须满足约定的自动检查与独立审核要求。
 
-# 4. 人工审阅合同 → 打开执行开关 → 静态检查 → 提交 → 在基线上真跑一遍门
-opc check     -p . --task t-main
-git add .opc && git commit -m "opc: onboard"
-opc preflight -p . --task t-main
+ArcHa 的领域事实通过目标项目的 `.opc/` 接入层表达。框架核心不预设某种 NPU、编译器或模拟器；具体项目提供输入、权限范围、评价器、工具链和验收条件。这使架构建模、性能调优与功能开发能够共享执行基础。
 
-# 5. 跑自动迭代（--direction 覆盖任务合同里的方向）
-opc run    -p . --task t-main --direction "先压延迟，面积不许涨"
-opc status -p . --task t-main
-opc pause  -p . --task t-main      # 在下一个 attempt 边界生效；opc stop 同理
-opc report -p . --task t-main
+## 三个场景，一套迭代机制
 
-# 6. 晋升审核：复测基线/冠军、检查需求覆盖、可选独立审核；--apply 才会动分支
-opc promote -p . --task t-main --confirm 3 --review codex --apply main
-```
+| 场景 | 用户想得到什么 | 典型工作 | 完成依据 |
+| --- | --- | --- | --- |
+| **探索** | 对机制、因果关系或设计空间形成有边界的认识 | 阅读材料、提出竞争假设、设计对照、采集证据、分析反例 | 主张有来源与适用范围；证据和未知项明确；通过约定审核 |
+| **优化** | 在正确性与资源约束内改善已有实现 | 建立可比基线、修改实现、重复测量、比较候选 | 冻结条件下的有效改善、约束满足及完整验收 |
+| **开发** | 交付可使用的功能或工程成果 | 拆解缺口、开发、局部检查、集成验证、修复 | 必需需求被覆盖，交付物可用，自动检查与审核通过 |
 
-`opc check` 会把 `execution_enabled=false` 列为问题，所以第 4 步要先打开开关再检查（开关本身也要提交）。
+例如，同一个队列项目可以提出三个不同任务：“解释队列长度为何影响出队耗时”“降低长队列的出队耗时”“修复 FIFO 顺序并完成空队列行为”。它们共享角色和证据链，但目标与验收方式不同。
 
-合同进入新 revision 后用 `opc run --new-run`；`--base <ref>` 可从上一次的 champion 接着跑。冠军始终在 `refs/heads/opc/<task>`，只有 `opc promote --apply` 才会快进你指定的分支；若该分支已被检出，promote 只打印合并命令，不动你的工作树。
+当前配置对应 `exploration`、`tuning` 和 `development` 三类 Profile。Profile 提供版本化默认策略；实际行为由任务目标、权限、评价能力和验收契约共同决定。探索和开发可以没有数值优化目标，此时使用需求与验收门判断完成，无需人为制造一个分数。
 
-## 先讨论研究方向，再接入
+## 谁负责什么
 
-方向讨论使用 [archa-map](skills/archa-map/SKILL.md)；目标与合同准备使用 [archa-task](skills/archa-task/SKILL.md)，自动推进使用 [archa-loop](skills/archa-loop/SKILL.md)。在 ArcHa 仓库运行以下命令安装这三个技能（默认 `$CODEX_HOME/skills` 或 `~/.codex/skills`，已有同名技能备份到技能目录之外）：
-
-```bash
-python3 tools/install_research_skills.py
-```
-
-安装包按 `RUNTIME_FILES` 白名单包含当前工作树的运行模块、起草资源和许可证，不包含测试、仓库文档、示例、构建元数据或开发工具；manifest 记录逐文件摘要、快照摘要及相对 HEAD 的差异，不依赖原仓库绝对路径。更新安装不会自动升级已经初始化的项目。安装后在能发现新技能的会话中使用：
-
-```text
-$archa-map 探讨 DMA 调度优化的研究方向
-$archa-task /absolute/project/.opc/research/topics/dma-scheduling/tasks/r01-baseline/
-$archa-loop /absolute/project/.opc/research/topics/dma-scheduling/tasks/r01-baseline/
-```
-
-1. 第一阶段先初始化当前项目 `.opc/`，保存 `.opc/runtime/` 和本地入口 `.opc/archa.py`，再共同形成研究地图。地图正文自由组织，末尾包含 task to-do、每个方向的占位目录以及第二阶段提示词。此时只部署框架，不生成任务合同和评价器；已有项目合同和执行状态保留。
-2. 第二阶段读取用户指定的具体任务目录，核对依赖证据，派 sub-agent 调查源码或外部原始来源，证据保存在任务 `evidence/`。主 agent 调研后记录 brief 大纲，覆盖用途、一句话目标与完成状态、范围、交付物、验收条件、有无数值指标和留给 onboard 的未决项，依据用户任务与证据直接生成简报，记录合理假设，无需停下来等待额外确认。
-3. 形成大纲后直接生成 `task-brief.md`，结构检查通过才勾选该 task；勾选仅表示简报就绪。技能随后自动调用 onboard，核对合同并处理未决项，在 `.opc/context/DECISIONS.md` 记录简报路径、摘要与对应 task/revision。起草阶段保持执行关闭；默认 token 无上限、Task 时间额度两小时；必要评价器由 agent 自主准备。底层调用：
-
-```bash
-python3 /absolute/project/.opc/archa.py brief-check -p /absolute/project --brief .opc/research/topics/<topic>/tasks/<task>/task-brief.md
-python3 /absolute/project/.opc/archa.py onboard -p /absolute/project --task <resolved-task-id> --brief .opc/research/topics/<topic>/tasks/<task>/task-brief.md
-```
-
-4. 用户调用 `archa-loop <task-directory>` 后，技能定位对应合同，在已确定的范围与预算内完成执行开关、静态检查、接入文件提交和基线 preflight，再启动或恢复引擎迭代。已有运行先检查状态；已关闭的 run 不自动重置预算。结束时交付实际结果和报告，不自动晋升到用户分支。`archa-loop` 是技能入口，不是新增的 CLI 子命令。
-
-每次显式 archa-map 创建新专题；继续旧专题请直接给原目录和修改需求。archa-task 与 archa-loop 必须给具体任务目录，含空格时加引号；不提供目录不会自动选择任务。旧布局原位兼容，index.md 仅导航。
-
-布局见 [研究材料约定](skills/archa-map/references/research-layout.md)，简报见 [模板](skills/archa-task/references/task-brief.md)，证据见 [证据约定](skills/archa-task/references/evidence.md)，引擎映射见 [消费链](skills/archa-task/references/archa-workflow.md)。`brief-check` 只检查结构、占位项和来源，**不证明研究设计正确或可运行**。目标可随证据调整；已冻结执行合同的变化需要新 revision/run。
-
-onboard 将正文与来源摘要交给 worker，在 `.opc/local/onboard/` 保存本次输入与 SHA-256（该目录为最近一次起草记录，不是不可变实验归档）。实际产出仍需核对：要求是否进入合同/上下文、gate 是否实现、能力缺口是否保留。当前引擎支持无补丁的新测量和在下一次专家调用中复盘；额外诊断须由现有评价器输出数据。逐轮独立审核、跨任务调度仍需另外适配。
-
-## 一轮里发生什么
-
-```text
-expert ──plan──▶ plan check ──▶ designer ──patch──▶ sandbox ──▶ evaluate
-   ▲                                                                │
-   └──────────── feedback ◀── champion ◀── accept ◀─────────────────┘
-```
-
-| 阶段 | 做什么 | 不通过时 |
+| 角色 | 主要职责 | 关键产出 |
 | --- | --- | --- |
-| EXPERT | 只读 champion 树，产出 ExperimentPlan：假设、要改的文件、预期效果、可证伪条件 | `worker_failed` / 无实验可做即搜索枯竭 |
-| PLAN_CHECK | 计划中的文件都在 `editable` 内，且不是重复实验 | 本轮失败，不进入设计 |
-| DESIGN | 从 champion **提交**切一棵可写树，设计者实现计划 | `worker_failed`；不改标准 |
-| SANDBOX | 逐文件分类改动，任何冻结范围外的改动即失败 | `sandbox_violation` |
-| EVALUATE | 只把 `editable` 内的 diff 应用到全新的 champion 树，按顺序跑冻结门 | `broken`（候选问题）/ `infra`（环境问题） |
-| ACCEPT | 比较评价器与工具链摘要、约束、目标增益是否超过噪声 | `no_gain` / `incomparable` / 约束拒绝 |
-| CHAMPION | 提交、账本先写 intent、CAS 移动 ref、记账 | 恢复时按 intent 对账 |
-| FEEDBACK | 把历史、失败原件和剩余预算交给下一轮专家，检查停止条件 | `target_met` / `budget_exhausted` / `stagnation` / `expert_exhausted` |
+| **用户 User** | 选择方向、目标、交付要求、范围与预算；决定是否修改验收标准 | 任务意图及授权边界 |
+| **专家 Worker · Expert** | 提出假设与 proposal，设计实验和对照；分析反馈，选择下一步及最终候选 | 工作计划、实验设计、反馈分析、带适用范围的主张 |
+| **设计 Worker · Designer** | 按方案开发或执行调查，保留必要原件，说明实际行为、偏差与局限 | 候选实现、实验材料、工作结果与结论摘要 |
+| **审核 Worker · Reviewer** | 在独立上下文中核查选定成果、需求覆盖与证据，指出缺口 | 审核结论、逐项判断及修复依据 |
+| **ArcHa 引擎** | 管理契约、执行、评价、账本、预算、恢复与交付状态 | 可追溯的运行事实和交付报告 |
 
-退出码约定把「候选坏了」和「环境坏了」分开：`0` 通过、`75` 基础设施失败（不消耗搜索次数，连续多次则 blocked）、`77` 跳过（默认拒绝）、其他为候选失败。
+设计者的摘要描述本次实际完成的工作和观察；专家进一步判断这些证据支持什么主张、是否需要调整方案。独立审核针对明确的候选与主张版本，不能为后来修改的内容自动背书。
 
-## 仓库结构
+## 从一次迭代到可信交付
 
-```text
-opc/                     引擎（核心不含量指标名、工具名或领域路径）
-  cli.py                 命令行入口
-  core/
-    engine.py            主循环、停止条件、预算、恢复、视图
-    config.py            合同加载与严格校验（未知字段直接报错）
-    ledger.py            SQLite 唯一权威账本：run / attempt / champion / 费用 / 控制
-    workspace.py         git worktree、sandbox、候选 patch、CAS 移动 ref
-    accept.py            确定性接纳：缺指标即拒、约束、噪声下限、自定义规则
-    promote.py           晋升：证据链、复测、需求覆盖、可选独立审核、快进
-    model.py             值对象（Outcome / Measurements / Cost …）
-  domain.py              领域接缝：DomainAdapter 协议与加载
-  domains/command.py     默认领域：组件 JSON 里的命令门 + metrics.json
-  adapters/              worker 接缝：codex / dsh / scripted + 角色提示词
-  strategies/            内置策略（param_search 坐标搜索）
-  scaffold/              init 模板、onboard 指令与 ONBOARDING.md
-  tests/                 引擎测试（假 codex、假 dsh、失败注入）
-tools/project_layout.py  v0.2 时代的接入路径规划工具（独立于引擎，仅预览/生成 .opc 草案）
-docs/
-  README.md              文档导航与维护边界
-  design/                框架设计基线、项目接入与目录规范
-  research/              固定版本源码与外部方案核查
-  discussions/           研究讨论、确认方案和返回点
-  reviews/               历史独立审核记录
-  reports/               已完成验证的可提交报告
-  evidence/              审核与验证的原始证据
-benchmarks/              ArcHa 测试项目集合，入口见 benchmarks/README.md
-  dma-backpressure/      无数值优化目标的闭环冒烟任务
-    TASK.md starter/     worker 可见需求与初始工程
-    examiner/            外置验收与材料自检
-    reports/             已发生实验的可提交摘要与证据
-    runs/                独立工程、工作树、验收和日志（不提交）
-  deepstack/             主线固定版本登记，任务待定
-.tmp/                    本地临时脚本、测试夹具和可丢弃产物（不提交）
-pyproject.toml           包元数据（archa-opc 0.3.0，无运行时依赖）
-```
+![ArcHa 框架图：用户定义方向与目标，三个技能入口连接专家、设计者、评价与独立审核](docs/assets/archa-framework.png)
 
-目标项目只增加一个 `.opc/` 接入层，源码目录保持原样：
+### 1. 定义方向与准备任务
 
-```text
-.opc/
-  project.json                          项目身份；execution_enabled 默认 false
-  ONBOARDING.md                         接入指南（init 复制进来）
-  archa.py / runtime/                   地图技能初始化的项目内 CLI 与代码快照
-  research/topics/<topic>/research-map.md              方向地图、简报 to-do 和下一阶段提示词
-  research/topics/<topic>/tasks/<id>/                  task.md、task-brief.md 和 evidence/
-  context/PROJECT.md REQUIREMENTS.md DECISIONS.md
-  components/<id>.json                  可改范围、冻结评价器、门命令、工具链
-  tasks/<task>/revisions/rNNNN/task.json  目标、方向、需求、接纳规则、预算、worker
-  eval/evaluate.py                      评测脚本模板：跑项目命令 → 写 metrics.json
-  local/                                不入 Git：ledger、原件、视图、本机绑定
-```
+`archa-map` 把需求组织为方向地图与任务清单；`archa-task` 聚焦一个具体任务，形成简报，并自动调用 onboard 准备执行契约。契约明确目标、范围、交付物、评价方式和预算。
 
-## 设计要点
+准备阶段可以完善同一候选契约。首次绑定执行 Run 时冻结执行依据；此后改变目标、权限或验收等实质内容，需要按修订流程处理，历史结果仍保留原依据。
 
-- **合同只有一份、严格校验**：`project.json → components/<id>.json → tasks/<task>/revisions/rNNNN/task.json`。未知字段直接报错，拼错的字段不会悄悄失效；`.opc/**` 永远冻结。改合同要开新 revision 和新 run，旧修订不原地改。
-- **评价器冻结**：`evaluator_files` 的摘要决定「是否同一个评分器」；工具链版本进入每次测量。摘要不同就不比较新旧数字，工具链变了会当场重测 champion。
-- **干净树 + 最小补丁**：评测只接受 `editable` 范围内的 diff，并把它套到从专家选定 parent 生成的候选快照切出的全新树上。合同明确授权的成果会被收集，即使位于 Git 忽略目录；未授权的忽略文件、scratch 缓存和软链不进入候选。
-- **接纳失败关闭**：规则点名的指标缺失即拒绝（不是「没变坏」）；约束必须满足；收益要超过 `max(min_rel_gain, noise_k × 重复测量极差)`。自定义 `acceptance.rule` 必须是冻结评价器文件。
-- **单一权威与可恢复**：SQLite 账本是唯一权威，git ref、`STATE.md`、`report.json` 都只是投影；先写 intent 再 CAS 移动 ref，崩溃后按 intent 对账，第二个控制器会被拒绝。
-- **接缝可替换**：worker 三选一（`codex` / `dsh` / `scripted`），领域适配器默认是「命令门 + metrics.json」，也可在冻结文件里写 `"adapter": "path.py:Class"`；核心只经两个工厂拿到它们。
-- **晋升才做 Spec 轴**：每轮接纳是确定性的，不调用 reviewer；「这个结果是否值得要、结论是否越界」在 promote 时做一次，可选独立审核，未给出可信 verdict 一律阻塞。
+### 2. 由专家提出可检验的下一步
 
-## Worker 模型与推理强度
+专家读取当前任务、历史结果与授权材料，提出 hypothesis / proposal：要解决什么问题，采用什么方法，哪些观察会支持或削弱假设，为什么值得投入下一步。
 
-`opc init --apply` 会生成独立的本机配置 `.opc/local/workers.json`（Git 忽略）。
-`expert`、`designer`、`reviewer`、`onboard` 各有自己的 `model` 和 `reasoning_effort`；
-填入的值覆盖该角色合同设置，`null` 或省略表示继承后端/合同默认值。
-reviewer 使用独立配置，不再继承 expert；仍需 `promote --review` 显式开启。
-新项目默认：expert、designer、reviewer、onboard 全部使用 `gpt-6.1-sol / medium`。
-已有配置保持不变。
+一个工作可以是代码开发，也可以是无补丁的新测量、诊断、证据补充或分析。实验允许得到“不支持原假设”或“证据不足”的结果。
 
-模板见 [workers.json](opc/scaffold/workers.json)，完整示例、优先级和 DSH 的 provider 配置见
-[接入指南](opc/scaffold/ONBOARDING.md#独立的-worker-环境配置)。旧项目可将模板复制到本机配置路径，
-无需修改任务合同；旧 runtime 需先按既有流程显式升级，才能读取新配置。
+### 3. 由设计者实施，框架保存与评价
 
-## 文档
+设计者在授权范围内完成工作，提交必要原件及摘要。框架保存候选和证据；需要正式评价时，按照冻结的评价条件执行。数值优化任务还要核对可比性、约束和有效收益。
 
-目录分工与保留规则见 [文档导航](docs/README.md)，本次工程验证见 [任务完成验证方案](docs/design/task-completion/validation.md)。
+专家接收结果并作反馈分析，选择继续、调整、补充证据，或请求验收。循环依据缺口、证据和继续工作的预期价值推进，同时遵守预算与用户暂停、停止指令。
 
-| 文档 | 内容 | 状态 |
-| --- | --- | --- |
-| [OPC 框架实现方案](docs/design/OPC%20框架实现方案.md) | 设计判断、状态机、预算与恢复、复用选型、分阶段验收 | 设计基线；仍用旧名「Ge」，目录示例早于 v0.3 |
-| [OPC 项目接入与目录规范](docs/design/OPC%20项目接入与目录规范.md) | 三个根目录、`.opc` 布局、实验产物与生命周期 | 接入规范；个别链接指向已移除的示例 |
-| [opc/README](opc/README.md) | 引擎用法、模块接缝、openTPU 教训、未完成项 | 引擎参考；「已验证」节引用已移除的示例 |
-| [接入指南](opc/scaffold/ONBOARDING.md) | 合同字段、评价器契约、退出码、worker 选项 | 当前接入指南（`opc init` 会复制到目标项目） |
-| [运行底座核查](docs/research/runtime-reuse.md) / [优化循环核查](docs/research/optimization-reuse.md) | Argus、LangGraph、OpenEvolve 等选型证据 | 选型证据 |
-| [项目接入核查](docs/research/project-integration.md) / [GSD 合同核查](docs/research/gsd-contracts.md) | openTPU 目录与生命周期、GSD 需求追踪 | 选型证据 |
-| [v0.1 验证记录](docs/validation.md) / [v0.2 接入验证](docs/integration-validation.md) | LangGraph+GEMV 原型、合同 v0.2 与路径工具验证 | 历史记录；引用已移除的 `contracts/`、`examples/` |
-| [Standards 审核](docs/reviews/review-standards.md) / [Spec 审核](docs/reviews/review-spec.md) | v0.1 的双轴独立审核 | 历史记录 |
-| [合同审核](docs/reviews/review-contracts-v02.md) / [布局审核](docs/reviews/review-integration-layout.md) | v0.2 的两项独立审核 | 历史记录 |
-| [讨论白板](docs/discussions/opc/winson-whiteboard.md) | 目标边界、减法记录、待验证假设与返回点 | 历史讨论 |
-| [证据归档](docs/evidence/) | 上述审核的原始探针与复算结果 | 归档原件 |
+### 4. 独立审核后形成交付
 
-## 已知限制
+专家请求验收后，`archa-loop` 通过引擎对选定成果执行完整验收，并完成合同要求的独立 review。**面向正式交付的任务应在简报中明确独立审核要求，并核对该要求已进入合同。** 当前实现按合同启用审核，并非每一轮都默认调用 Reviewer。
 
-- 只做单任务、串行候选；没有并行资源、多机调度或分布式控制器（Temporal / Argus 仍是待评估选项）。
-- 隔离靠 git worktree + worker 沙箱 + 事后越界检查，没有 OS 级隔离（容器、独立账号、只读挂载）。
-- 内置 `param_search` 是坐标搜索，会停在局部最优；更强的搜索应作为策略插件接入。
-- `dsh` 审核只接受带 `verdict` 键的 JSON；散文评审会被判为「审核不可用」并阻塞晋升——宁可挡住，不可放行。
-- `onboard` 只起草合同，不替代人工审阅；`check` / `preflight` 才是就绪判据。
-- 文档仍在改名和去旧链接的过程中，设计文档里的 Ge、GEMV、PIM 示例属于历史材料。
+若不通过，框架根据缺口补验、重试审核、修复候选或补充证据。缺少继续条件时，保留未完成状态及重开条件。只有实际交付结果 `delivery.complete=true` 才能声明任务完成。
 
-## 许可
+> **达到数值目标、Run 已结束、任务已验收完成，是三个不同事实。** 默认交付包括报告和选定提交；不会自动把结果合并到用户分支。
 
-Apache License 2.0，见 [LICENSE](LICENSE)。
+## 三步开始一个最小任务
 
-## 以任务完成为主线
+下面使用一个极小的 Python 队列项目演示开发场景。示例中的预期输出是教学说明，不是已发生的 ArcHa 运行报告。
 
-明确工程任务可直接形成已确认简报，Source 用 Task: TASK.md；研究地图仍用于开放问题。
-没有数值优化目标时 acceptance.objective 可省略或为 null，完成条件由 requirements 的 check、gates（冻结门 ID 列表）或 review 验证。无 check/门覆盖的 automated 声明不是完成证据。
-无 objective 允许功能未完成但执行通道可用的基线，默认从已保存工作版本连续开发，designer 可在授权范围内增加开发测试和局部调试。expert 的 evaluate=true 可请求正式评价。
-base_attempt 同样适用于停止回复；run 停止、预算用尽、数值 target 达标和任务完成分别报告。promote 对 selected_version 完整终验，只有满足必要条件才允许显式 apply；同版本补 review 可复用仍适用的评价。
-旧 benchmark 执行工具与 FP32 包已退役，历史报告保留，框架回归仍为 python -m pytest -q。
+### 准备：安装技能并创建示例项目
 
-## 默认资源配置
+需要 Python 3.10+、Git，以及能够发现这些技能、调用已配置 Worker 后端的 Agent 环境。当前提供 Codex、DSH 等适配；技能安装不等于后端凭据或工具链已准备好。
 
-模型与资源上限统一放在 `.opc/local/workers.json`，新项目默认：
-
-```json
-{
-  "budget": {"max_tokens": null, "max_wall_seconds": 7200},
-  "expert": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
-  "designer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
-  "reviewer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
-  "onboard": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"}
-}
-```
-
-预算按 Task 累计，包含准备及所有 revision、Run；默认 token 无上限、活动时间额度 7200 秒，无隐含轮数上限。显式限制继续生效，null 不撤销已有明确上限。通过 onboard 的预算参数追加授权时提高总额度，已用量保留；暂停和重启不清零。仅启用的约束要求相应可靠计量。模型单次调用默认无超时，评价器工具超时与用户 pause/stop 独立保留。配置来源与冻结规则见 [接入说明](opc/scaffold/ONBOARDING.md#独立的-worker-环境配置)。
-
-## 自主准备
-
-授权范围确定后，缺失评价器/负控/证据与用量工具属于 agent 的准备待办：
+在 ArcHa 仓库执行：
 
 ```bash
-opc onboard -p . --brief <brief> --prepare --task <task-id> --revision <revision>
+git clone https://github.com/kongxiangcong/ArcHa.git
+cd ArcHa
+git switch main
+git pull --ff-only origin main
+python tools/install_research_skills.py
 ```
 
-该命令仅做准备和合同启用的只读审阅，不启动正式设备实验。pending 由 agent 继续；ready 后提交准备文件并通过 check/preflight，首次绑定执行 Run 时冻结候选。external_blocked 必须带真实观测证据与外部下一步。input 包含 cached input，主流程与外部嵌套用量由调用者累计报告，命令内 worker/reviewer 自动记账。正式 run 沿用同一账本与授权总额，不能以 new-run 重置准备消耗。计量仅在对应预算约束启用时阻止派发；细节见上述接入说明。
+安装器默认写入 `$CODEX_HOME/skills`，未设置时使用 `~/.codex/skills`；随后开启能发现新技能的会话。技能会为目标项目部署 `.opc/archa.py` 和本地 runtime。若还需全局 `opc` 命令，可在 ArcHa 仓库运行 `python -m pip install -e .`。
 
-已部署的 runtime 和全局技能不会自动升级；使用前核对项目入口 --help 与已安装技能内容。本仓库修改只影响后续明确部署的副本。
+另建 `queue-demo` 目录，创建 `queue_impl.py`：
 
-每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，保留对应候选的检查回执。
+```python
+class Queue:
+    def __init__(self):
+        self._items = []
 
-## 工作台（可选，默认只读）
+    def push(self, item):
+        self._items.append(item)
 
-工作台聚焦工作阶段与 Worker 具体活动；可选择历史调用，读取当时必要交接和已登记的任务材料，再返回原现场。所有入口均不展示内部审计或检验材料。默认只读，显式控制模式支持暂停、继续同一运行和停止；请求收到与实际结果分别反馈。暂停允许在途调用收尾，停止单独确认后取消当前调用并阻止后续派发，均保留已保存结果。
+    def pop(self):
+        return self._items.pop()  # 当前是后进先出；任务要求 FIFO
+```
+
+在该目录初始化并提交：
+
+```bash
+git init
+git add queue_impl.py
+git commit -m "demo: initial queue implementation"
+```
+
+目标是保持 `Queue.push(item)` / `Queue.pop()` 接口，实现先入先出；空队列 `pop()` 抛出 `IndexError`，且抛错后仍可正常使用。用户给定的是行为和边界，具体实现方式交给 Worker。
+
+### 第一步 · archa-map：把方向变成任务地图
+
+在目标项目的 Agent 会话中输入，先替换实际项目路径：
+
+```text
+$archa-map 当前项目是 /absolute/path/queue-demo。
+我要把这个极小的队列实现变成行为正确、可验证的 FIFO 队列。
+请围绕“先修复行为，再考虑性能”形成一张简洁地图。
+第一项只做 FIFO 顺序、空队列异常和异常后的可继续使用；保持公开 API。
+不加入并发、持久化或新依赖，本次不做性能优化。
+请给出第一项任务的实际目录，以及可复制的 archa-task 提示词。
+```
+
+你会得到研究地图、任务占位目录和下一步提示词。地图将本次开发任务与后续性能方向分开；此时尚未开始实现或正式实验。
+
+一个可能的布局如下，**具体名称以工具实际返回为准**：
+
+```text
+queue-demo/
+├── queue_impl.py
+└── .opc/
+    ├── archa.py
+    ├── runtime/
+    └── research/topics/queue-correctness/
+        ├── research-map.md
+        ├── discussion.md
+        └── tasks/r01-fifo/
+            └── task.md
+```
+
+### 第二步 · archa-task：把一个任务准备到可执行
+
+复制上一步返回的实际任务目录：
+
+```text
+$archa-task "/absolute/path/queue-demo/.opc/research/topics/queue-correctness/tasks/r01-fifo/"
+请准备这个开发任务的简报和执行合同。
+目标：保持公开 API，实现 FIFO；空队列 pop 抛出 IndexError，之后仍能正常入队出队。
+验收覆盖单元素、多个元素、交替入队出队、重复值和空队列恢复。
+交付 queue_impl.py 的修复、必要验证材料和简短工作结果摘要。
+没有数值优化目标，不增加吞吐量或耗时评分。
+请将独立审核列为必需验收：核对行为、边界情况、证据与需求覆盖。
+只完成准备，暂不启动正式迭代。
+```
+
+该阶段读取项目并调查任务，生成 `task-brief.md`，自动执行 onboard，核对执行契约、评价器与交接关系。无需用户手写引擎 task ID 或另行启动 onboard。
+
+准备完成后，应能看到：
+
+| 需要确认的信息 | 这个例子中的含义 |
+| --- | --- |
+| 目标与完成条件 | FIFO 和空队列行为全部满足 |
+| 可改范围 | 必要实现及明确授权的开发材料 |
+| 冻结验收 | 使用准备好的行为检查，执行中不能改标准求通过 |
+| 数值目标 | 无，`acceptance.objective=null` |
+| 独立审核 | 必需，覆盖行为、边界和证据 |
+| 执行交接 | 明确的 Task / revision，以及下一步任务目录 |
+
+`ready-for-onboard` 仅表示简报可以交给起草流程；`brief-check` 通过仅表示结构合格。它们都不等于任务已经完成，也不单独证明执行条件就绪。
+
+### 第三步 · archa-loop：运行、修复、验收、交付
+
+```text
+$archa-loop "/absolute/path/queue-demo/.opc/research/topics/queue-correctness/tasks/r01-fifo/"
+按已准备的合同启动自动迭代，完成 FIFO 开发任务。
+由专家提出假设和工作计划，由设计者实现并提交结果摘要；
+通过冻结行为检查后，对选定成果完成合同要求的独立审核。
+在原授权范围与累计预算内修复实际发现的问题。
+最后说明是否完成、交付版本、验证证据、审核结论和剩余缺口。
+```
+
+技能会定位该任务对应的合同，完成必要准备、执行检查、接入文件提交和 preflight，然后启动或恢复运行。开发任务允许产品功能尚未通过的基线，但工具、输入和输出通道必须真实可用。
+
+这个任务的一轮工作可能如下：
+
+| 环节 | 示例内容 |
+| --- | --- |
+| 专家 proposal | 当前从列表尾部弹出导致 LIFO；调整出队行为应满足 FIFO，同时保持空队列异常 |
+| 实验设计 | 入队 A、B、C，预期依次出队 A、B、C；补充交替操作与空队列恢复对照 |
+| 设计者工作 | 修改授权实现，执行局部检查，摘要说明行为变化及局限 |
+| 正式验证 | 冻结检查核对需求，保留真实输出 |
+| 专家反馈 | 判断已有证据是否足够，必要时补充边界验证，随后请求验收 |
+| 独立审核 | 核查选定版本、检查覆盖、原始证据和未声明限制 |
+
+实际实现方式、轮数和结果以运行记录为准。若预算耗尽或必要审核未通过，应明确交付“当前成果与未完成项”，不能以进程退出成功替代任务完成。
+
+### 如何读最终结果
+
+先看四件事：**是否完成、交付了哪个版本、依据是什么、还缺什么。** 然后按需追溯 Task、revision、Run、候选提交、测试原件和审核报告。
+
+正常交付应能回答：“FIFO 行为由哪些检查证明？独立审核覆盖了什么？选定的是哪个提交？”失败交付也应能回答：“缺哪个条件？已有成果能否保留？什么新证据或外部变化才值得继续？”
+
+## 将同一流程用于探索与优化
+
+以下提示词是新的任务方向入口。后续仍使用地图返回的具体任务目录调用 `archa-task`，再调用 `archa-loop`。
+
+### 探索：理解现象和机制
+
+```text
+$archa-map 当前项目是 /absolute/path/queue-demo。
+我想理解不同队列长度下，出队实现为什么会产生不同耗时。
+请从现有实现提出可区分的机制假设，规划一个小规模探索任务。
+需要对照设计、原始测量、适用条件、反例和未知项；区分代码推断与实测。
+成果用于决定后续是否值得优化，不预设某种实现一定更好。
+请将最终机制解释和证据充分性纳入独立审核。
+```
+
+### 优化：在约束内改善性能
+
+```text
+$archa-map 当前项目是 /absolute/path/queue-demo，已有正确的 FIFO 基线。
+我要降低长队列场景的出队耗时，保持公开 API、FIFO 语义和空队列行为。
+请先核查基线、计时方法与噪声，准备一个最小优化任务；
+在任务合同中明确负载、重复测量、可改范围和有效改善的判定方法。
+最终交付需要正确性检查、可比性能证据和独立审核。
+没有实测前不要承诺加速比例。
+```
+
+### 继续、暂停与修改目标
+
+| 意图 | 可复制表达 |
+| --- | --- |
+| 继续原任务 | `$archa-loop "<实际任务目录>" 继续原 Run；若存在多个可恢复 Run，先列出身份供我选择。` |
+| 查看进展 | `只查看该任务状态，说明当前工作、累计预算、结果与阻塞；不要恢复执行。` |
+| 暂停 | `暂停这个任务，保留原 Run、成果和累计用量，并确认暂停已生效。` |
+| 调整范围 | `将该任务的范围从 X 改为 Y，保留历史依据；请判断是否需要新 revision，完成新合同准备。` |
+
+每次显式调用 `archa-map` 都会创建新专题。继续旧专题时，直接提供原专题目录及修改要求。`archa-task` 和 `archa-loop` 必须指向**具体任务目录**，不能用项目根目录、专题根目录或某个 Markdown 文件代替。路径有空格时加双引号。
+
+对于已经清楚的工程任务，也可以直接从含 `task.md` 的具体任务目录调用 `archa-task`，无需先创建研究地图。
+
+## 框架如何保留可靠性
+
+**任务契约。** 执行目标、权限与验收在运行边界固定下来。准备过程可迭代，已经执行的合同不能被后来草稿悄悄替换。
+
+**证据链。** 工作结果、原始观测、专家反馈分析和主张分别记录。缓存是历史证据；执行失败不自动证明假设错误；性能改善也不自动证明机制解释成立。
+
+**可恢复运行。** 恢复以明确的 Run 身份及冻结配置为依据，保留历史和累计消耗。查看状态不会解除暂停，也不会启动新工作。
+
+**连续预算。** 默认 Task 时间额度为两小时、token 不设上限，同时遵守已有明确硬限制。准备、不同 revision 和各次 Run 的累计用量连续计算，不能通过重启清零。
+
+**独立交付判定。** 审核缺失、证据不足或仍有必需条件未满足时，不能声明完整交付。更改验收标准由用户决定；审核者提出的建议不会自行成为新的授权。
+
+## 当前进度与能力边界
+
+当前主线已合并 S1–S5 大版本重构与流程修复（[PR #11](https://github.com/kongxiangcong/ArcHa/pull/11)）；Python 包版本为 `0.3.0`。
+
+主线已包含三阶段技能入口、任务契约与版本化 Profile、准备和恢复、工作与证据交接、主张反馈、终验及修复流程，以及调试工作台和持久化运行控制。具体执行约定见三个技能入口和接入指南。
+
+测试项目已组织为 DeepStack 开发、Ramulator2 优化、DeepStack 探索和独立端到端题目，并保留 DMA 小型回归。**题目准备、局部检查、真实模型完成任务和外置验收通过，是不同验证层级。** 本文不把准备报告当作三类场景全面通过的性能证明，也不提供未经核验的加速或成功率数字。
+
+具体任务能否执行，仍取决于项目评价器、Worker 后端、工具链、权限及输入材料。Profile 名称本身不保证这些条件已经具备。已部署项目的 runtime 和全局技能也不会因上游更新而自动升级，应按各自入口显式更新。
+
+## 安装与运行参考
+
+引擎需要 Python 3.10+ 和 Git，支持原生 Windows 与 Linux。Windows 可使用 Git for Windows 和 PowerShell，详见 [跨平台运行](docs/cross-platform.md)。
+
+```bash
+# 在 ArcHa 仓库中安装底层命令行
+python -m pip install -e .
+
+# 查看目标项目的实际状态与报告
+opc status -p /absolute/path/to/project --task <task-id>
+opc report -p /absolute/path/to/project --task <task-id> --revision <revision>
+```
+
+`<task-id>` 和 `<revision>` 使用任务准备阶段返回的实际身份，不根据目录名称猜测。通过技能部署的项目也可以使用 `python <project>/.opc/archa.py` 替代 `opc`。首次使用推荐按上面的三个技能入口操作；底层合同、门命令和接纳规则见 [接入指南](opc/scaffold/ONBOARDING.md)。
+
+每个 Worker 的模型与推理强度可以在目标项目的 `.opc/local/workers.json` 中独立配置；已有本机配置保持不变。新项目默认配置见 [workers.json](opc/scaffold/workers.json)，覆盖顺序、DSH provider 与预算规则见 [Worker 环境配置](opc/scaffold/ONBOARDING.md#独立的-worker-环境配置)。
+
+## 工作台
+
+工作台展示任务进度、Worker 活动、历史调用、证据与交付状态，默认只读。显式启用控制模式后，可以暂停、继续同一运行或停止，保留成果、冻结配置和累计用量。
+
+<details>
+<summary>展开：安装、启动与开发验证</summary>
 
 从干净 checkout 构建并安装（Node 20.19+ 或 22.12+；Python 3.10+）：
 
@@ -298,3 +350,27 @@ python tools/observer_browser_smoke.py
 CI 在基础安装和安装 observer 测试依赖后分别运行完整回归，并显式检查 HTTP 测试依赖可导入。
 
 当前规格与逐票验收见 [S5 规格和事项](.scratch/s5-debugging-workbench/spec.md)，旧版只读实现记录见 [观察工作台 tickets](docs/design/observer-workbench/tickets.md)。受控执行验证框架行为，不代表真实模型或用户部署已验证；未识别来源明确提示，不迁移源数据。
+
+</details>
+
+## 源码与深入阅读
+
+从用户入口到执行实现，可按需继续阅读：
+
+- [archa-map：方向地图与项目初始化](skills/archa-map/SKILL.md)
+- [archa-task：任务简报与自动 onboard](skills/archa-task/SKILL.md)
+- [archa-loop：运行、恢复、终验与修复](skills/archa-loop/SKILL.md)
+- [Expert / Designer 的工作协议](opc/adapters/prompts.py)
+- [任务配置及 Profile 解析](opc/core/config.py)
+- [交付验收与独立审核实现](opc/core/promote.py)
+- [测试项目与验证边界](benchmarks/README.md)
+
+## 贡献与许可
+
+开发前请阅读 [AGENTS.md](AGENTS.md) 和 [文档导航](docs/README.md)。基础回归使用 `python -m pytest -q`；工作台的可选依赖与验证命令见上方展开内容。提交问题或实验结果时，请附上版本、任务目标、必要运行信息、实际结果与证据位置。
+
+ArcHa 使用 [Apache License 2.0](LICENSE)。
+
+---
+
+<p align="center"><strong>ArcHa · Architecture Harness</strong><br/>方向由人决定，工作由证据推进，成果经独立审核交付。</p>
