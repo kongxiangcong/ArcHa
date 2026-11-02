@@ -5,6 +5,7 @@ contract; only registered artifact IDs can cross the HTTP file boundary.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 import base64
 import datetime as dt
 import hashlib
@@ -67,6 +68,7 @@ class ObserverAdapter:
     def __init__(self, root: Path | str, demo=False):
         self.root = Path(root).resolve()
         self.demo = demo
+        self.control_enabled = False
         self.project_key = 'p_' + digest(str(self.root))[:16]
         self.lock = threading.RLock()
         self.artifact_registry: dict[str, dict] = {}
@@ -78,6 +80,7 @@ class ObserverAdapter:
         self.revisions: dict[str, dict] = {}
         self.calls: dict[str, dict] = {}
         self.call_sources: dict[str, dict] = {}
+        self.activity_cache = OrderedDict()
         self.run_rows: list[dict] = []
         self.snapshots: dict[str, dict] = {}
         self.source_at = None
@@ -134,18 +137,20 @@ class ObserverAdapter:
             self.issues.append(dict(code='source_unreadable', message='更新失败，数据可能滞后；最后成功读取 ' + str(cached_at or '未知') + '：' + self._display(path), entity_id=None, cached_at=cached_at))
             return self.last_files.get(key, (default, None))[0]
 
-    def _register(self, path=None, *, title=None, phase='other', owners=None, record=None, locator=None):
+    def _register(self, path=None, *, title=None, phase='other', owners=None, record=None, locator=None,
+                  check_availability=True):
         if path is not None:
             # Stable identity uses the lexical path; access checks always resolve again.
             p = Path(path).absolute()
             call_owner = next((o['id'] for o in (owners or []) if ':call:' in o.get('id', '')), None)
             ident = self._id('artifact', str(p) + (':' + call_owner if call_owner else ''))
-            allowed = self._allowed(p)
+            allowed = self._allowed(p) if check_availability else None
             try:
                 stat = p.stat() if allowed and p.is_file() else None
             except OSError:
                 stat = None
-            availability = 'available' if stat else ('missing' if allowed else 'unreadable')
+            availability = ('not_expanded' if not check_availability else
+                            'available' if stat else ('missing' if allowed else 'unreadable'))
             mime = mimetypes.guess_type(str(p))[0] or ('text/plain' if p.suffix in ('.patch', '.jsonl', '.log') else 'application/octet-stream')
             text = mime.startswith('text/') or p.suffix in ('.json', '.jsonl', '.md', '.patch', '.svg', '.log')
             obj = dict(id=ident, kind=p.suffix.lstrip('.') or 'file', title=title or p.name,
@@ -193,7 +198,7 @@ class ObserverAdapter:
                         self.issues.append(issue('source_unsupported', '账本缺少表：' + name))
                         continue
                     columns = {r[1] for r in con.execute('PRAGMA table_info(' + name + ')')}
-                    required = {'runs': {'run_id', 'task_id', 'revision', 'state'}, 'events': {'seq', 'run_id', 'at', 'kind', 'attempt_no', 'body'}, 'attempts': {'run_id', 'attempt_no'}, 'champions': {'run_id', 'seq', 'commit_sha'}, 'charges': {'run_id', 'tokens', 'wall_seconds', 'usd', 'usd_known'}}[name]
+                    required = {'runs': {'run_id', 'task_id', 'revision', 'state'}, 'events': {'seq', 'run_id', 'at', 'kind', 'attempt_no', 'body'}, 'attempts': {'run_id', 'attempt_no'}, 'champions': {'run_id', 'seq', 'commit_sha'}, 'charges': {'run_id', 'tokens', 'wall_seconds', 'usd', 'usd_known'}, 'calls': {'call_id', 'run_id', 'input', 'result'}}[name]
                     if not required <= columns:
                         result[name] = []
                         self.issues.append(issue('source_unsupported', '账本缺少必要列：' + name))
@@ -220,7 +225,7 @@ class ObserverAdapter:
             self.issues.append(issue('source_invalid_shape', 'requirements 应为列表；未使用损坏字段作为完成条件'))
             return []
         return [dict(id=str(r.get('id') or ''), text=str(r.get('text') or ''), verification=r.get('verification') if isinstance(r.get('verification'), str) else None,
-                     result='unverified', tested_commit=None, evidence_refs=[], report_artifact_id=None)
+                     required=r.get('required', True), result='unverified', tested_commit=None, evidence_refs=[], report_artifact_id=None)
                 for r in rows or [] if isinstance(r, dict)]
 
     def _discover(self):
@@ -310,6 +315,7 @@ class ObserverAdapter:
                     self.project['source_mode'] = 'snapshot'
                 if self.snapshots:
                     self.issues.append(issue('snapshot_only', '账本不可用；仅显示已有 views 快照，时间与内容可能滞后'))
+        self.run_numbers = {r['run_id']: n for n, r in enumerate(sorted(self.run_rows, key=lambda r: (r.get('created_at') or '', r['run_id'])), 1)}
         self.source_at = max((e['at'] for e in db['events'] if e.get('at')), default=None)
         self._link_revisions()
         self.discovery_at = __import__('time').monotonic()
@@ -421,13 +427,27 @@ class ObserverAdapter:
                 flush()
             block[key] = match[2].strip().strip('`')
         flush()
+        # Task-authored append records supersede earlier versions of the same relation.
+        # Legacy prose remains independently visible when its provenance conflicts.
+        handoffs = {}
+        for raw in re.findall(r'<!-- archa-handoff (.*?) -->', decisions):
+            try:
+                row = json.loads(raw)
+                key = (row['task_id'], row['revision'], row['brief'])
+                if row['revision'] is not None:
+                    handoffs[key] = dict(task=row['task_id'], revision=row['revision'],
+                                         brief=row['brief'], sha256=row['sha256'], change=row.get('change'), conflict=False)
+            except (ValueError, TypeError, KeyError):
+                self.issues.append(issue('invalid_handoff', 'DECISIONS 中的任务交接无法读取'))
+        bindings.extend(handoffs.values())
         for task in self.tasks.values():
             task['revision_refs'] = []
         for revision in self.revisions.values():
             explicit = [b for b in bindings if b['task'] == revision['execution_task_id'] and b['revision'] == revision['revision']]
             uses_decisions = bool(explicit)
             source = mapping(revision['_raw'].get('_source'))
-            if isinstance(source.get('brief'), str):
+            refreshed = any(b.get('change') in ('editorial', 'material') and b['brief'] == source.get('brief') for b in explicit)
+            if isinstance(source.get('brief'), str) and not refreshed:
                 explicit.append(dict(brief=source['brief'], sha256=source.get('sha256'), conflict=False))
             # Preserve recorded facts, normalizing paths only for comparisons.
             facts = {(b['brief'], b.get('sha256')) for b in explicit}
@@ -496,7 +516,14 @@ class ObserverAdapter:
                                                         requirement_results='partial', numeric_measurements='partial')))
 
     def _run_ref(self, row):
-        return dict(id=self._id('run', row['run_id']), label=row['run_id'], source_run_id=row['run_id'],
+        if row['run_id'] not in self.run_numbers:
+            rows = self._db(tables_to_read=('runs',))['runs']
+            self.run_numbers = {r['run_id']: n for n, r in enumerate(sorted(rows, key=lambda r: (r.get('created_at') or '', r['run_id'])), 1)}
+        number = self.run_numbers[row['run_id']]
+        kind = '准备记录' if row.get('revision') == 'preparation' else '运行'
+        at = row.get('created_at')
+        display_label = f'{kind} {number}' + (' · ' + at.replace('T', ' ') if at else ' · 时间未记录')
+        return dict(id=self._id('run', row['run_id']), label=row['run_id'], display_label=display_label, source_run_id=row['run_id'],
                     execution_task_id=row.get('task_id'), revision=row.get('revision'),
                     kind='preparation' if row.get('revision') == 'preparation' else 'execution',
                     recorded_state=row.get('state'), stop_reason=row.get('stop_reason'))
@@ -557,6 +584,57 @@ class ObserverAdapter:
                     recorded_tokens=tokens, recorded_usd=usd, recorded_wall_seconds=seconds, completeness=complete,
                     budget_tokens=budget.get('max_tokens'), budget_wall_seconds=budget.get('max_wall_seconds'),
                     note='仅账本 charges 已记录用量；未把 host_usage 累计再次相加', source_refs=[])
+
+    def _task_usage(self, row, contract, origin=None):
+        data = self._db(tables_to_read=('runs', 'charges', 'events'))
+        owners = {r['run_id'] for r in data['runs'] if r['task_id'] == row['task_id']}
+        owners.add('preparation:' + row['task_id'])
+        if origin:
+            owners &= {event['run_id'] for event in data['events']
+                       if event['kind'] == 'run_created' and event['seq'] > origin['after_event']}
+        charges = [c for c in data['charges'] if c['run_id'] in owners]
+        events = [e for e in data['events'] if e['run_id'] in owners]
+        budget = dict(mapping(contract.get('budget')))
+        for event in events:
+            if event['kind'] == 'task_budget_authorized':
+                budget.update(mapping(parsed(event['body'])))
+        usage = self._usage(row, charges, events, {'budget': budget})
+        usage.update(scope='execution_allowance' if origin else 'task', scope_id=row['task_id'], includes_preparation=not bool(origin),
+                     source_refs=[dict(kind='ledger', display_path='.opc/local/ledger.sqlite3',
+                                       locator='charges:task_id=' + row['task_id'])])
+        return usage
+
+    def _acceptance_history(self, task_id):
+        from ..core.results import acceptance_history
+        data = self._db(tables_to_read=('runs', 'events'))
+        runs = {r['run_id']: r for r in data['runs'] if r['task_id'] == task_id}
+        reports = []
+        for event in sorted(data['events'], key=lambda e: e['seq']):
+            if event['run_id'] not in runs or event['kind'] != 'promotion_report':
+                continue
+            body = parsed(event['body'], {})
+            path = body.get('report_path')
+            report = self._read(path, json_file=True) if isinstance(path, str) else None
+            if not isinstance(report, dict):
+                self.issues.append(issue('source_unreadable', '验收历史报告不可读：' + str(path)))
+                continue
+            if (report.get('run_id') != event['run_id'] or type(report.get('complete')) is not bool
+                    or not isinstance(report.get('selected_version'), str)
+                    or not isinstance(report.get('acceptance_revision', runs[event['run_id']]['revision']), str)):
+                self.issues.append(issue('source_invalid_shape', '验收历史报告身份或结果字段无效：' + path))
+                continue
+            report = dict(report)
+            report.setdefault('acceptance_revision', runs[event['run_id']]['revision'])
+            report.setdefault('acceptance_task_digest', runs[event['run_id']].get('task_digest'))
+            reports.append((report, path))
+        revisions = {r['revision']: r['task_digest'] for r in self.revisions.values()
+                     if r['execution_task_id'] == task_id and
+                     self.artifact_registry[r['contract_artifact_id']]['path'].parent.name != 'frozen'}
+        history = acceptance_history(revisions, reports)
+        for row in history:
+            if row['report_path']:
+                row['report_artifact_id'] = self._register(row['report_path'], phase='acceptance')['id']
+        return history
 
     def run(self, ident):
         with self.lock:
@@ -649,9 +727,10 @@ class ObserverAdapter:
                 for req in requirements:
                     result = report_requirements.get(req['id'], {})
                     raw_status = str(result.get('status') or '')
-                    req.update(result='met' if raw_status in ('met', 'met_by_gates', 'met_by_review') else 'not_met' if raw_status.startswith('not_met') else 'pending_review' if raw_status == 'needs_review' else 'unverified',
-                               tested_commit=selected, evidence_refs=[self._source(art)], report_artifact_id=art['id'])
-                if acceptance['value'] == 'passed' and any(r['result'] != 'met' for r in requirements):
+                    req.update(result='met' if raw_status in ('met', 'met_by_gates', 'met_by_review') else 'not_met' if raw_status.startswith('not_met') else raw_status if raw_status in ('insufficient_evidence', 'not_covered') else 'pending_review' if raw_status == 'needs_review' else 'unverified',
+                               tested_commit=selected, evidence_refs=[self._source(art)], report_artifact_id=art['id'],
+                               review_status=result.get('review_status'), review_evidence=result.get('evidence', []), gap=result.get('gap'))
+                if acceptance['value'] == 'passed' and any(r['required'] and r['result'] != 'met' for r in requirements):
                     acceptance = state('unknown', raw='complete=true', basis='recorded', note='总体结论与逐项证据不一致；无法确认验收通过')
                     self.issues.append(issue('report_inconsistent', '终验总体结论与逐项证据不一致'))
             prep = state('unknown', note='准备记录未明确关联此运行')
@@ -670,8 +749,14 @@ class ObserverAdapter:
                               '记录中运行，实时状态未确认' if execution_raw == 'active' else None)
             attempts = []
             call_refs = []
+            completed_calls = {e['body'].get('call_id') for e in events
+                               if e['kind'] in ('worker_call', 'evaluation_call')}
             for event in events:
-                if event['kind'] == 'worker_call':
+                if event['kind'] in ('worker_call', 'evaluation_call') or (
+                        event['kind'] == 'call_dispatched' and event['body'].get('call_id') not in completed_calls):
+                    if event['kind'] == 'call_dispatched':
+                        event = {**event, 'body': {**event['body'], 'state': 'dispatched',
+                                 'log_dir': str(Path(event['body']['receipt_path']).parent)}}
                     call = self._call_from_event(row, event, events, run_dir)
                     call_refs.append(ref(call, call['role'] + ' · ' + str(call.get('provider') or '未知 provider')))
                     artifacts.extend(self.artifact_registry[x['id']]['dto'] for x in call['artifacts'])
@@ -685,6 +770,9 @@ class ObserverAdapter:
             if isinstance(objective, dict) and objective.get('metric'):
                 metric_name = objective['metric']
                 baseline_record = next((c for c in champs if c.get('commit_sha') == row.get('base_commit')), None)
+                baseline_event = next((e for e in reversed(events) if e['kind'] == 'measurement_baseline' and e['body'].get('metrics')), None)
+                if baseline_event:
+                    baseline_record = dict(baseline_event, metrics=baseline_event['body']['metrics'], _event_measurement=True)
                 champion_record = champs[-1] if champs else None
                 candidate_record = next((a for a in reversed(data['attempts']) if isinstance(parsed(a.get('metrics')), dict)), None)
                 candidate_event = next((e for e in reversed(events) if e['kind'] == 'candidate_saved' and candidate_record and e.get('attempt_no') == candidate_record['attempt_no']), None)
@@ -701,9 +789,11 @@ class ObserverAdapter:
                                          toolchain_digest=measurement.get('toolchain_digest'))
                     if record:
                         locator = ('attempts.run_id=%s,attempt_no=%s' % (row['run_id'], record['attempt_no'])) if label == 'candidate' else ('champions.run_id=%s,seq=%s' % (row['run_id'], record['seq']))
+                        if record.get('_event_measurement'):
+                            locator = 'events.seq=%s' % record['seq']
                         numeric_art = self._register(record=record, locator=locator, phase='loop', owners=[dict(id=ident, label=row['run_id'])], title=label + ' · 测量记录')
                         artifacts.append(numeric_art)
-                        numeric_refs.append(self._source(numeric_art))
+                        numeric_refs.append(self._source(numeric_art, locator))
                 valid = valid_report[0] if valid_report else {}
                 selected_value = mapping(valid.get('selected_metrics')).get(metric_name)
                 values['selected'] = selected_value if isinstance(selected_value, (int, float)) else None
@@ -726,11 +816,60 @@ class ObserverAdapter:
                 run_meta['issues'].extend(revision['meta']['issues'])
             if not revision and row.get('revision') != 'preparation':
                 run_meta = meta(run_meta['source_refs'], [issue('contract_missing', '未发现可核对的历史合同')], 'partial')
-            result = dict(id=ident, source_run_id=row['run_id'], kind='preparation' if row.get('revision') == 'preparation' else 'execution',
+            from ..core.engine import run_compatibility
+            compatibility = (run_compatibility(run_dir / 'frozen', row) if run_dir else
+                             dict(record=dict(state='readable', reason='ledger record available'),
+                                  execution=dict(state='blocked', reason='legacy: artifact source unavailable'),
+                                  measurement=dict(state='unknown', reason='measurement sources unavailable')))
+            control_events = [e for e in events if e['kind'] in ('control_run', 'control_pause', 'control_stop')]
+            frozen_baseline = self._read(run_dir / 'frozen/baseline.json', json_file=True, default={}) if run_dir else {}
+            worker_execution = mapping(mapping(frozen_baseline).get('execution'))
+            worker_selection = {role: {key: value for key, value in mapping(spec).items()
+                                      if key in ('kind', 'model', 'provider', 'reasoning_effort', 'native_model_provider', 'native_profile', 'native_selection_error')}
+                                for role, spec in mapping(worker_execution.get('workers')).items()}
+            from ..core.ledger import current_claims, pending_feedback
+            knowledge = self._db(tables_to_read=('runs', 'events', 'attempts'))
+            task_runs = {r['run_id'] for r in knowledge['runs'] if r['task_id'] == row['task_id']}
+            pending = pending_feedback([a for a in knowledge['attempts'] if a['run_id'] in task_runs], knowledge['events'])
+            claim_history = [parsed(e['body']) for e in sorted(knowledge['events'], key=lambda e: e['seq'])
+                             if e['run_id'] in task_runs and e['kind'] == 'claim_registered']
+            from ..core.results import claim_sources
+            claim_sources(claim_history, self.artifact_root, self.project.get('source_project_id'),
+                          check_availability=False)
+            claims = current_claims(claim_history)
+            claim_sources(claims, self.artifact_root, self.project.get('source_project_id'))
+            current_versions = {c['claim_id']: c['version'] for c in claims}
+            for claim in claim_history:
+                for source in claim.get('evidence', []) + claim.get('counterevidence', []):
+                    if source['availability'] != 'access_denied':
+                        artifact = self._register(source['source'], phase='loop', title=claim['claim_id'] + ' · source',
+                                                  check_availability=claim['version'] == current_versions[claim['claim_id']])
+                        self.artifact_registry[artifact['id']]['storage'] = source['storage']
+                        source['artifact_id'] = artifact['id']
+                        artifacts.append(artifact)
+            for claim in claims:
+                claim['pending_feedback'] = pending
+            result = dict(id=ident, claims=claims, claim_history=claim_history, compatibility=compatibility, control_request=control_events[-1]['kind'].removeprefix('control_') if control_events else 'run', source_run_id=row['run_id'], kind='preparation' if row.get('revision') == 'preparation' else 'execution',
+
                           task_revision_id=revision['id'] if revision and not revision.get('_contract_mismatch') else None, execution_task_id=row.get('task_id'),
-                          preparation=prep, execution=execution, acceptance=acceptance, stop_reason=row.get('stop_reason'),
+                          workers=worker_selection, configuration_sources=worker_execution.get('configuration_sources', {}),
+                          preparation=prep, execution=execution, acceptance=acceptance,
+                          delivery_repair=next((e['body'] for e in reversed(events) if e['kind'] == 'delivery_repair'), None),
+                          delivery_next_step=valid_report[0].get('next_step') if valid_report else None,
+                          acceptance_history=self._acceptance_history(row['task_id']), stop_reason=row.get('stop_reason'),
                           phase='onboard' if row.get('revision') == 'preparation' else 'loop', last_activity_at=self.source_at,
                           versions=versions, requirements=requirements, metrics=metrics, usage=self._usage(row, data['charges'], events, contract),
+                          task_usage=self._task_usage(row, contract),
+                          budget_origin=worker_execution.get('budget_origin', {}),
+                          execution_usage=self._task_usage(row, contract, worker_execution.get('budget_origin')),
+                          backend_validation={'dsh': 'implemented; not runtime verified'},
+                          pending_feedback=[a['attempt_no'] for a in data['attempts']
+                                            if a.get('outcome') and not any(e['kind'] == 'conclusion' and e.get('attempt_no') == a['attempt_no'] for e in events)],
+                          historical_pending_feedback=[p for p in pending if p['run_id'] != row['run_id']],
+                          decisions=[e['body'] for e in events if e['kind'] == 'expert_decision'],
+                          closure=next((e['body'] for e in reversed(events) if e['kind'] == 'expert_stop'), None),
+                          delivery_candidate=next((e['body'] for e in reversed(events) if e['kind'] == 'selected_version'), None),
+                          max_concurrency=mapping(frozen_baseline.get('execution')).get('max_concurrency'),
                           attempts=attempts, calls=call_refs, artifacts=[ref(a) for a in {a['id']: a for a in artifacts}.values()], report_refs=report_refs,
                           meta=run_meta)
             self._attempt_cache = getattr(self, '_attempt_cache', {})
@@ -767,8 +906,16 @@ class ObserverAdapter:
         plan_art = self._register(path=row.get('_snapshot'), record=row, locator='attempts.run_id=%s,attempt_no=%s' % (run['run_id'], n), phase='loop', owners=[dict(id=ident, label='第 %s 轮' % n)], title='第 %s 轮计划与状态 · 账本记录' % n)
         sources['plan'] = [self._source(plan_art)]
         event_artifacts.append(ref(plan_art))
+        original_plan = plan
+        basis_review = projected.get('work_reconsidered')
+        if basis_review:
+            plan = basis_review['plan']
         outcome = row.get('outcome')
         execution = projected.get('execution')
+        adopted_claims = list(plan.get('adopted_claims') or [])
+        for claim_ref in (execution or {}).get('adopted_claims') or []:
+            if claim_ref not in adopted_claims:
+                adopted_claims.append(claim_ref)
         experiment = projected.get('experiment')
         conclusion = projected.get('conclusion') or {}
         attempt_artifacts = [ref(a) for a in artifacts if ('/a%06d/' % n) in a['display_path']]
@@ -778,6 +925,16 @@ class ObserverAdapter:
                    conclusion=fact(conclusion.get('text'), 'conclusion'), gaps=fact(conclusion.get('gaps'), 'conclusion'), next_step=fact(conclusion.get('next_step'), 'conclusion'),
                    parent_commit=(projected.get('development_parent') or {}).get('commit') or row.get('champion_before'),
                    candidate_commit=(projected.get('candidate_saved') or {}).get('commit'),
+                   basis_review=basis_review, original_plan=original_plan if basis_review else None,
+                   adopted_claims=adopted_claims, planned_claims=plan.get('adopted_claims') or [],
+                   designer_claims=(execution or {}).get('adopted_claims') or [],
+                   work_id=plan.get('work_id') or 'a%d' % n,
+                   directions=plan.get('directions') or [], dependencies=plan.get('dependencies') or [],
+                   blocked_by=(projected.get('node_waiting') or {}).get('blocked_by', []),
+                   resource_wait=(projected.get('node_waiting') or {}).get('reason') if not outcome else None,
+                   feedback_state='interpreted' if conclusion.get('text') else 'pending' if outcome else 'awaiting_result',
+                   selected_by_call=(projected.get('work_selected') or {}).get('decision_call'),
+                   reviewed_by_call=conclusion.get('reviewed_by_call'),
                    calls=[ref(c, c['role']) for c in self.calls.values() if c.get('run_id') == rid and c.get('attempt_id') == ident],
                    artifacts=attempt_artifacts + event_artifacts, usage=None, meta=meta([self._source(plan_art)]))
         if not hasattr(self, '_attempt_cache'):
@@ -793,6 +950,26 @@ class ObserverAdapter:
                 raise ObserverError(404, 'not_found', '未知轮次')
             return self.envelope(self._attempt_cache[ident])
 
+    def inspection(self, ident, number, call=None):
+        from .inspection import inspection
+        with self.lock:
+            return inspection(self, ident, number, call)
+
+    def activity(self, ident, cursor=None, limit=100):
+        from .activity import activity
+        with self.lock:
+            return activity(self, ident, cursor, limit)
+
+    def workbench(self, ident):
+        from .workbench import workbench
+        with self.lock:
+            return workbench(self, ident)
+
+    def work_items(self, ident, cursor=None, limit=100, scope='all'):
+        from .workbench import work_items
+        with self.lock:
+            return work_items(self, ident, cursor, limit, scope)
+
     def _log_reused_after(self, event, log_dir, role):
         """Use the globally ordered ledger event identity, never a reusable session ID."""
         path = self.root / '.opc/local/ledger.sqlite3'
@@ -800,9 +977,11 @@ class ObserverAdapter:
             con = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=0.5)
             try:
                 con.execute('PRAGMA query_only=ON')
-                for (body,) in con.execute("SELECT body FROM events WHERE kind='worker_call' AND seq>?", (event['seq'],)):
+                for owner_run, body in con.execute("SELECT run_id,body FROM events WHERE kind IN ('worker_call','call_dispatched') AND seq>?", (event['seq'],)):
                     value = parsed(body, {})
-                    if isinstance(value, dict) and value.get('role') == role and value.get('log_dir') and self._path(value['log_dir']) == self._path(log_dir):
+                    directory = value.get('log_dir') or (str(Path(value['receipt_path']).parent) if value.get('receipt_path') else None)
+                    if ((owner_run != event['run_id'] or value.get('call_id') != event['body'].get('call_id')) and value.get('role') == role
+                            and directory and self._path(directory) == self._path(log_dir)):
                         return True
             finally:
                 con.close()
@@ -812,9 +991,11 @@ class ObserverAdapter:
 
     def _call_from_event(self, row, event, events, run_dir):
         body = event['body']
-        ident = self._id('call', row['run_id'] + ':' + str(event['seq']))
+        dispatch = next((e for e in events if e['kind'] == 'call_dispatched'
+                         and e['body'].get('call_id') == body.get('call_id')), None)
+        ident = self._id('call', row['run_id'] + ':' + str(dispatch['seq'] if dispatch else event['seq']))
         role = body.get('role') if isinstance(body.get('role'), str) else 'unknown'
-        provider_id = body.get('call_id') if isinstance(body.get('call_id'), str) else None
+        provider_id = body.get('session_id') or (body.get('call_id') if not dispatch and isinstance(body.get('call_id'), str) else None)
         log_dir = body.get('log_dir') if isinstance(body.get('log_dir'), str) else None
         provider = None
         log_path = None
@@ -840,6 +1021,8 @@ class ObserverAdapter:
             # the first complete line has not yet been written by the replacement.
             later = [e for e in events if e.get('kind') == 'worker_call' and e.get('seq', 0) > event['seq'] and e['body'].get('log_dir') == log_dir and e['body'].get('role') == role]
             header_ids = self._header_ids(raw_events)
+            if not provider_id and dispatch and mapping(dispatch['body'].get('activity_log')).get('provider') in ('codex', 'dsh'):
+                provider_id = next(iter(header_ids), None)
             reused = bool(later) or self._log_reused_after(event, log_dir, role)
             if reused or not provider_id or not header_ids or provider_id not in header_ids:
                 availability = 'unreadable'
@@ -848,14 +1031,24 @@ class ObserverAdapter:
                 availability = 'available'
                 art = self._register(log_path, phase='loop', owners=[dict(id=ident, label=role)])
                 art_refs.append(ref(art))
+                for name in ('tool-policy.json', role + '-request.json'):
+                    source = directory / name
+                    if self._allowed(source) and source.is_file():
+                        artifact = self._register(source, phase='loop', owners=[dict(id=ident, label=role)])
+                        art_refs.append(ref(artifact))
         event_art = self._register(record=event, locator='events.seq=%s' % event['seq'], phase='onboard' if row.get('revision') == 'preparation' else 'loop', owners=[dict(id=ident, label=role)], title=role + ' · 调用回执')
         art_refs.append(ref(event_art))
         obj = dict(id=ident, run_id=self._id('run', row['run_id']), attempt_id=self._id('attempt', row['run_id'] + ':' + str(event['attempt_no'])) if event.get('attempt_no') is not None else None,
                    phase='onboard' if row.get('revision') == 'preparation' else 'loop', role=role, provider=provider,
                    provider_call_id=provider_id, parent_call_id=body.get('parent_call_id'),
-                   state=state('finished' if body.get('ok') is True else 'failed' if body.get('ok') is False else 'unknown', str(body.get('ok')), event.get('at'), 'recorded'),
-                   started_at=None, ended_at=event.get('at'), last_activity_at=None,
-                   transcript_availability=availability, artifacts=art_refs, usage=None,
+                   state=state('unknown' if body.get('state') == 'unknown' else 'cancelled' if body.get('state') == 'cancelled' else 'running' if body.get('state') == 'dispatched' else 'finished' if body.get('ok') is True else 'failed' if body.get('ok') is False else 'unknown', str(body.get('state', body.get('ok'))), event.get('at'), 'recorded', '派发已记录，终态尚未确认' if body.get('state') == 'dispatched' else None),
+                   started_at=dispatch.get('at') if dispatch else None, ended_at=None if body.get('state') == 'dispatched' else event.get('at'), last_activity_at=None,
+                   transcript_availability=availability, artifacts=art_refs,
+                   usage=dict(scope='call', scope_id=ident, recorded_tokens=body.get('tokens') if body.get('usage_complete') or body.get('tokens', 0) > 0 else None,
+                              recorded_wall_seconds=body.get('seconds'), recorded_usd=None,
+                              completeness='partial' if body.get('usage_complete') or body.get('tokens', 0) > 0 else 'unknown',
+                              tokens_complete=body.get('usage_complete'), source_refs=[self._source(event_art)],
+                              note='实际已报告用量；缺失计量保持未知，价格未报告'),
                    meta=meta([self._source(event_art)], [issue('call_start_unrecorded', '未记录调用开始时间', ident)] + log_issue, 'partial'))
         self.calls[ident] = obj
         self.call_sources[ident] = dict(path=log_path, provider_id=provider_id, availability=availability, event=event)
@@ -1028,6 +1221,8 @@ class ObserverAdapter:
 
     def artifact(self, ident):
         with self.lock:
+            if self.artifact_registry.get(ident, {}).get('task_material'):
+                return self.envelope(self.artifact_registry[ident]['dto'])
             if ident not in self.artifact_registry:
                 # Deep links need discovery without filesystem-wide scanning.
                 self._discover()
@@ -1039,6 +1234,9 @@ class ObserverAdapter:
             if ident not in self.artifact_registry:
                 raise ObserverError(404, 'not_found', '未知产物 ID')
             item = self.artifact_registry[ident]
+            storage = item.get('storage')
+            if storage and not item['path'].resolve().is_relative_to(Path(storage).resolve()):
+                raise ObserverError(404, 'path_denied', '主张来源超出授权原件目录')
             if item.get('call_owner'):
                 self._ensure_call(item['call_owner'])
                 if self.call_sources[item['call_owner']]['availability'] != 'available':
@@ -1046,6 +1244,8 @@ class ObserverAdapter:
             if item.get('path'):
                 old = item['dto']
                 obj = self._register(item['path'], title=old['title'], phase=old['phase'], owners=old['owner_refs'])
+                if storage:
+                    self.artifact_registry[ident]['storage'] = storage
             else:
                 obj = item['dto']
             if obj['can_preview']:
@@ -1087,6 +1287,9 @@ class ObserverAdapter:
 
     def content(self, ident, offset=0, limit=262144):
         with self.lock:
+            if self.artifact_registry.get(ident, {}).get('task_material'):
+                from .inspection import content
+                return content(self, ident, offset, limit)
             if offset < 0 or not 1 <= limit <= 1048576:
                 raise ObserverError(422, 'invalid_range', 'offset 或 limit 超出允许范围')
             raw = self.artifact_bytes(ident)

@@ -1,0 +1,36 @@
+{
+  "stage": "S0",
+  "requirements": "settled",
+  "materials": "prepared",
+  "local_environment_selfchecks": "passed",
+  "formal_exam_run": false,
+  "framework_implemented": false,
+  "worker_tool_isolation_integration": "S2 pending",
+  "development": {
+    "reference_cases": 111,
+    "public_cases": 4,
+    "negative_control_rejected": true
+  },
+  "exploration": {
+    "official_tests_passed": 51
+  },
+  "end_to_end": {
+    "official_example_passed": true
+  },
+  "ramulator": {
+    "release_builds": 2,
+    "event_equivalence_cases": 12,
+    "probe_statistics_unchanged": true,
+    "baseline_calibration_geometric_ratio": 0.9988828876625984,
+    "optimization_performed": false
+  },
+  "isolation_checks": {
+    "external": true,
+    "sibling": true,
+    "examiner": true,
+    "outside_write": true,
+    "socket": true,
+    "inside_write": true,
+    "child_restricted": true
+  }
+}

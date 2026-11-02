@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ArcHa · 工作现场 / S5 原型</title>
+<style>
+/* Throwaway S5 prototype. All execution and content below are illustrative.
+   Question: can work and Worker activity share a calm, persistent workspace?
+   One scoped layout; no backend, persistence, telemetry, or external assets. */
+:root{color-scheme:light;--bg:#f4f5f3;--surface:#fcfcfa;--raised:#fff;--soft:#eef0ec;--line:#e0e4de;--ink:#242d28;--muted:#637268;--faint:#7b877f;--accent:#23664c;--accent-soft:#e5f0e8;--warn:#a04c2c;--warn-soft:#f8ede5;--blue:#426a88;--blue-soft:#eaf1f6;--shadow:0 18px 70px #1b30251c;--motion:200ms;--select:130ms}
+[data-theme=dark]{color-scheme:dark;--bg:#171c1a;--surface:#1d2320;--raised:#252d28;--soft:#242c27;--line:#354037;--ink:#e6ebe5;--muted:#a1afa4;--faint:#8b9a8e;--accent:#a5d7b4;--accent-soft:#2a4032;--warn:#edb08e;--warn-soft:#402e24;--blue:#a0c3e0;--blue-soft:#283641;--shadow:0 18px 70px #0005}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,"Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif;font-size:14px;line-height:1.6}button,select{font:inherit}button{cursor:pointer;color:inherit}button:disabled{cursor:default;opacity:.5}button,select,a{ -webkit-tap-highlight-color:transparent}button:focus-visible,select:focus-visible,a:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:4px}button{border:0;background:none}button svg{pointer-events:none}svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}h1,h2,h3,p{margin:0}button,a,select{touch-action:manipulation}[hidden]{display:none!important}.mono,code,pre{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace}.app{height:100dvh;display:grid;grid-template-rows:64px minmax(0,1fr) 54px;overflow:hidden}.topbar{display:flex;align-items:center;gap:26px;border-bottom:1px solid var(--line);padding:0 28px;background:var(--surface);z-index:20}.brand{display:flex;align-items:center;gap:10px;font-size:19px;letter-spacing:-.7px;font-weight:700;flex-shrink:0}.brand-mark{width:28px;height:28px;background:var(--ink);color:var(--surface);display:grid;place-items:center;border-radius:7px}.brand-mark svg{width:21px;height:21px}.top-divider{width:1px;height:20px;background:var(--line)}.breadcrumb{display:flex;gap:10px;align-items:center;color:var(--muted);font-size:12px}.breadcrumb strong{font-weight:500;color:var(--ink)}.top-right{margin-left:auto;display:flex;gap:12px;align-items:center}.prototype-badge{font-size:11px;color:var(--muted);border:1px solid var(--line);padding:3px 8px;border-radius:5px;letter-spacing:.3px}.icon-button{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:8px;flex-shrink:0}.icon-button:hover{background:var(--soft)}.workspace{display:grid;grid-template-columns:62px minmax(0,1fr);min-height:0}.navrail{border-right:1px solid var(--line);display:flex;align-items:center;flex-direction:column;padding:22px 10px;gap:12px;background:var(--surface)}.navrail .icon-button{width:40px;height:40px}.navrail .current{background:var(--accent-soft);color:var(--accent)}.navrail .nav-label{display:none;font-size:12px;white-space:nowrap}.workspace.nav-expanded{grid-template-columns:154px minmax(0,1fr)}.nav-expanded .navrail{align-items:stretch}.nav-expanded .navrail .icon-button{width:100%;justify-content:flex-start;padding:0 12px;gap:10px}.nav-expanded .nav-label{display:inline}.rail-bottom{margin-top:auto}.main{min-width:0;min-height:0;display:flex;flex-direction:column;position:relative}.runbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:19px 36px 0}.run-status{display:flex;gap:9px;align-items:center;min-width:0;font-size:12px;color:var(--muted)}.status-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex-shrink:0}.status-dot.paused{background:var(--faint)}.status-dot.unknown{background:var(--warn)}.run-label{font-weight:600;color:var(--ink);white-space:nowrap}.run-message{border-left:1px solid var(--line);padding-left:10px;overflow-wrap:anywhere}.run-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:8px 14px;border:1px solid var(--line);border-radius:7px;background:var(--surface);font-weight:500;font-size:12px;min-height:36px;transition:background var(--select),border-color var(--select)}.btn:hover:not(:disabled){background:var(--soft);border-color:var(--faint)}.btn.primary{background:var(--ink);color:var(--surface);border-color:var(--ink)}.btn.primary:hover:not(:disabled){opacity:.85}.btn.danger{color:var(--warn)}.btn.small{padding:5px 10px;min-height:31px}.btn.text{background:none;border-color:transparent;color:var(--muted)}.btn svg{width:14px;height:14px}.heading{padding:27px 36px 24px}.eyebrow{font-size:10px;font-weight:600;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:10px}.heading h1{font-size:clamp(23px,2.4vw,32px);letter-spacing:-.8px;font-weight:600;line-height:1.4}.heading p{color:var(--muted);font-size:12px;margin-top:9px;max-width:740px}.content{min-height:0;flex:1;display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:30px;padding:0 36px 26px}.work-pane,.workers-pane{min-width:0;min-height:0;display:flex;flex-direction:column}.panel-heading{min-height:49px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid var(--line);padding-bottom:12px}.panel-heading h2{font-size:13px;font-weight:600;display:flex;gap:9px;align-items:center}.count{font-size:10px;font-weight:400;color:var(--muted);background:var(--soft);border-radius:4px;padding:0 6px}.subtle{font-size:11px;color:var(--muted)}.segmented{display:flex;background:var(--soft);border-radius:6px;padding:3px;gap:2px}.segmented button{font-size:11px;padding:3px 9px;border-radius:4px;color:var(--muted)}.segmented button[aria-pressed=true]{background:var(--raised);color:var(--ink);box-shadow:0 1px 3px #0001}.work-scroll{overflow:auto;min-height:0;padding:16px 2px 20px 0;scrollbar-width:thin}.work-row{position:relative;margin-bottom:2px}.work-row:not(:last-child):before{content:"";position:absolute;width:1px;background:var(--line);top:45px;bottom:-15px;left:23px}.work-button{display:flex;text-align:left;width:100%;gap:17px;padding:17px 17px 18px 8px;border:1px solid transparent;border-radius:10px;position:relative;transition:background var(--select),border-color var(--select)}.work-button:hover{background:var(--soft)}.work-button[aria-pressed=true]{background:var(--surface);border-color:var(--line);box-shadow:0 3px 12px #112c1b04}.work-button[aria-pressed=true]:after{position:absolute;left:-1px;top:18px;bottom:18px;content:"";width:3px;background:var(--accent);border-radius:2px}.step-icon{width:29px;height:29px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:50%;background:var(--bg);color:var(--muted);font-size:10px;flex-shrink:0;z-index:1}.step-icon.done{color:var(--accent);background:var(--accent-soft);border-color:transparent}.step-icon.active{color:var(--accent);border-color:var(--accent)}.step-icon.blocked{color:var(--warn);border-color:var(--warn);background:var(--warn-soft)}.step-icon svg{width:13px;height:13px}.work-copy{flex:1;min-width:0}.work-title-line{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.work-title{font-size:14px;font-weight:550;line-height:1.5}.badge{display:inline-flex;align-items:center;gap:5px;border-radius:4px;padding:2px 6px;font-size:10px;line-height:1.5;color:var(--muted);background:var(--soft);white-space:nowrap;flex-shrink:0}.badge.warn{color:var(--warn);background:var(--warn-soft)}.badge.green{color:var(--accent);background:var(--accent-soft)}.badge.blue{color:var(--blue);background:var(--blue-soft)}.work-description{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.7}.work-meta{display:flex;align-items:center;gap:7px;margin-top:12px;font-size:10px;color:var(--muted)}.work-meta svg{width:12px;height:12px}.work-meta .owner{font-weight:550;color:var(--ink)}.work-hint{margin-top:11px;padding-top:11px;border-top:1px solid var(--line);font-size:11px;color:var(--warn);display:flex;gap:7px;align-items:flex-start}.work-hint svg{width:14px;height:14px;margin-top:2px}.workers-pane{border-left:1px solid var(--line);padding-left:25px}.worker-scroll{overflow:auto;min-height:0;padding:6px 0;scrollbar-width:thin}.worker{display:block;text-align:left;width:100%;padding:20px 0;border-bottom:1px solid var(--line)}.worker:hover .worker-name{color:var(--accent)}.worker.selected{border-bottom-color:var(--accent)}.worker-top{display:flex;gap:10px;align-items:center;margin-bottom:11px}.avatar{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;background:var(--soft);color:var(--muted);font-size:11px;font-weight:600;border:1px solid var(--line);flex-shrink:0}.avatar.green{color:var(--accent);border-color:transparent;background:var(--accent-soft)}.avatar.warn{color:var(--warn);border-color:transparent;background:var(--warn-soft)}.worker-name{font-size:12px;font-weight:600;line-height:1.3}.worker-purpose{font-size:10px;color:var(--muted);margin-top:2px}.worker-top .badge{margin-left:auto}.worker-task{font-size:11px;margin-bottom:8px;white-space:normal}.activity-line{display:flex;gap:7px;color:var(--muted);font-size:11px;align-items:flex-start}.activity-line svg{width:13px;height:13px;margin-top:3px}.activity-line code{font-size:10px;overflow-wrap:anywhere;color:var(--ink)}.activity-time{font-size:10px;color:var(--muted);margin-top:8px;padding-left:20px}.worker-note{margin-top:22px;color:var(--muted);font-size:11px;display:flex;gap:8px;line-height:1.8}.worker-note svg{width:14px;height:14px;margin-top:3px}.notice{margin:0 36px 15px;border-left:2px solid var(--warn);padding:8px 12px;background:var(--warn-soft);font-size:12px;color:var(--warn);display:flex;align-items:center;justify-content:space-between;gap:15px}.notice p{flex:1}.inspector{position:absolute;right:0;top:74px;bottom:0;width:min(454px,100%);background:var(--raised);border-left:1px solid var(--line);box-shadow:var(--shadow);z-index:10;display:flex;flex-direction:column;animation:drawer-in var(--motion) ease-out}.inspector-header{padding:22px 25px 15px;border-bottom:1px solid var(--line)}.inspector-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}.inspector-top .eyebrow{margin:0}.inspector h2{font-size:20px;line-height:1.5;font-weight:600;letter-spacing:-.4px;margin-bottom:10px}.inspector-meta{display:flex;align-items:center;gap:9px;font-size:11px;color:var(--muted)}.inspector-content{overflow:auto;min-height:0;flex:1;padding:24px 25px 32px;scrollbar-width:thin}.detail-section{margin-bottom:27px}.detail-section h3{font-size:11px;color:var(--muted);font-weight:500;letter-spacing:.6px;margin-bottom:10px}.detail-section p{font-size:12px;line-height:1.9}.error-box{border-left:2px solid var(--warn);padding:12px 14px;background:var(--warn-soft);font-size:12px;line-height:1.8;color:var(--warn)}.code-output{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;line-height:1.8;margin:12px 0 0;color:var(--ink);background:var(--soft);padding:14px;border-radius:6px}.file-button{display:flex;align-items:center;text-align:left;gap:10px;width:100%;padding:11px 0;border-bottom:1px solid var(--line)}.file-button:hover{color:var(--accent)}.file-button .file-label{flex:1;min-width:0}.file-button strong{display:block;font-size:11px;font-weight:500;overflow-wrap:anywhere}.file-button span span{font-size:10px;color:var(--muted)}.file-button svg{width:15px;height:15px;color:var(--muted)}.detail-call{display:flex;gap:8px;align-items:center;margin-bottom:12px}.detail-call select{max-width:100%;font-size:11px;border:1px solid var(--line);border-radius:5px;padding:6px;background:var(--surface);color:var(--ink)}.action-list{list-style:none;margin:0;padding:0}.action-list li{display:flex;gap:9px;font-size:11px;line-height:1.8;padding:9px 0;border-bottom:1px solid var(--line)}.action-list li span{color:var(--muted);white-space:nowrap;font-size:10px}.inspector-foot{padding:13px 25px;border-top:1px solid var(--line);font-size:10px;color:var(--muted);display:flex;gap:6px;align-items:center}.reader{display:flex;flex-direction:column;min-height:0;flex:1;overflow:hidden;background:var(--surface);border:1px solid var(--line);border-radius:10px;grid-column:1}.reader-header{padding:13px 18px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--line);flex-wrap:wrap}.reader-header h2{font-size:12px;font-weight:500;overflow-wrap:anywhere}.reader-body{padding:24px;overflow:auto;min-height:0;flex:1}.reader-body pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:2.1;margin:0}.reader-body .doc-title{font-size:23px;font-weight:600;margin:0 0 19px}.reader-body p{font-size:13px;line-height:2;margin-bottom:15px}.reader-body h3{font-size:14px;margin:24px 0 10px}.reader-body ul{padding-left:20px;font-size:13px;line-height:2}.reader-footer{padding:9px 18px;border-top:1px solid var(--line);font-size:10px;color:var(--muted)}.demo-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 28px;border-top:1px solid var(--line);background:var(--surface);z-index:20}.demo-left{display:flex;align-items:center;gap:12px;font-size:11px;color:var(--muted)}.demo-label{display:flex;align-items:center;gap:6px;color:var(--ink);font-weight:500}.demo-bar select{background:var(--soft);border:1px solid var(--line);border-radius:5px;color:var(--ink);padding:5px 25px 5px 9px;font-size:11px;max-width:180px}.demo-bar .btn{font-size:11px}.demo-right{font-size:10px;color:var(--muted)}.empty{display:flex;flex:1;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--muted);padding:40px;gap:16px}.empty>svg{width:32px;height:32px}.empty h2{font-size:18px;color:var(--ink);font-weight:500}.empty p{font-size:12px;max-width:300px}.empty .btn{margin-top:8px}dialog{background:var(--raised);color:var(--ink);border:1px solid var(--line);border-radius:14px;padding:30px;max-width:420px;width:calc(100% - 32px);box-shadow:var(--shadow)}dialog::backdrop{background:#10201866;backdrop-filter:blur(3px)}dialog h2{font-size:20px;margin-bottom:12px}dialog p{font-size:13px;line-height:1.9;color:var(--muted)}.dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:26px}.toast{position:fixed;bottom:70px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--surface);padding:10px 18px;border-radius:8px;box-shadow:var(--shadow);z-index:40;font-size:12px;max-width:calc(100% - 30px)}.help-list{padding:0;list-style:none;margin-top:15px}.help-list li{font-size:12px;line-height:1.9;margin:13px 0}.help-list strong{display:block;color:var(--ink);font-weight:600}.help-list span{color:var(--muted)}@keyframes drawer-in{from{transform:translateX(15px);opacity:0}to{transform:none;opacity:1}}
+.theme-switching *{transition:none!important}.empty{grid-column:1 / -1}
+@media(min-width:1500px){.runbar{padding:24px 52px 0}.heading{padding:34px 52px 30px}.content{padding:0 52px 32px;gap:44px;grid-template-columns:minmax(0,1fr) 350px}.work-button{padding-top:22px;padding-bottom:22px}.work-title{font-size:15px}.notice{margin-left:52px;margin-right:52px}}
+@media(max-width:1120px){.content{grid-template-columns:minmax(0,1fr) 268px;gap:20px;padding-left:24px;padding-right:24px}.workers-pane{padding-left:18px}.runbar{padding-left:24px;padding-right:24px}.heading{padding-left:24px;padding-right:24px}.notice{margin-left:24px;margin-right:24px}.work-button{gap:11px;padding-right:10px}.run-message{max-width:260px}.demo-right{display:none}.breadcrumb{font-size:11px}.inspector{width:420px}}
+@media(max-width:760px){.app{height:auto;min-height:100dvh;overflow:visible;grid-template-rows:58px 1fr auto}.topbar{padding:0 16px;gap:14px;position:sticky;top:0}.breadcrumb{display:none}.top-divider{display:none}.top-right{gap:5px}.prototype-badge{font-size:10px}.workspace,.workspace.nav-expanded{display:block}.navrail{display:none}.runbar{padding:20px 18px 0;align-items:flex-start;gap:12px;flex-wrap:wrap}.run-status{flex:1;flex-wrap:wrap;min-width:170px}.run-message{border:0;padding:0;flex-basis:100%;max-width:none}.run-actions{margin-left:auto}.heading{padding:24px 18px}.heading h1{font-size:25px}.content{display:flex;flex-direction:column;padding:0 18px 24px;gap:26px;overflow:visible}.work-scroll{overflow:visible;padding-bottom:0}.workers-pane{border-left:0;padding-left:0}.worker-scroll{overflow:visible}.worker{padding:16px 0}.worker-note{margin-top:12px}.demo-bar{padding:10px 14px;position:sticky;bottom:0;flex-wrap:wrap;min-height:58px;gap:6px}.demo-left{gap:7px;flex-wrap:wrap}.demo-label{font-size:10px}.demo-bar select{max-width:145px}.demo-bar .btn{padding:5px 8px}.inspector{position:fixed;top:58px;bottom:58px;width:100%;max-width:520px}.reader{min-height:450px;max-height:70dvh;flex:none}.notice{margin:0 18px 16px}.topbar .brand{font-size:17px}.work-title-line{gap:7px}.work-title{font-size:13px}.work-button{padding-right:7px}.work-description{font-size:11px}.inspector-content{padding:20px}.inspector-header{padding:18px 20px}.inspector-top{margin-bottom:14px}}
+@media(max-width:380px){.prototype-badge{display:none}.work-title-line{flex-wrap:wrap}.run-actions{width:100%;justify-content:flex-end}.demo-label .demo-word{display:none}.heading h1{font-size:22px}.inspector{bottom:64px}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+<header class="topbar">
+  <div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 18 7-13 7 13M8 13h8M12 5v13"/></svg></span>ArcHa</div>
+  <span class="top-divider"></span><div class="breadcrumb"><span>CSV 工具库</span><span>/</span><strong>工作现场</strong></div>
+  <div class="top-right"><span class="prototype-badge">交互原型 · 模拟数据</span><button class="icon-button" id="theme-button" aria-label="切换深色主题" title="切换主题"></button><button class="icon-button" id="help-button" aria-label="原型使用说明" title="原型使用说明"></button></div>
+</header>
+<div class="workspace" id="workspace">
+  <nav class="navrail" aria-label="工作台导航">
+    <button class="icon-button" id="nav-toggle" aria-label="展开导航" aria-expanded="false" title="展开导航"></button>
+    <button class="icon-button current" id="nav-work" aria-label="工作现场" title="工作现场"><span class="nav-label">工作现场</span></button>
+    <button class="icon-button" id="nav-materials" aria-label="打开任务说明" title="任务说明"><span class="nav-label">任务说明</span></button>
+    <button class="icon-button rail-bottom" id="nav-help" aria-label="查看操作说明" title="操作说明"><span class="nav-label">操作说明</span></button>
+  </nav>
+  <main class="main" id="main">
+    <div class="runbar"><div class="run-status" role="status" aria-live="polite"><span class="status-dot" id="run-dot"></span><span class="run-label" id="run-label">运行中</span><span class="run-message" id="run-message">当前工作保持推进</span></div><div class="run-actions"><button class="btn primary" id="control-button"></button><button class="btn text" id="stop-button">停止</button></div></div>
+    <div class="heading"><div class="eyebrow">WORKSPACE / 当前任务</div><h1>让 CSV 解析更可靠</h1><p>正确处理引号、换行和异常输入，保持已有接口行为。</p></div>
+    <div class="notice" id="notice" hidden role="status"><p id="notice-text"></p><button class="btn small" id="notice-action">重新连接</button></div>
+    <div class="content" id="content">
+      <section class="work-pane" id="work-pane" aria-label="工作进展">
+        <div class="panel-heading"><h2>工作进展 <span class="count" id="work-count">5</span></h2><div class="segmented" aria-label="工作筛选"><button aria-pressed="true" data-filter="all">全部</button><button aria-pressed="false" data-filter="attention">需关注</button></div></div>
+        <div class="work-scroll" id="work-list" tabindex="0" aria-label="工作时间线"></div>
+      </section>
+      <section class="reader" id="reader" hidden aria-label="任务材料阅读区">
+        <div class="reader-header"><button class="btn small" id="reader-back">← 返回现场</button><h2 id="reader-title"></h2></div>
+        <div class="reader-body" id="reader-body" tabindex="0"></div><div class="reader-footer">任务材料 · 只读</div>
+      </section>
+      <aside class="workers-pane" id="workers-pane" aria-label="Worker 活动">
+        <div class="panel-heading"><h2>Worker 活动 <span class="count" id="worker-count">3</span></h2><span class="subtle">与工作关联</span></div>
+        <div class="worker-scroll" id="worker-list"></div>
+        <p class="worker-note" id="worker-note"></p>
+      </aside>
+      <div class="empty" id="empty" hidden><h2>还没有开始的工作</h2><p>工作开始后，这里会出现工作进展和 Worker 的具体活动。</p><button class="btn" id="empty-start">查看运行中的演示</button></div>
+    </div>
+    <aside class="inspector" id="inspector" aria-labelledby="detail-title" hidden>
+      <div class="inspector-header"><div class="inspector-top"><span class="eyebrow">工作详情</span><button class="icon-button" id="detail-close" aria-label="关闭工作详情" title="关闭 · Esc"></button></div><h2 id="detail-title" tabindex="-1"></h2><div class="inspector-meta" id="detail-meta"></div></div>
+      <div class="inspector-content" id="detail-content" tabindex="0"></div>
+      <div class="inspector-foot">Esc 关闭详情 · 工作位置会保留</div>
+    </aside>
+  </main>
+</div>
+<footer class="demo-bar" aria-label="原型演示控制">
+  <div class="demo-left"><span class="demo-label"><span aria-hidden="true">◈</span><span class="demo-word">演示场景</span></span><select id="scenario" aria-label="选择演示场景"><option value="blocked">发现阻塞</option><option value="running">暂停与继续</option><option value="resume-failure">恢复失败</option><option value="unknown">状态暂不可确认</option><option value="empty">尚无工作</option></select><button class="btn text" id="reset-button">重置演示</button></div>
+  <span class="demo-right">所有状态与操作均为模拟，不连接真实任务</span>
+</footer>
+</div>
+<dialog id="stop-dialog" aria-labelledby="stop-title"><h2 id="stop-title">停止这次运行？</h2><p>停止正在执行的工作，保留已有结果。停止后不会通过“继续”重新启动。</p><div class="dialog-actions"><button class="btn" id="stop-cancel" autofocus>暂不停止</button><button class="btn danger" id="stop-confirm">停止运行</button></div></dialog>
+<dialog id="help-dialog" aria-labelledby="help-title"><h2 id="help-title">体验这个工作现场</h2><p>这是 S5 的最小交互原型。所有工作内容和状态变化都是演示。</p><ul class="help-list"><li><strong>追查一次阻塞</strong><span>点击带引号字段的解析工作，查看错误和交接内容，打开文件，再返回现场。</span></li><li><strong>暂停，再继续</strong><span>切换“暂停与继续”，点击顶部暂停，观察 Worker 收尾，再继续运行。</span></li><li><strong>看看边界情况</strong><span>切换恢复失败或状态暂不可确认，观察反馈。右上角可切换浅深主题。</span></li></ul><div class="dialog-actions"><button class="btn primary" id="help-close" autofocus>开始体验</button></div></dialog>
+<div class="toast" id="toast" role="status" hidden></div>
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const icons = {
+ menu:'<path d="M4 6h16M4 12h16M4 18h16"/>', work:'<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 4v16M9 10h11"/>', file:'<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>', help:'<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1 .7-1.5 1-1.5 2.5M12 17h.01"/>', moon:'<path d="M20 14A8.5 8.5 0 0 1 10 4 8.5 8.5 0 1 0 20 14Z"/>', sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5"/>', close:'<path d="m6 6 12 12M18 6 6 18"/>', arrow:'<path d="M5 12h14m-5-5 5 5-5 5"/>', check:'<path d="m5 12 4 4L19 6"/>', pause:'<path d="M8 5v14M16 5v14"/>', play:'<path d="m8 5 11 7-11 7Z"/>', clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>', alert:'<path d="m12 3 10 18H2Z"/><path d="M12 9v5M12 17h.01"/>', terminal:'<rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7 9 3 3-3 3M13 15h4"/>', link:'<path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2"/>', activity:'<path d="M2 12h5l3-8 4 16 3-8h5"/>'
+};
+function icon(name){return '<svg viewBox="0 0 24 24" aria-hidden="true">'+(icons[name]||icons.work)+'</svg>'}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+const works = [
+ {title:'明确输入与错误边界',description:'确定引号、空字段、换行与异常输入的处理方式。',owner:'Expert',kind:'done'},
+ {title:'修复带引号字段的解析',description:'正确识别引号中的逗号与换行，保留原始字段内容。',owner:'Designer',kind:'blocked'},
+ {title:'补齐异常输入处理',description:'为未闭合引号和不一致列数返回可理解的错误。',owner:'Designer',kind:'active'},
+ {title:'回归 CSV 解析行为',description:'覆盖常规输入、边界条件与错误提示，确认已有接口行为。',owner:'Evaluator',kind:'waiting'},
+ {title:'整理使用说明与交付',description:'补充输入示例、错误处理方式及使用说明。',owner:'Expert',kind:'waiting'}
+];
+const materials={
+ 'task':{title:'任务说明.md',doc:true,body:'<h2 class="doc-title">让 CSV 解析更可靠</h2><p>给轻量 CSV 工具库补齐边界处理。保持 parse_csv(text) 的调用方式和正常输入的结果。</p><h3>需要完成的工作</h3><ul><li>允许带引号字段包含逗号和换行。</li><li>保留空字段，不意外删掉字段内的空白。</li><li>遇到未闭合引号时给出清楚的错误位置。</li><li>列数不一致时说明预期与实际列数。</li></ul><h3>交接约定</h3><p>解析逻辑与错误提示分别处理；完成后一起回归。不要在修复引号解析时改变公开函数签名。</p><h3>一个输入例子</h3><pre>name,note\nAda,"hello, world"</pre><h3>预期产出</h3><p>可运行的解析实现、覆盖上述情况的测试，以及一份简短使用说明。</p>'},
+ 'parser':{title:'src/parser.py',body:'# CSV 解析 · 当前工作文件（演示）\n\nfrom .errors import CsvParseError\n\ndef parse_csv(text: str) -> list[list[str]]:\n    """将 CSV 文本转换为字段列表。"""\n    rows, row, field = [], [], []\n    in_quotes = False\n\n    for offset, char in enumerate(text):\n        if char == \'"\':\n            in_quotes = not in_quotes\n        elif char == "," and not in_quotes:\n            row.append("".join(field))\n            field = []\n        elif char == "\\n":\n            # 当前问题：引号中的换行也会结束一行。\n            row.append("".join(field))\n            rows.append(row)\n            row, field = [], []\n        else:\n            field.append(char)\n\n    if in_quotes:\n        raise CsvParseError("存在未闭合的引号")\n\n    if field or row:\n        row.append("".join(field))\n        rows.append(row)\n\n    return rows\n\n# 接下来：在处理换行时检查 in_quotes。\n# 修复后继续运行引号字段相关测试。'},
+ 'test':{title:'tests/test_quoted_fields.py',body:'from parser import parse_csv\n\ndef test_comma_inside_quotes():\n    text = \'name,note\\nAda,"hello, world"\'\n    assert parse_csv(text) == [\n        ["name", "note"],\n        ["Ada", "hello, world"],\n    ]\n\ndef test_newline_inside_quotes():\n    text = \'name,note\\nAda,"hello\\nworld"\'\n    assert parse_csv(text) == [\n        ["name", "note"],\n        ["Ada", "hello\\nworld"],\n    ]\n\ndef test_empty_field():\n    assert parse_csv("a,,c") == [["a", "", "c"]]\n\ndef test_quoted_empty_field():\n    assert parse_csv(\'a,"",c\') == [["a", "", "c"]]'},
+ 'errors':{title:'src/errors.py',body:'class CsvParseError(ValueError):\n    """向调用方说明 CSV 输入无法解析的原因。"""\n\n    def __init__(self, message, *, line=None):\n        self.line = line\n        prefix = f"第 {line} 行：" if line is not None else ""\n        super().__init__(prefix + message)\n\n\ndef check_columns(row, expected, line):\n    if len(row) != expected:\n        raise CsvParseError(\n            f"预期 {expected} 列，实际 {len(row)} 列",\n            line=line,\n        )\n'},
+ 'readme':{title:'使用说明.md',doc:true,body:'<h2 class="doc-title">CSV 解析工具</h2><p>调用 parse_csv(text) 读取 CSV 文本，返回按行排列的字段列表。</p><h3>带引号的字段</h3><p>带引号的字段允许包含逗号和换行。字段内部的内容会按原样保留。</p><h3>处理输入错误</h3><p>输入中存在未闭合引号或列数不一致时，工具会返回 CsvParseError。可向用户显示错误消息并请求修正输入。</p><h3>示例</h3><pre>try:\n    rows = parse_csv(text)\nexcept CsvParseError as error:\n    print(str(error))</pre>'}
+};
+let state={scene:'blocked',run:'running',selected:1,filter:'all',detail:false,file:null,attempt:'current',resumeFailure:false,error:'',drained:false,evaluating:false};
+let timers=[],returnFocus=null,readerOrigin=null,detailScroll=0,toastTimer;
+const validScenes=['blocked','running','resume-failure','unknown','empty'];
+function later(fn,ms){timers.push(setTimeout(fn,ms));}
+function clearTimers(){timers.forEach(clearTimeout);timers=[];}
+function showToast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,3500);}
+function scene(value){
+ clearTimeout(toastTimer);$('toast').hidden=true;clearTimers(); if($('stop-dialog').open)$('stop-dialog').close();
+ state={scene:value,run:value==='resume-failure'?'paused':value==='unknown'?'unknown':value==='empty'?'empty':'running',selected:value==='running'?2:1,filter:'all',detail:false,file:null,attempt:'current',resumeFailure:value==='resume-failure',error:'',drained:value==='resume-failure',evaluating:false};
+ $('scenario').value=value;
+ const url=new URL(location.href);url.searchParams.set('scene',value);history.replaceState(null,'',url);
+ $('work-list').scrollTop=0;$('detail-content').scrollTop=0;render();
+}
+function evaluationWork(){return state.scene==='blocked'?2:1;}
+function workState(i){
+ if(i===0)return {label:'已完成',tone:'',kind:'done'};
+ if(state.run==='stopped')return {label:'已停止',tone:'',kind:'waiting'};
+ if(state.run==='stopping')return {label:i<3?'等待结束':'未开始',tone:'',kind:'waiting'};
+ if(state.run==='unknown')return {label:i<3?'状态待确认':'等待前序工作',tone:i<3?'warn':'',kind:i<3?'blocked':'waiting'};
+ if(i===1&&state.scene==='blocked')return {label:'需要处理',tone:'warn',kind:'blocked'};
+ if(state.evaluating&&i===evaluationWork()&&!state.drained)return {label:'评价中',tone:'green',kind:'active'};
+ if(state.evaluating&&i>0&&i!==evaluationWork()&&i<3)return {label:'待评价',tone:'blue',kind:'waiting'};
+ if(i<3&&state.drained)return {label:state.evaluating&&i===evaluationWork()?'待反馈':'待评价',tone:'blue',kind:'waiting'};
+ if(i<3)return {label:'进行中',tone:'green',kind:'active'};
+ return {label:i===3?'等待前序工作':'未开始',tone:'',kind:'waiting'};
+}
+function statusInfo(){
+ const values={running:['运行中','当前工作保持推进'],submitting:['运行中','正在提交暂停请求'],pausing:['运行中','暂停请求已收到，等待当前调用结束'],paused:['已暂停','已保留当前工作，可以继续'],resuming:['已暂停','正在恢复当前运行'],stopping:['停止中','停止请求已收到，等待执行结束'],stopped:['已停止','已有工作内容已保留'],unknown:['状态待确认','暂时无法获取最新运行状态'],empty:['尚未开始','等待新的工作']};
+ return values[state.run];
+}
+function renderControls(){
+ const [label,msg]=statusInfo();$('run-label').textContent=label;$('run-message').textContent=msg;
+ $('run-dot').className='status-dot '+(['paused','resuming','stopped','empty'].includes(state.run)?'paused':state.run==='unknown'?'unknown':'');
+ const paused=state.run==='paused';const pending=['submitting','pausing','resuming','stopping'].includes(state.run);
+ $('control-button').innerHTML=icon(paused||state.run==='resuming'?'play':'pause')+({submitting:'提交中',pausing:'等待暂停',resuming:'恢复中',stopping:'等待停止',stopped:'已停止',unknown:'状态待确认',empty:'尚未开始'}[state.run]||(paused?'继续运行':'暂停'));
+ $('control-button').disabled=pending||['stopped','unknown','empty'].includes(state.run);
+ $('stop-button').disabled=['stopped','stopping','empty','unknown'].includes(state.run);
+ $('notice').hidden=!state.error&&state.run!=='unknown';
+ $('notice-text').textContent=state.error||(state.run==='unknown'?'状态更新中断，当前内容为最后已知信息。':'');
+ $('notice-action').hidden=!!state.error;
+}
+function renderWorks(){
+ $('work-count').textContent=state.run==='empty'?'0':'5';
+ document.querySelectorAll('[data-filter]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.filter===state.filter)));
+ const rows=works.map((w,i)=>{const s=workState(i);if(state.filter==='attention'&&!['blocked','active'].includes(s.kind))return '';
+ let meta=state.evaluating&&i===evaluationWork()?(state.drained?'评价已结束，等待反馈':'继续已有成果，运行评价'):state.evaluating&&i>0&&i!==evaluationWork()&&i<3?'调用已结束，等待评价':i===3?'等待引号解析与异常处理完成':i===4?'等待回归完成':i===0?'输入范围已明确':state.drained?'调用已结束，下一步等待评价':i===1&&state.scene==='blocked'?'引号中的换行处理仍需修复':i===1?'运行引号字段相关测试':'读取错误处理逻辑';
+ return '<div class="work-row"><button class="work-button" data-work="'+i+'" aria-pressed="'+(state.selected===i)+'"><span class="step-icon '+s.kind+'">'+(s.kind==='done'?icon('check'):s.kind==='blocked'?'!':String(i+1).padStart(2,'0'))+'</span><span class="work-copy"><span class="work-title-line"><span class="work-title">'+w.title+'</span><span class="badge '+s.tone+'">'+s.label+'</span></span><span class="work-description" style="display:block">'+w.description+'</span><span class="work-meta">'+icon(i>=3?'link':'activity')+'<span class="owner">'+(state.evaluating&&i===evaluationWork()?'Evaluator':w.owner)+'</span><span>·</span><span>'+meta+'</span></span>'+(i===1&&state.scene==='blocked'&&!['stopped','stopping'].includes(state.run)?'<span class="work-hint">'+icon('alert')+'<span>多行字段被拆开，相关测试未通过。查看错误与交接 →</span></span>':'')+'</span></button></div>';
+ }).join('');
+ $('work-list').innerHTML=rows||'<div class="empty"><h2>暂无需要关注的工作</h2><p>可以切回“全部”，查看各项工作的当前阶段。</p></div>';
+}
+function workerData(){
+ const halted=['paused','resuming','stopped','stopping'].includes(state.run)||state.drained;
+ const unknown=state.run==='unknown';
+ if(state.evaluating&&state.scene==='blocked')return [
+ {id:1,letter:'D',name:'Designer',purpose:'解析实现',badge:'调用失败',tone:'warn',task:works[1].title,action:'命令失败 · 退出码 1',target:'pytest tests/test_quoted_fields.py',time:'这项工作仍需处理'},
+ {id:2,letter:'V',name:'Evaluator',purpose:'异常处理评价',badge:halted?'调用已结束':'调用中',tone:halted?'':'green',task:works[2].title,action:halted?'最近完成：评价命令':'已启动评价，结果未确认',target:'pytest tests/test_errors.py',time:'接续已保存的工作内容'},
+ {id:null,letter:'E',name:'Expert',purpose:'协调工作',badge:'当前无调用',tone:'',task:'等待评价结果',action:'最近完成：工作交接',target:'分别修复解析行为与错误提示',time:'等待结果返回后继续'}
+ ];
+ if(state.evaluating)return [
+ {id:1,letter:'V',name:'Evaluator',purpose:'行为评价',badge:halted?'调用已结束':'调用中',tone:halted?'':'green',task:works[1].title,action:halted?'最近完成：评价命令':'已启动评价，结果未确认',target:'pytest tests/test_quoted_fields.py',time:'接续已保存的工作内容'},
+ {id:2,letter:'D',name:'Designer',purpose:'异常处理',badge:'调用已结束',tone:'',task:works[2].title,action:'最近完成：调整错误提示',target:'src/errors.py',time:'已有结果保留，等待评价'},
+ {id:null,letter:'E',name:'Expert',purpose:'协调工作',badge:'当前无调用',tone:'',task:'等待评价结果',action:'最近完成：工作交接',target:'分别修复解析行为与错误提示',time:'等待结果返回后继续'}
+ ];
+ return [
+  {id:1,letter:'D',name:'Designer',purpose:'解析实现',badge:unknown?'待确认':state.scene==='blocked'?'调用失败':halted?'调用已结束':'调用中',tone:unknown||state.scene==='blocked'?'warn':halted?'':'green',task:works[1].title,action:unknown?'最近记录：已启动命令':state.scene==='blocked'?'命令失败 · 退出码 1':halted?'最近完成：命令执行':'已启动命令，结果未确认',target:'pytest tests/test_quoted_fields.py',time:state.scene==='blocked'?'最近一次调用未完成修复':halted?'已保留本次工作内容':'当前调用'},
+  {id:2,letter:'D',name:'Designer',purpose:'异常处理',badge:unknown?'待确认':halted?'调用已结束':'调用中',tone:unknown?'warn':halted?'':'green',task:works[2].title,action:unknown?'最近记录：开始读取':halted?'最近完成：读取文件':'已开始读取，结果未确认',target:'src/errors.py',time:halted?'等待后续评价':'当前调用'},
+  {id:null,letter:'E',name:'Expert',purpose:'协调工作',badge:'当前无调用',tone:'',task:'已安排两项并行工作',action:'最近完成：工作交接',target:'分别修复解析行为与错误提示',time:'等待工作返回后继续'}
+ ];
+}
+function renderWorkers(){
+ $('worker-count').textContent=state.run==='empty'?'0':'3';
+ $('worker-list').innerHTML=workerData().map(w=>'<button class="worker '+(state.selected===w.id?'selected':'')+'" data-worker="'+(w.id===null?'expert':w.id)+'"><span class="worker-top"><span class="avatar '+w.tone+'">'+w.letter+'</span><span><span class="worker-name" style="display:block">'+w.name+'</span><span class="worker-purpose" style="display:block">'+w.purpose+'</span></span><span class="badge '+w.tone+'">'+w.badge+'</span></span><span class="worker-task" style="display:block">'+w.task+'</span><span class="activity-line">'+icon(w.id===1?'terminal':w.id===2?'file':'check')+'<span>'+w.action+'<br><code>'+esc(w.target)+'</code></span></span><span class="activity-time" style="display:block">'+w.time+'</span></button>').join('');
+ $('worker-note').innerHTML=icon('link')+'<span>选择 Worker，查看它正在处理的工作与具体活动。</span>';
+}
+function fileButton(key,description){return '<button class="file-button" data-file="'+key+'">'+icon('file')+'<span class="file-label"><strong>'+materials[key].title+'</strong><span>'+description+'</span></span>'+icon('arrow')+'</button>';}
+function renderDetail(){
+ $('inspector').hidden=!state.detail||!!state.file;
+ if(!state.detail||state.file)return;
+ const i=state.selected;
+ if(i===null){$('detail-title').textContent='协调当前工作';$('detail-meta').innerHTML='<span class="badge">当前无调用</span><span>Expert</span>';$('detail-content').innerHTML='<section class="detail-section"><h3>最近安排</h3><p>将解析行为和异常输入处理拆成两项并行工作。两项工作完成后，再进行整体回归。</p></section><section class="detail-section"><h3>交接给 Designer</h3><p>保持公开接口不变。解析实现负责引号内的逗号与换行，异常处理负责未闭合引号和列数不一致的错误提示。</p></section><section class="detail-section"><h3>相关任务材料</h3>'+fileButton('task','目标与交接约定')+'</section>';return;}
+ const w=works[i],s=workState(i);$('detail-title').textContent=w.title;$('detail-meta').innerHTML='<span class="badge '+s.tone+'">'+s.label+'</span><span>'+(state.evaluating&&i===evaluationWork()?'Evaluator':w.owner)+'</span>';
+ let html='';
+ if(state.evaluating&&i===evaluationWork()){html='<section class="detail-section"><h3>当前进展</h3><p>Designer 的工作内容已保留。继续后从评价阶段接续，没有重新执行开发调用。</p></section><section class="detail-section"><h3>评价活动</h3><pre class="code-output">'+(i===2?'pytest tests/test_errors.py':'pytest tests/test_quoted_fields.py')+'</pre><p>'+(state.drained?'本次评价已结束，等待后续反馈。':'已启动评价，结果尚未确认。')+'</p></section><section class="detail-section"><h3>相关文件</h3>'+(i===2?fileButton('errors','保留的工作内容'):fileButton('test','当前评价使用的测试')+fileButton('parser','保留的工作内容'))+'</section>';}else if(i===1){const old=state.attempt==='previous';const blocked=state.scene==='blocked';
+ html='<div class="detail-call"><select id="call-choice" aria-label="选择工作调用"><option value="current" '+(!old?'selected':'')+'>最近一次调用</option><option value="previous" '+(old?'selected':'')+'>上一次调用</option></select><span class="subtle">同一项工作</span></div>';
+ html+='<section class="detail-section"><h3>'+(old?'上次返回':blocked?'需要处理':'当前进展')+'</h3>'+(old?'<p>已处理引号中的逗号，仍需补齐换行场景。</p>':blocked?'<div class="error-box">带引号字段中的换行被当成新行，导致同一个字段被拆开。需要修正换行分支。</div><pre class="code-output">FAILED test_newline_inside_quotes\n\n预期字段："hello\\nworld"\n实际结果：分成两行\n\n1 failed, 3 passed</pre>':'<p>'+(state.drained?'本次调用已返回，结果已保留，等待后续评价。':'正在处理带引号字段的边界行为。已启动相关测试，尚未确认结果。')+'</p>')+'</section>';
+ html+='<section class="detail-section"><h3>这次交接的输入</h3><p>'+(old?'修复引号内的逗号分隔问题，保持 parse_csv(text) 的函数签名。':'保留上次完成的逗号处理，补齐带引号字段中的换行。保持 parse_csv(text) 接口不变；不要改动独立的错误提示逻辑。')+'</p></section>';
+ html+='<section class="detail-section"><h3>具体活动</h3><ol class="action-list"><li><span>01</span>读取 src/parser.py</li><li><span>02</span>修改引号字段处理</li><li><span>03</span>运行 pytest tests/test_quoted_fields.py</li></ol></section><section class="detail-section"><h3>相关文件</h3>'+fileButton('parser','解析逻辑 · 查看当前工作内容')+fileButton('test','引号字段相关测试')+'</section>';
+ }else if(i===2){html='<section class="detail-section"><h3>当前进展</h3><p>'+(state.drained?'调用已结束，错误提示调整等待后续评价。':'已开始读取错误处理逻辑，尚未确认读取结果。')+'</p></section><section class="detail-section"><h3>交接输入</h3><p>当输入存在未闭合引号或列数不一致时，返回清楚的错误信息。保留调用方式，尽量指出发生错误的行。</p></section><section class="detail-section"><h3>相关文件</h3>'+fileButton('errors','错误类型与列数处理')+fileButton('task','任务范围与预期产出')+'</section>';
+ }else if(i===3){html='<section class="detail-section"><h3>等待的工作</h3><p>引号解析和异常输入处理完成后，运行整体回归。目前尚未开始。</p><button class="file-button" data-related="1">'+icon('link')+'<span class="file-label"><strong>修复带引号字段的解析</strong><span>'+workState(1).label+'</span></span>'+icon('arrow')+'</button><button class="file-button" data-related="2">'+icon('link')+'<span class="file-label"><strong>补齐异常输入处理</strong><span>'+workState(2).label+'</span></span>'+icon('arrow')+'</button></section><section class="detail-section"><h3>相关文件</h3>'+fileButton('test','相关测试输入')+'</section>';
+ }else if(i===4){html='<section class="detail-section"><h3>下一步</h3><p>等待回归完成后，整理使用说明与示例。当前说明是待补充的任务材料。</p></section><section class="detail-section"><h3>任务产出</h3>'+fileButton('readme','使用说明草稿')+'</section>';
+ }else{html='<section class="detail-section"><h3>工作结果</h3><p>已明确引号字段、空字段、换行和异常输入的处理范围，并交接给两项并行工作。</p></section><section class="detail-section"><h3>相关材料</h3>'+fileButton('task','任务目标与交接约定')+'</section>';}
+ $('detail-content').innerHTML=html;
+}
+function render(){
+ renderControls();renderWorks();renderWorkers();renderDetail();
+ const empty=state.run==='empty';$('empty').hidden=!empty;$('work-pane').hidden=empty||!!state.file;$('reader').hidden=empty||!state.file;$('workers-pane').hidden=empty;
+}
+function openWork(i,source){
+ state.selected=i;state.detail=true;state.attempt='current';state.file=null;returnFocus=source||null;
+ $('detail-content').scrollTop=0;render();$('detail-close').focus({preventScroll:true});
+}
+function closeDetail(){state.detail=false;$('inspector').hidden=true;restoreFocus();}
+function restoreFocus(){let target=returnFocus;if(!target||!target.isConnected){target=state.selected===null?document.querySelector('[data-worker="expert"]'):document.querySelector('[data-work="'+state.selected+'"]');}target?.focus({preventScroll:true});}
+function openFile(key,source){
+ readerOrigin={detail:state.detail,key,source};detailScroll=$('detail-content').scrollTop;state.file=key;
+ $('reader-title').textContent=materials[key].title;
+ $('reader-body').innerHTML=materials[key].doc?materials[key].body:'<pre>'+esc(materials[key].body)+'</pre>';
+ $('reader-body').scrollTop=0;$('inspector').hidden=true;$('work-pane').hidden=true;$('reader').hidden=false;
+ $('reader-back').focus({preventScroll:true});
+}
+function backFromFile(){
+ state.file=null;$('reader').hidden=true;$('work-pane').hidden=false;
+ if(readerOrigin?.detail){state.detail=true;renderDetail();$('detail-content').scrollTop=detailScroll;document.querySelector('[data-file="'+readerOrigin.key+'"]')?.focus({preventScroll:true});}
+ else {state.detail=false;readerOrigin?.source?.focus({preventScroll:true});}
+ readerOrigin=null;
+}
+function control(){
+ if(state.run==='running'){
+ state.run='submitting';renderControls();
+ later(()=>{state.run='pausing';renderControls();},450);
+ later(()=>{state.run='paused';state.drained=true;render();},2400);
+ }else if(state.run==='paused'){
+ state.error='';state.run='resuming';renderControls();
+ later(()=>{
+ if(state.resumeFailure){state.resumeFailure=false;state.run='paused';state.error='无法继续：运行环境暂不可用。已有工作已保留，可以再次尝试。';render();}
+ else{state.run='running';state.drained=false;state.evaluating=true;render();showToast('已恢复原来的运行，继续推进当前工作');}
+ },1800);
+ }
+}
+$('theme-button').innerHTML=icon('moon');$('help-button').innerHTML=icon('help');$('detail-close').innerHTML=icon('close');$('nav-toggle').innerHTML=icon('menu');$('nav-work').insertAdjacentHTML('afterbegin',icon('work'));$('nav-materials').insertAdjacentHTML('afterbegin',icon('file'));$('nav-help').insertAdjacentHTML('afterbegin',icon('help'));
+$('theme-button').onclick=()=>{document.documentElement.classList.add('theme-switching');const dark=document.documentElement.dataset.theme!=='dark';document.documentElement.dataset.theme=dark?'dark':'light';$('theme-button').innerHTML=icon(dark?'sun':'moon');$('theme-button').setAttribute('aria-label',dark?'切换浅色主题':'切换深色主题');const url=new URL(location.href);url.searchParams.set('theme',dark?'dark':'light');history.replaceState(null,'',url);requestAnimationFrame(()=>requestAnimationFrame(()=>document.documentElement.classList.remove('theme-switching')));};
+$('nav-toggle').onclick=()=>{const expanded=$('workspace').classList.toggle('nav-expanded');$('nav-toggle').setAttribute('aria-expanded',String(expanded));$('nav-toggle').setAttribute('aria-label',expanded?'收起导航':'展开导航');};
+$('work-list').onclick=e=>{const b=e.target.closest('[data-work]');if(b)openWork(Number(b.dataset.work),b);};
+$('worker-list').onclick=e=>{const b=e.target.closest('[data-worker]');if(b)openWork(b.dataset.worker==='expert'?null:Number(b.dataset.worker),b);};
+$('detail-content').onclick=e=>{const file=e.target.closest('[data-file]');if(file)openFile(file.dataset.file,file);const related=e.target.closest('[data-related]');if(related)openWork(Number(related.dataset.related),related);};
+$('detail-content').onchange=e=>{if(e.target.id==='call-choice'){state.attempt=e.target.value;const scroll=$('detail-content').scrollTop;renderDetail();$('detail-content').scrollTop=scroll;$('call-choice').focus({preventScroll:true});}};
+$('detail-close').onclick=closeDetail;$('reader-back').onclick=backFromFile;
+$('nav-materials').onclick=()=>{if(state.run==='empty'){showToast('这个场景尚无任务材料');return;}state.detail=false;openFile('task',$('nav-materials'));};
+$('nav-work').onclick=()=>{if(state.file)backFromFile();if(state.detail)closeDetail();$('work-list').focus({preventScroll:true});};
+$('control-button').onclick=control;
+$('stop-button').onclick=()=>$('stop-dialog').showModal();$('stop-cancel').onclick=()=>$('stop-dialog').close();
+$('stop-confirm').onclick=()=>{clearTimers();$('stop-dialog').close();state.run='stopping';state.error='';render();later(()=>{state.run='stopped';state.drained=true;render();},1200);};
+$('stop-dialog').addEventListener('close',()=>$('stop-button').focus({preventScroll:true}));
+$('help-button').onclick=()=>$('help-dialog').showModal();$('nav-help').onclick=()=>$('help-dialog').showModal();$('help-close').onclick=()=>$('help-dialog').close();
+$('notice-action').onclick=()=>{state.run='running';state.error='';render();showToast('已重新连接，显示最新演示状态');};
+$('scenario').onchange=()=>scene($('scenario').value);$('reset-button').onclick=()=>{scene(state.scene);showToast('演示已重置');};$('empty-start').onclick=()=>scene('running');
+for(const b of document.querySelectorAll('[data-filter]'))b.onclick=()=>{state.filter=b.dataset.filter;renderWorks();};
+for(const dialog of [$('stop-dialog'),$('help-dialog')])dialog.addEventListener('keydown',e=>{
+ if(e.key!=='Tab')return;
+ const buttons=[...dialog.querySelectorAll('button:not(:disabled)')];
+ const first=buttons[0],last=buttons[buttons.length-1];
+ if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+ else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('stop-dialog').open&&!$('help-dialog').open){if(state.file){e.preventDefault();backFromFile();}else if(state.detail){e.preventDefault();closeDetail();}}});
+const params=new URLSearchParams(location.search);if(params.get('theme')==='dark'){$('theme-button').click();}
+scene(validScenes.includes(params.get('scene'))?params.get('scene'):'blocked');
+</script>
+</body>
+</html>

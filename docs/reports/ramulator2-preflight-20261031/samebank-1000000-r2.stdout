@@ -1,0 +1,57 @@
+[Ramulator::LoadStoreTrace] [info] Loading trace file /tmp/ramulator2-preflight/samebank-1000000.trace ...
+[Ramulator::LoadStoreTrace] [info] Loaded 1000000 lines.
+Frontend:
+  impl: LoadStoreTrace
+
+MemorySystem:
+  impl: GenericDRAM
+  total_num_other_requests: 0
+  total_num_write_requests: 200000
+  total_num_read_requests: 800000
+  memory_system_cycles: 59969744
+  DRAM:
+    impl: DDR4
+  AddrMapper:
+    impl: RoBaRaCoCh
+
+
+  Controller:
+    impl: Generic
+    id: Channel 0
+    avg_read_latency_0: 33.5917244
+    read_queue_len_avg_0: 33.266777
+    write_queue_len_0: 940854436
+    queue_len_0: 2936223336
+    num_other_reqs_0: 0
+    num_write_reqs_0: 200000
+    read_latency_0: 2007768752
+    priority_queue_len_avg_0: 0.00614836719
+    row_hits_0: 0
+    priority_queue_len_0: 368716
+    row_misses_0: 4633
+    row_conflicts_0: 995314
+    read_row_misses_0: 3511
+    queue_len_avg_0: 48.9617424
+    read_row_conflicts_core_0: 0
+    read_row_hits_0: 0
+    write_queue_len_avg_0: 15.6888189
+    read_row_conflicts_0: 796456
+    write_row_misses_0: 1122
+    write_row_conflicts_0: 198858
+    read_queue_len_0: 1995000184
+    write_row_hits_0: 0
+    read_row_hits_core_0: 0
+    read_row_misses_core_0: 0
+    num_read_reqs_0: 59769745
+    Scheduler:
+      impl: FRFCFS
+    RefreshManager:
+      impl: AllBank
+
+
+    RowPolicy:
+      impl: ClosedRowPolicy
+      num_close_reqs: 0
+
+
+

@@ -1,0 +1,30 @@
+         1910 function calls in 0.002 seconds
+
+   Ordered by: cumulative time
+   List reduced from 56 to 22 due to restriction <22>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    0.002    0.002 measure.py:85(<lambda>)
+        1    0.000    0.000    0.002    0.002 gemm_wrapper.py:127(get_modeling_time)
+        1    0.000    0.000    0.002    0.002 matmul_fused_op_new_api_wave.py:11(calculate_matmul_resource_utilization_new)
+        1    0.001    0.001    0.002    0.002 L2_hit_rate_flow_sim_reuse_distance.py:9(L2_hit_rate_flow_sim_reuse_distance)
+      128    0.000    0.000    0.001    0.000 sdcm.py:45(sdcm)
+      108    0.000    0.000    0.000    0.000 sdcm.py:39(norm_cdf_approx_3)
+      109    0.000    0.000    0.000    0.000 model_version.py:9(get_model_version)
+      108    0.000    0.000    0.000    0.000 sdcm.py:28(_norm_cdf_approx_3)
+      110    0.000    0.000    0.000    0.000 <frozen _collections_abc>:771(get)
+      110    0.000    0.000    0.000    0.000 <frozen os>:674(__getitem__)
+       24    0.000    0.000    0.000    0.000 fromnumeric.py:2304(sum)
+       28    0.000    0.000    0.000    0.000 fromnumeric.py:66(_wrapreduction)
+      110    0.000    0.000    0.000    0.000 <frozen os>:756(encode)
+        1    0.000    0.000    0.000    0.000 extract_blocks.py:3(extract_blocks)
+       28    0.000    0.000    0.000    0.000 {method 'reduce' of 'numpy.ufunc' objects}
+      141    0.000    0.000    0.000    0.000 {built-in method math.ceil}
+        4    0.000    0.000    0.000    0.000 fromnumeric.py:3287(prod)
+        1    0.000    0.000    0.000    0.000 hete_post_process_single_op.py:16(hete_post_process_tensor_core_op)
+      236    0.000    0.000    0.000    0.000 {built-in method math.sqrt}
+        1    0.000    0.000    0.000    0.000 hete_smem_fusion.py:82(hete_smem_fusion)
+        1    0.000    0.000    0.000    0.000 hete_post_process_single_op.py:4(_resource_values)
+      108    0.000    0.000    0.000    0.000 {built-in method math.exp}
+
+

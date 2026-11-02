@@ -1,0 +1,10 @@
+{
+  "reference": {
+    "passed": true,
+    "cases": 111,
+    "failed_cases": []
+  },
+  "public_passed": true,
+  "incorrect_implementation_rejected": true,
+  "negative_failed_cases": 99
+}

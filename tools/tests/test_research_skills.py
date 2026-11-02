@@ -9,6 +9,8 @@ import sys
 
 import pytest
 
+from opc.tests.conftest import component, task as contract_template
+
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location(
     "research_initialize", ROOT / "skills/archa-map/scripts/initialize.py")
@@ -131,6 +133,8 @@ def test_bundle_relocation_and_reinstall_backup(tmp_path):
     assert Path(json.loads(created.stdout)['topic']).is_dir()
     assert (target / ".opc/runtime/LICENSE").is_file()
     assert (target / ".opc/runtime/opc/scaffold/brief.py").is_file()
+    assert (target / ".opc/runtime/opc/core/tool_boundary.py").is_file()
+    assert (target / ".opc/runtime/opc/adapters/dsh-tool-boundary.mjs").is_file()
     initialize.verify(target / ".opc/runtime")
 
 
@@ -190,8 +194,9 @@ from types import SimpleNamespace
 import sys
 sys.path.insert(0, sys.argv[1])
 from opc.scaffold.brief import SECTIONS
-from opc.scaffold.onboard import _draft as onboard
-from opc.core.model import OPCError
+from opc.scaffold.onboard import onboard
+from opc.core.model import OPCError, Cost
+from opc.adapters.worker import WorkerCall
 from opc.adapters.codex import CodexWorker
 import opc.core.engine, opc.core.promote, opc.adapters.dsh, opc.adapters.scripted
 root = Path(sys.argv[2])
@@ -223,11 +228,11 @@ def fake_run(self, role, prompt, tree, log, sandbox, schema):
     assert config['execution_enabled'] is False
     assert (root / '.opc/tasks/t-main/revisions/r0001/task.json').is_file()
     assert brief.read_text() in prompt
-    return SimpleNamespace(ok=True, call_id='fake', cost=SimpleNamespace(tokens=0), error=''), 'mock draft'
+    return WorkerCall(role, True, Cost(0, 0, None), extra={'usage_complete': True}), json.dumps({'state': 'pending', 'reason': 'drafted; checks remain', 'evidence': []})
 CodexWorker._run = fake_run
 result = onboard(root, 'codex', brief)
-assert result['ok'], result
-assert (root / '.opc/local/onboard/task-brief.md').read_text() == brief.read_text()
+assert result['preparation'] == 'pending', result
+assert not list((root / '.opc/local/onboard').glob('**/task-brief.md'))
 '''
     subprocess.run([sys.executable, "-B", "-c", script, str(project / ".opc/runtime"), str(project)],
                    cwd=tmp_path, check=True, capture_output=True, text=True)
@@ -244,8 +249,8 @@ def test_deployed_cli_records_unknown_usage_without_limits(tmp_path, runtime):
     subprocess.run(['git', 'init', str(project)], check=True, capture_output=True)
     result = subprocess.run([sys.executable, str(cli), 'onboard', '-p', str(project), '--record-usage'], capture_output=True, text=True)
     assert result.returncode == 1 and json.loads(result.stdout)['preparation'] == 'pending'
-    config = json.loads((project / '.opc/local/workers.json').read_text())
-    assert config['budget'] == {'max_tokens': None, 'max_wall_seconds': None}
+    config = json.loads((project / '.opc/local/workers.json').read_text(encoding="utf-8"))
+    assert config['budget'] == {'max_tokens': None, 'max_wall_seconds': 7200}
     assert (project / '.opc/project.json').exists()  # initialized without budget confirmation or model dispatch
 
 
@@ -256,19 +261,19 @@ def test_explicit_runtime_upgrade_keeps_budget_contract_and_backup(tmp_path, run
     control = project / '.opc'
     (control / 'local').mkdir()
     (control / 'local/ledger.sqlite3').write_bytes(b'preserve cumulative accounting')
-    (control / 'project.json').write_text('{"execution_enabled": false}')
+    (control / 'project.json').write_text('{"execution_enabled": false}', encoding="utf-8")
     previous = (control / 'runtime/manifest.json').read_bytes()
     changed = runtime / 'opc/__init__.py'
-    changed.write_text(changed.read_text() + '\n# updated package\n')
-    manifest = json.loads((runtime / 'manifest.json').read_text())
+    changed.write_text(changed.read_text(encoding="utf-8") + '\n# updated package\n', encoding="utf-8")
+    manifest = json.loads((runtime / 'manifest.json').read_text(encoding="utf-8"))
     manifest['files']['opc/__init__.py'] = initialize.digest(changed)
     manifest['snapshot_sha256'] = 'new-package-for-test'
-    (runtime / 'manifest.json').write_text(json.dumps(manifest))
+    (runtime / 'manifest.json').write_text(json.dumps(manifest), encoding="utf-8")
     result = initialize.initialize(project, runtime, update=True)
     backup = Path(result['runtime_backup'])
     assert (backup / 'manifest.json').read_bytes() == previous
     assert (control / 'local/ledger.sqlite3').read_bytes() == b'preserve cumulative accounting'
-    assert (control / 'project.json').read_text() == '{"execution_enabled": false}'
+    assert (control / 'project.json').read_text(encoding="utf-8") == '{"execution_enabled": false}'
     initialize.verify(control / 'runtime')
     cli = subprocess.run([sys.executable, str(control / 'archa.py'), 'results', '--help'],
                          capture_output=True, text=True)
@@ -316,7 +321,7 @@ def test_topics_preserve_old_layout_runtime_and_same_session(tmp_path, runtime):
     old.mkdir()
     (old / 'tasks/r01-old').mkdir(parents=True)
     for rel in ('research-map.md', 'discussion.md', 'tasks/r01-old/task.md'):
-        (old / rel).write_text('old evidence: ' + rel)
+        (old / rel).write_text('old evidence: ' + rel, encoding="utf-8")
     before = {p: p.read_bytes() for p in (root / '.opc').rglob('*') if p.is_file()}
     a = research.create(root, 'dma-scheduling', 'DMA', 'schedule')
     first = Path(a['topic'])
@@ -325,10 +330,10 @@ def test_topics_preserve_old_layout_runtime_and_same_session(tmp_path, runtime):
     assert Path(b['topic']).name == 'dma-scheduling-2'
     assert b['topic'] in b['task_directory'] and '"' in b['next']
     assert all(p.read_bytes() == content for p, content in (before | first_files).items())
-    index = (old / 'index.md').read_text()
+    index = (old / 'index.md').read_text(encoding="utf-8")
     assert 'topics/dma-scheduling-2/research-map.md' in index and '(research-map.md)' in index
     # Fixed continuation: use the returned topic; no create on supplementary messages.
-    with (first / 'discussion.md').open('a') as stream:
+    with (first / 'discussion.md').open('a', encoding='utf-8') as stream:
         stream.write('\n补充：关注 DMA 排队。\n')
     assert len(list((old / 'topics').iterdir())) == 2
     initialize.initialize(root, runtime)
@@ -341,7 +346,6 @@ def test_two_r01_real_onboard_resume_revision_and_history(tmp_path, runtime, mon
     from opc.core.model import Cost
     from opc.core.ledger import Ledger
     from opc.scaffold.onboard import onboard
-    from opc.tests.conftest import component, task as contract_template
     root = tmp_path / 'two topics'
     root.mkdir()
     subprocess.run(['git', 'init', str(root)], check=True, capture_output=True)
@@ -357,10 +361,10 @@ def test_two_r01_real_onboard_resume_revision_and_history(tmp_path, runtime, mon
         revision = revisions.get(target, 'r0001')
         path = root / f'.opc/tasks/{target}/revisions/{revision}/task.json'
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(contract_template(task_id=target, revision=revision, component='main')))
-        (root / '.opc/components/main.json').write_text(json.dumps(component(component_id='main')))
+        path.write_text(json.dumps(contract_template(task_id=target, revision=revision, component='main')), encoding="utf-8")
+        (root / '.opc/components/main.json').write_text(json.dumps(component(component_id='main')), encoding="utf-8")
         log.mkdir(parents=True)
-        (log / 'checks.txt').write_text('offline integration fixture')
+        (log / 'checks.txt').write_text('offline integration fixture', encoding="utf-8")
         return WorkerCall(role, True, Cost(0.01, 7, None), extra={'usage_complete': True}), json.dumps(
             dict(state='ready', evidence=[(log / 'checks.txt').relative_to(root).as_posix()]))
     monkeypatch.setattr('opc.adapters.codex.CodexWorker._run', worker)
@@ -380,7 +384,7 @@ def test_two_r01_real_onboard_resume_revision_and_history(tmp_path, runtime, mon
     for directory, brief, task_id in zip(dirs, briefs, ids):
         assert research.resolve(root, str(directory))['task_id'] == task_id
         assert onboard(root, 'codex', brief=brief, task_id=task_id)['ok']
-        assert ledger.task_totals(task_id)['tokens'] == 14
+        assert ledger.task_totals(task_id)['tokens'] == 7  # unchanged checks are reused
     # A recorded formal run freezes r0001. Revision preparation must preserve it.
     formal = ledger.create_run(task_id=ids[0], revision='r0001', task_digest='frozen',
                                component='main', base_commit='fixture', evaluator_digest='frozen',
@@ -388,18 +392,22 @@ def test_two_r01_real_onboard_resume_revision_and_history(tmp_path, runtime, mon
     ledger.set_run_state(formal, 'closed', 'offline historical fixture')
     initial_runs[ids[0]] = formal
     # Changed brief keeps its path-bound identity, but loop must return to preparation.
-    briefs[0].write_text(briefs[0].read_text() + '\nRevised evidence scope.\n')
+    briefs[0].write_text(briefs[0].read_text(encoding="utf-8") + '\nRevised evidence scope.\n', encoding="utf-8")
     with pytest.raises(ValueError, match='简报已变化'):
         research.resolve(root, str(dirs[0]))
     assert research.resolve(root, str(dirs[0]), True)['task_id'] == ids[0]
     revisions[ids[0]] = 'r0002'
-    assert onboard(root, 'codex', brief=briefs[0], task_id=ids[0])['ok']
+    assert onboard(root, 'codex', brief=briefs[0], task_id=ids[0], revision='r0002')['ok']
+    research.record(root, str(dirs[0]), ids[0], 'r0002', change='material', authorized=True)
+    decisions = root / '.opc/context/DECISIONS.md'
+    recorded = decisions.read_bytes()
     research.record(root, str(dirs[0]), ids[0], 'r0002')
+    assert decisions.read_bytes() == recorded
     assert research.resolve(root, str(dirs[0]))['revision'] == 'r0002'
     assert research.resolve(root, str(dirs[1]))['revision'] == 'r0001'
     assert all(p.read_bytes() == content for p, content in old_contracts.items())
     assert {r['task_id']: r['run_id'] for r in ledger.runs()} == initial_runs
-    assert ledger.task_totals(ids[0])['tokens'] == 21
+    assert ledger.task_totals(ids[0])['tokens'] == 14
     history = (root / '.opc/local/ledger.sqlite3').read_bytes()
     research.create(root, 'third', 'Third', 'new objective')
     initialize.initialize(root, runtime)
@@ -409,19 +417,19 @@ def test_two_r01_real_onboard_resume_revision_and_history(tmp_path, runtime, mon
 def test_legacy_external_collision_and_ambiguous_bindings(tmp_path):
     root = tmp_path
     (root / '.opc').mkdir()
-    (root / '.opc/project.json').write_text('{}')
+    (root / '.opc/project.json').write_text('{}', encoding="utf-8")
     for rel in ('.opc/research/tasks/r01-old', 'specs/external-task'):
         directory = root / rel
         directory.mkdir(parents=True)
-        (directory / 'task.md').write_text('Original source')
+        (directory / 'task.md').write_text('Original source', encoding="utf-8")
         write_topic_brief(root, directory)
         task_id = 'old-task' if 'r01' in rel else 'external-task'
         contract = root / f'.opc/tasks/{task_id}/revisions/r0003/task.json'
         contract.parent.mkdir(parents=True)
-        contract.write_text(json.dumps(dict(task_id=task_id, revision='r0003')))
+        contract.write_text(json.dumps(dict(task_id=task_id, revision='r0003')), encoding="utf-8")
         decisions = root / '.opc/context/DECISIONS.md'
         decisions.parent.mkdir(exist_ok=True)
-        with decisions.open('a') as stream:
+        with decisions.open('a', encoding='utf-8') as stream:
             stream.write(f'\nLegacy: {rel}/task-brief.md -> {task_id} r0003\n')
         with pytest.raises(ValueError, match='legacy handoff'):
             research.resolve(root, str(directory), True)

@@ -1,0 +1,30 @@
+         30577 function calls in 0.053 seconds
+
+   Ordered by: cumulative time
+   List reduced from 131 to 22 due to restriction <22>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    0.053    0.053 measure.py:104(<lambda>)
+        1    0.001    0.001    0.053    0.053 gemm.py:1236(model_gemm_bank)
+       16    0.001    0.000    0.025    0.002 engine.py:548(service_request_groups)
+      288    0.000    0.000    0.019    0.000 gemm.py:824(_sectors)
+      288    0.001    0.000    0.019    0.000 gemm.py:784(_raw_sectors)
+      112    0.006    0.000    0.017    0.000 layout.py:330(touched_sectors)
+       16    0.002    0.000    0.016    0.001 gemm.py:850(load_requests)
+       36    0.004    0.000    0.015    0.000 engine.py:112(build_bank_histogram)
+       20    0.001    0.000    0.012    0.001 engine.py:450(service_histogram)
+      440    0.001    0.000    0.010    0.000 _arraysetops_impl.py:145(unique)
+      440    0.003    0.000    0.009    0.000 _arraysetops_impl.py:350(_unique1d)
+       40    0.003    0.000    0.008    0.000 engine.py:254(fixed_job_parallel_lower_bound_cycles)
+        4    0.000    0.000    0.005    0.001 gemm.py:908(store_requests)
+      112    0.000    0.000    0.005    0.000 layout.py:311(byte_intervals)
+        4    0.000    0.000    0.004    0.001 gemm.py:1210(_profile_service)
+        4    0.000    0.000    0.004    0.001 engine.py:530(service_requests)
+      112    0.004    0.000    0.004    0.000 layout.py:230(_linear_intervals)
+       36    0.001    0.000    0.003    0.000 engine.py:86(decode_sector_ids)
+     3586    0.003    0.000    0.003    0.000 {built-in method numpy.arange}
+      400    0.002    0.000    0.002    0.000 {built-in method numpy._core._multiarray_umath._unique_hash}
+       20    0.000    0.000    0.002    0.000 engine.py:223(sector_parallel_lower_bound_cycles)
+       20    0.000    0.000    0.002    0.000 engine.py:192(_physical_bank_sector_lower_bound_cycles)
+
+

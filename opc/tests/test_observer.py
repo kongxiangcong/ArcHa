@@ -391,10 +391,12 @@ def test_unknown_run_state_preserves_raw_and_never_asserts_success(client,projec
     assert value['raw_value']=='future-state'
 
 
-def test_utf8_content_pagination_reassembles_exact_source(client,project):
+@pytest.mark.parametrize('line_ending', ['\n', '\r\n'], ids=['lf', 'crlf'])
+def test_utf8_content_pagination_reassembles_exact_source(client,project,line_ending):
     patch=project/'.opc/local/artifacts/test/dma/old-run/attempts/a000001/candidate.patch'
-    expected='中文边界\nASCII\n最后一行'
-    patch.write_text(expected,encoding='utf-8')
+    expected=line_ending.join(['中文边界', 'ASCII', '最后一行'])
+    # Exact source bytes: text-mode writes translate LF on Windows.
+    patch.write_bytes(expected.encode('utf-8'))
     artifact=next(a for a in run(client)['artifacts'] if 'candidate.patch' in a['label'])
     offset=0
     result=''
@@ -740,7 +742,7 @@ def test_map_task_and_brief_are_one_stable_task(project, entry):
     map_path = project / '.opc/research/research-map.md'
     before = ObserverAdapter(project).overview()['data']
     task_id = next(t['id'] for t in before['tasks'] if t['research_task_id'] == 'R01')
-    map_path.write_text(map_path.read_text().replace('tasks/r01/task.md', 'tasks/r01/' + entry))
+    map_path.write_text(map_path.read_text(encoding="utf-8").replace('tasks/r01/task.md', 'tasks/r01/' + entry), encoding="utf-8")
     adapter = ObserverAdapter(project)
     after = adapter.overview()['data']
     assert len(after['tasks']) == len(before['tasks']) == 3
@@ -752,7 +754,7 @@ def historical_binding(project, form, revision='r0001', path='.opc/research/task
     sha = hashlib.sha256((project / path).read_bytes()).hexdigest()
     contract_path = project / f'.opc/tasks/dma/revisions/{revision}/task.json'
     if form == 'source':
-        raw = json.loads(contract_path.read_text())
+        raw = json.loads(contract_path.read_text(encoding="utf-8"))
         raw['_source'] = dict(brief=path, sha256=sha)
         put(contract_path, raw)
     else:
@@ -763,7 +765,7 @@ def historical_binding(project, form, revision='r0001', path='.opc/research/task
         else:
             identity = f'dma/dma/{revision}' if form == 'task' else f'.opc/tasks/dma/revisions/{revision}/task.json'
             text = f'- Brief: `{path}`\n- Brief SHA-256: `{sha}`\n- {form.title()}: `{identity}`\n\n'
-        with target.open('a') as stream:
+        with target.open('a', encoding='utf-8') as stream:
             stream.write(text)
 
 
@@ -773,7 +775,7 @@ def test_revision_ownership_survives_historical_brief_change(project, form):
     for rev in ('r0001', 'r0002'):
         historical_binding(project, form, rev)
     brief = project / '.opc/research/tasks/r01/task-brief.md'
-    brief.write_text(brief.read_text() + '\n更新后的目标。\n')
+    brief.write_text(brief.read_text(encoding="utf-8") + '\n更新后的目标。\n', encoding="utf-8")
     adapter = ObserverAdapter(project)
     task = next(t for t in adapter.overview()['data']['tasks'] if t['research_task_id'] == 'R01')
     detail = adapter.research_task(task['id'])['data']
@@ -804,7 +806,7 @@ def test_conflicting_contract_source_and_handoff_do_not_choose_owner(project):
     from opc.observer.adapter import ObserverAdapter
     historical_binding(project, 'source')
     other = project / '.opc/research/tasks/r02/task-brief.md'
-    other.write_text((project / '.opc/research/tasks/r01/task-brief.md').read_text())
+    other.write_text((project / '.opc/research/tasks/r01/task-brief.md').read_text(encoding="utf-8"), encoding="utf-8")
     historical_binding(project, 'single', path='.opc/research/tasks/r02/task-brief.md')
     revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
     assert revision['ownership_state'] == 'ambiguous'
@@ -816,7 +818,7 @@ def test_brief_only_and_direct_task_remain_accessible(project):
     from opc.observer.adapter import ObserverAdapter
     path = project / '.opc/research/tasks/only/task-brief.md'
     path.parent.mkdir()
-    path.write_text('Goal: 只有简报\n')
+    path.write_text('Goal: 只有简报\n', encoding="utf-8")
     adapter = ObserverAdapter(project)
     tasks = adapter.overview()['data']['tasks']
     assert len(tasks) == 4
@@ -830,7 +832,7 @@ def test_same_owner_conflicting_historical_hashes_keep_content_ambiguous(project
     historical_binding(project, 'source')
     historical_binding(project, 'single')
     decisions = project / '.opc/context/DECISIONS.md'
-    decisions.write_text(decisions.read_text().split('sha256=')[0] + 'sha256=' + '0' * 64 + '\n')
+    decisions.write_text(decisions.read_text(encoding="utf-8").split('sha256=')[0] + 'sha256=' + '0' * 64 + '\n', encoding="utf-8")
     revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
     assert revision['ownership_state'] == 'verified'
     assert revision['link_state'] == 'ambiguous'
@@ -843,23 +845,23 @@ def test_multiline_boundaries_and_conflicting_identities(project, boundary):
     target = project / '.opc/context/DECISIONS.md'
     target.parent.mkdir(exist_ok=True)
     brief = '.opc/research/tasks/r01/task-brief.md'
-    target.write_text(f'- Brief: {brief}\n{boundary}\n- Task: dma/r0001\n')
+    target.write_text(f'- Brief: {brief}\n{boundary}\n- Task: dma/r0001\n', encoding="utf-8")
     revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
     assert revision['ownership_state'] == 'unresolved'
-    target.write_text(f'- Brief: {brief}\n- Task: dma/r0001\n- Contract: dma/r0002\n')
+    target.write_text(f'- Brief: {brief}\n- Task: dma/r0001\n- Contract: dma/r0002\n', encoding="utf-8")
     adapter = ObserverAdapter(project)
     assert all(r['ownership_state'] == 'ambiguous' for r in adapter.revisions.values())
-    target.write_text(f'- Brief: {brief}\n- Task: dma/r0001\n')
+    target.write_text(f'- Brief: {brief}\n- Task: dma/r0001\n', encoding="utf-8")
     revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
     assert revision['ownership_state'] == 'verified'
     assert revision['link_state'] == 'unverified'
     assert revision['brief_bindings'] == [dict(path=brief, sha256=None)]
-    target.write_text(f'task=dma revision=r0001 brief={brief}\n')
+    target.write_text(f'task=dma revision=r0001 brief={brief}\n', encoding="utf-8")
     revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
     assert revision['ownership_state'] == 'verified'
     assert revision['link_state'] == 'unverified'
     # Duplicate keys end a record; they must not overwrite earlier identities.
-    target.write_text(f'- Brief: {brief}\n- Task: dma/r0001\n- Task: dma/r0002\n')
+    target.write_text(f'- Brief: {brief}\n- Task: dma/r0001\n- Task: dma/r0002\n', encoding="utf-8")
     revisions = {r['revision']: r for r in ObserverAdapter(project).revisions.values()}
     assert revisions['r0001']['ownership_state'] == 'verified'
     assert revisions['r0002']['ownership_state'] == 'unresolved'
@@ -868,7 +870,7 @@ def test_multiline_boundaries_and_conflicting_identities(project, boundary):
 def test_two_map_identities_in_one_directory_remain_ambiguous(project):
     from opc.observer.adapter import ObserverAdapter
     path = project / '.opc/research/research-map.md'
-    path.write_text(path.read_text() + '- [ ] R03 | [第二身份](tasks/r01/task-brief.md) | status=todo | depends=none\n')
+    path.write_text(path.read_text(encoding="utf-8") + '- [ ] R03 | [第二身份](tasks/r01/task-brief.md) | status=todo | depends=none\n', encoding="utf-8")
     historical_binding(project, 'single')
     adapter = ObserverAdapter(project)
     assert len(adapter.tasks) == 4
@@ -890,9 +892,456 @@ def test_digest_match_does_not_hide_ambiguous_brief_source(project):
     from opc.observer.adapter import ObserverAdapter
     # The brief explicitly names a different task while residing beside R01.
     brief = project / '.opc/research/tasks/r01/task-brief.md'
-    brief.write_text(brief.read_text().replace('Map: .opc/research/research-map.md', 'Task: .opc/research/tasks/r02/task.md'))
+    brief.write_text(brief.read_text(encoding="utf-8").replace('Map: .opc/research/research-map.md', 'Task: .opc/research/tasks/r02/task.md'), encoding="utf-8")
     historical_binding(project, 'source')
     revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
     assert revision['ownership_state'] == 'verified'
     assert revision['link_state'] == 'ambiguous'
     assert revision['brief_id'] is None
+
+
+def test_task_usage_includes_preparation_and_other_runs(project):
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        for owner, tokens in [('old-run', 3), ('new-run', 5), ('preparation:dma', 7)]:
+            db.execute('INSERT INTO charges(run_id,attempt_no,role,wall_seconds,tokens,usd,usd_known,at) VALUES(?,?,?,?,?,?,?,?)',
+                       (owner, None, 'host', 2, tokens, None, 0, AT))
+    from opc.observer.adapter import ObserverAdapter
+    adapter = ObserverAdapter(project)
+    refs = adapter.overview()['data']['unlinked_runs']
+    for revision in adapter.overview()['data']['unlinked_revisions']:
+        refs += adapter.task_revision(revision['id'])['data']['runs']
+    detail = next(adapter.run(ref['id'])['data'] for ref in refs
+                  if adapter.run(ref['id'])['data']['source_run_id'] == 'old-run')
+    usage = detail['task_usage']
+    assert usage['scope'] == 'task'
+    assert usage['includes_preparation']
+    assert usage['recorded_tokens'] == 15
+    assert usage['recorded_wall_seconds'] == 6
+    assert usage['source_refs'][0]['kind'] == 'ledger'
+
+
+def test_task_editorial_handoff_uses_latest_attributed_source(project):
+    from opc.observer.adapter import ObserverAdapter
+    brief = '.opc/research/tasks/r01/task-brief.md'
+    row = dict(task_id='dma', revision='r0001', brief=brief,
+               contract='.opc/tasks/dma/revisions/r0001/task.json', sha256='0' * 64)
+    target = project / '.opc/context/DECISIONS.md'
+    target.parent.mkdir(exist_ok=True)
+    target.write_text('<!-- archa-handoff ' + json.dumps(row) + ' -->\n', encoding='utf-8')
+    row.update(sha256=hashlib.sha256((project / brief).read_bytes()).hexdigest(), change='editorial')
+    with target.open('a', encoding='utf-8') as stream:
+        stream.write('<!-- archa-handoff ' + json.dumps(row) + ' -->\n')
+    contract = project / row['contract']
+    original = json.loads(contract.read_text(encoding='utf-8'))
+    original['_source'] = dict(brief=brief, sha256='0' * 64)
+    put(contract, original)
+    revision = next(r for r in ObserverAdapter(project).revisions.values() if r['revision'] == 'r0001')
+    assert revision['link_state'] == 'verified'
+    assert len(revision['brief_bindings']) == 1
+    assert any(ref['display_path'] == '.opc/context/DECISIONS.md' for ref in revision['meta']['source_refs'])
+
+
+def test_run_compatibility_keeps_legacy_material_readable(project):
+    from opc.observer.adapter import ObserverAdapter
+    adapter = ObserverAdapter(project)
+    refs = adapter.overview()['data']['unlinked_runs']
+    for revision in adapter.overview()['data']['unlinked_revisions']:
+        refs += adapter.task_revision(revision['id'])['data']['runs']
+    detail = next(adapter.run(ref['id'])['data'] for ref in refs
+                  if adapter.run(ref['id'])['data']['source_run_id'] == 'old-run')
+    assert detail['compatibility']['record']['state'] == 'readable'
+    assert detail['compatibility']['execution']['state'] == 'blocked'
+    assert detail['compatibility']['measurement']['state'] == 'unknown'
+    assert detail['report_refs']
+
+
+def test_environment_recheck_baseline_uses_its_own_measurement_source(project):
+    update_contract(project, acceptance={'objective': {'metric': 'loss', 'direction': 'minimize'}})
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        event(db, 'old-run', 'measurement_baseline', commit='a' * 40, cached=False,
+              metrics={'values': {'loss': 123}, 'source_commit': 'a' * 40,
+                       'evaluator_digest': 'eval1', 'toolchain_digest': 'tool2'})
+    from opc.observer.adapter import ObserverAdapter
+    adapter = ObserverAdapter(project)
+    refs = adapter.overview()['data']['unlinked_runs']
+    for revision in adapter.overview()['data']['unlinked_revisions']:
+        refs += adapter.task_revision(revision['id'])['data']['runs']
+    detail = next(adapter.run(ref['id'])['data'] for ref in refs
+                  if adapter.run(ref['id'])['data']['source_run_id'] == 'old-run')
+    assert detail['metrics'][0]['baseline'] == 123
+    assert detail['metrics'][0]['scopes']['baseline']['toolchain_digest'] == 'tool2'
+    assert any('events.seq=' in (source.get('locator') or '')
+               for source in detail['metrics'][0]['source_refs'])
+
+
+def test_pending_call_and_pause_request_remain_distinct_from_paused_run(project, client):
+    db = sqlite3.connect(project / '.opc/local/ledger.sqlite3')
+    db.execute("UPDATE runs SET state='active' WHERE run_id='old-run'")
+    log = project / '.opc/local/artifacts/test/dma/old-run/attempts/a000002/designer'
+    event(db, 'old-run', 'call_dispatched', 2, call_id='call-current', role='designer',
+          inputs={'tree': 'fixed-worktree'}, receipt_path=str(log / 'receipt.json'))
+    event(db, 'old-run', 'control_pause')
+    db.commit()
+    observed = run(client)
+    assert observed['execution']['value'] == 'running'
+    assert observed['control_request'] == 'pause'
+    pending = [get(client, '/calls/' + ident(c['id']))['data'] for c in observed['calls']]
+    pending = [c for c in pending if c['state']['raw_value'] == 'dispatched']
+    assert len(pending) == 1
+    assert pending[0]['state']['value'] == 'running' and pending[0]['ended_at'] is None
+    ident_before = pending[0]['id']
+    event(db, 'old-run', 'worker_call', 2, call_id='call-current', role='designer',
+          ok=False, state='cancelled', log_dir=str(log), error='stopped by user')
+    db.commit()
+    after = run(client)
+    same_call = [c for c in after['calls'] if c['id'] == ident_before]
+    assert len(same_call) == 1
+    assert get(client, '/calls/' + ident(ident_before))['data']['state']['value'] == 'cancelled'
+    db.close()
+
+
+def test_run_shows_frozen_role_backends_without_exposing_cli_credentials(client, project):
+    baseline = project / '.opc/local/artifacts/test/dma/old-run/frozen/baseline.json'
+    put(baseline, {'execution': {
+        'workers': {'expert': {'kind': 'codex', 'model': 'frozen-model', 'native_model_provider': 'local', 'native_profile': 'research', 'env': {'PRIVATE_KEY': 'hidden'}},
+                    'reviewer': {'kind': 'codex', 'model': 'independent-reviewer'}},
+        'configuration_sources': {'workers.expert.kind': '.opc/local/workers.json'}}})
+    before = snapshot(project)
+    data = run(client)
+    assert data['workers'] == {'expert': {'kind': 'codex', 'model': 'frozen-model', 'native_model_provider': 'local', 'native_profile': 'research'},
+                               'reviewer': {'kind': 'codex', 'model': 'independent-reviewer'}}
+    assert data['configuration_sources']['workers.expert.kind'] == '.opc/local/workers.json'
+    assert 'hidden' not in json.dumps(data)
+    assert snapshot(project) == before
+
+
+def observed_run(adapter, source_run_id):
+    overview = adapter.overview()['data']
+    refs = list(overview['unlinked_runs'])
+    for revision in overview['unlinked_revisions']:
+        refs += adapter.task_revision(revision['id'])['data']['runs']
+    return next(adapter.run(item['id'])['data'] for item in refs
+                if adapter.run(item['id'])['data']['source_run_id'] == source_run_id)
+
+
+def test_unknown_call_keeps_partial_usage_and_unknown_terminal(project):
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        event(db, 'new-run', 'worker_call', role='expert', call_id='archa-unknown', session_id='native',
+              state='unknown', ok=False, tokens=0, seconds=2, usage_complete=False)
+    from opc.observer.adapter import ObserverAdapter
+    adapter = ObserverAdapter(project)
+    current = observed_run(adapter, 'new-run')
+    call = adapter.call(current['calls'][-1]['id'])['data']
+    assert call['state']['value'] == 'unknown'
+    assert call['usage']['recorded_tokens'] is None
+    assert call['usage']['recorded_wall_seconds'] == 2
+    assert call['usage']['completeness'] == 'unknown'
+
+
+def test_observer_distinguishes_switched_execution_allowance_from_history(project):
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        cutoff = db.execute('SELECT MAX(seq) FROM events').fetchone()[0]
+        event(db, 'new-run', 'run_created')
+        event(db, 'new-run', 'budget_origin', source_run='old-run', after_event=cutoff, tokens=10, wall_seconds=3)
+        for owner, tokens in [('old-run', 10), ('new-run', 2)]:
+            db.execute('INSERT INTO charges(run_id,role,wall_seconds,tokens,usd,usd_known,at) VALUES(?,?,?,?,?,?,?)',
+                       (owner, 'expert', 1, tokens, None, 0, AT))
+    put(project / '.opc/local/artifacts/test/dma/new-run/frozen/baseline.json',
+        {'execution': {'budget_origin': {'source_run':'old-run', 'after_event':cutoff, 'tokens':10, 'wall_seconds':3}}})
+    from opc.observer.adapter import ObserverAdapter
+    adapter = ObserverAdapter(project)
+    current = observed_run(adapter, 'new-run')
+    assert current['task_usage']['recorded_tokens'] == 12
+    assert current['execution_usage']['recorded_tokens'] == 2
+    assert current['budget_origin']['source_run'] == 'old-run'
+
+
+def test_workbench_projects_real_stages_dependencies_and_filtered_pages(project):
+    from opc.observer.adapter import ObserverAdapter
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        for n, stage, plan in [(3, 'planned', {'title': '等待前序', 'work_id': 'consumer', 'dependencies': [{'work_id': 'producer', 'artifact': 'result'}]}),
+                               (4, 'designed', {'title': '等待评价', 'work_id': 'producer'}),
+                               (5, 'decided', {'title': '等待反馈'}),
+                               (6, 'planned', {'title': '失败重试'})]:
+            db.execute('INSERT INTO attempts(run_id,attempt_no,state,champion_before,plan,outcome,started_at) VALUES(?,?,?,?,?,?,?)',
+                       ('new-run', n, stage, 'a'*40, json.dumps(plan), 'work' if n == 5 else None, AT))
+        event(db, 'new-run', 'node_waiting', 3, reason='inputs', blocked_by=['producer:result'])
+        event(db, 'new-run', 'node_waiting', 4, reason='inputs', blocked_by=['removed'])
+        event(db, 'new-run', 'node_waiting', 4, reason='ready', blocked_by=[])
+        event(db, 'new-run', 'execution', 6, completed=False, error='worker unavailable')
+        event(db, 'new-run', 'worker_call', 6, call_id='failed-call', role='designer', ok=False, error='worker unavailable')
+        event(db, 'new-run', 'call_dispatched', 4, call_id='parallel-one', role='designer', receipt_path='unused/receipt.json')
+        event(db, 'new-run', 'call_dispatched', 4, call_id='parallel-two', role='designer', receipt_path='unused/receipt.json')
+        event(db, 'new-run', 'call_dispatched', call_id='run-expert', role='expert', receipt_path='unused/receipt.json')
+    adapter = ObserverAdapter(project)
+    rid = next(r['id'] for r in adapter.overview()['data']['unlinked_runs'] if r['source_run_id'] == 'new-run')
+    before = snapshot(project)
+    scene = adapter.workbench(rid)['data']
+    assert scene['execution'] == 'active'
+    assert scene['control']['pause']['enabled'] is False
+    assert len(scene['workers']) == 4
+    assert sum(c['attempt_no'] is None for c in scene['workers']) == 1
+    assert all('artifacts' not in c and 'payload' not in c for c in scene['workers'])
+    first = adapter.work_items(rid, limit=2)
+    assert [(x['title'], x['stage']) for x in first['data']['items']] == [('等待前序', 'waiting'), ('等待评价', 'executing')]
+    assert first['data']['items'][0]['dependencies'][0]['attempt_no'] == 4
+    assert first['data']['items'][1]['blocked_by'] == []
+    second = adapter.work_items(rid, cursor=first['next_cursor'], limit=2)
+    assert [(x['title'], x['stage']) for x in second['data']['items']] == [('等待反馈', 'pending_feedback'), ('失败重试', 'failed')]
+    attention = adapter.work_items(rid, scope='attention', limit=1)
+    assert attention['data']['items'][0]['title'] == '等待前序'
+    assert attention['next_cursor']
+    attention2 = adapter.work_items(rid, scope='attention', cursor=attention['next_cursor'], limit=1)
+    assert attention2['data']['items'][0]['title'] == '失败重试'
+    assert snapshot(project) == before
+
+
+def test_workbench_discards_historical_dependency_wait_after_saved_result(project):
+    from opc.observer.adapter import ObserverAdapter
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        for n, plan in [(3, {'title': '前序', 'work_id': 'upstream'}), (4, {'title': '后序', 'work_id': 'downstream', 'dependencies': [{'work_id': 'upstream', 'artifact': 'candidate'}]})]:
+            db.execute('INSERT INTO attempts(run_id,attempt_no,state,champion_before,plan,started_at) VALUES(?,?,?,?,?,?)', ('new-run', n, 'planned', 'a'*40, json.dumps(plan), AT))
+        event(db, 'new-run', 'node_waiting', 4, reason='inputs', blocked_by=['upstream:candidate'])
+        event(db, 'new-run', 'candidate_saved', 3, commit='b'*40)
+    adapter = ObserverAdapter(project)
+    rid = next(r['id'] for r in adapter.overview()['data']['unlinked_runs'] if r['source_run_id'] == 'new-run')
+    item = adapter.work_items(rid)['data']['items'][-1]
+    assert item['blocked_by'] == []
+    assert item['reason'] == '等待派发'
+    assert item['needs_attention'] is False
+
+
+def test_activity_reads_inflight_call_and_pairs_parallel_tools_without_fabricated_time(project):
+    from opc.observer.adapter import ObserverAdapter
+    log = project / '.opc/local/artifacts/test/dma/new-run/calls/live'
+    log.mkdir(parents=True)
+    path = log / 'designer-events.jsonl'
+    rows = [dict(type='thread.started', thread_id='native-session'),
+            dict(type='item.started', item=dict(id='read', type='command_execution', command='cat task.py')),
+            dict(type='item.started', item=dict(id='test', type='command_execution', command='pytest task_test.py')),
+            dict(type='item.started', item=dict(id='internal', type='command_execution', command='cat ' + str(project / '.opc/research/tasks/r01/evidence/boundary.md'))),
+            dict(type='item.started', item=dict(id='internal-relative', type='command_execution', command='cat .opc/research/tasks/r01/../r01/evidence/boundary.md')),
+            dict(type='future.secret', secret='NEVER_RENDER_THIS')]
+    path.write_text(''.join(json.dumps(r) + '\n' for r in rows))
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        event(db, 'new-run', 'call_dispatched', 3, call_id='archa-call-live', role='designer',
+              receipt_path=str(log / 'receipt.json'), activity_log=dict(provider='codex', path=str(path)))
+    adapter = ObserverAdapter(project)
+    rid = next(r['id'] for r in adapter.overview()['data']['unlinked_runs'] if r['source_run_id'] == 'new-run')
+    call = adapter.workbench(rid)['data']['workers'][-1]
+    page = adapter.activity(call['id'])
+    assert page['data']['availability'] == 'available'
+    assert [(a['object'], a['state']) for a in page['data']['actions']] == [('cat task.py', 'pending'), ('pytest task_test.py', 'pending')]
+    assert all(a['started_at'] is None for a in page['data']['actions'])
+    assert 'NEVER_RENDER_THIS' not in json.dumps(page)
+    with path.open('a') as out:
+        out.write(json.dumps(dict(type='item.completed', item=dict(id='test', type='command_execution', command='pytest task_test.py', exit_code=1, aggregated_output='assertion failed'))) + '\n')
+        out.write('{"type":"item.completed"')
+    update = adapter.activity(call['id'], page['next_cursor'])
+    assert [(a['object'], a['state']) for a in update['data']['actions']] == [('cat task.py', 'pending'), ('pytest task_test.py', 'failed')]
+    assert update['data']['actions'][-1]['summary'] == '动作失败'
+    assert call['state'] == 'pending'  # tool failure is not the Call outcome
+    with path.open('a') as out:
+        out.write(',"item":{"id":"read","type":"command_execution","command":"cat task.py","exit_code":0}}\n')
+    final = adapter.activity(call['id'], update['next_cursor'])
+    assert all(a['state'] == 'completed' or a['state'] == 'failed' for a in final['data']['actions'])
+
+
+def test_activity_is_bounded_resets_replaced_logs_and_rejects_wrong_ownership(project):
+    from opc.observer.adapter import ObserverAdapter
+    log = project / '.opc/local/artifacts/test/dma/new-run/calls/bounded'
+    log.mkdir(parents=True)
+    path = log / 'designer-events.jsonl'
+    with path.open('w') as out:
+        out.write(json.dumps(dict(type='thread.started', thread_id='native')) + '\n')
+        for n in range(3000):
+            out.write(json.dumps(dict(type='item.completed', item=dict(id=str(n), type='command_execution', command='test ' + str(n), exit_code=0, aggregated_output='ok' * 200))) + '\n')
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        event(db, 'new-run', 'call_dispatched', 3, call_id='bounded', role='designer', receipt_path=str(log / 'receipt.json'), activity_log=dict(provider='codex', path=str(path)))
+    adapter = ObserverAdapter(project)
+    rid = next(r['id'] for r in adapter.overview()['data']['unlinked_runs'] if r['source_run_id'] == 'new-run')
+    ident = adapter.workbench(rid)['data']['workers'][-1]['id']
+    first = adapter.activity(ident)
+    assert first['data']['truncated'] is True
+    assert first['data']['actions'][-1]['object'] == 'test 2999'
+    assert len(first['data']['actions']) < 200
+    old = path.with_suffix('.old')
+    path.rename(old)
+    path.write_text(json.dumps(dict(type='item.started', item=dict(id='new', type='command_execution', command='new action'))) + '\n')
+    reset = adapter.activity(ident, first['next_cursor'])
+    assert reset['data']['reset'] is True
+    assert [a['object'] for a in reset['data']['actions']] == ['new action']
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        event(db, 'new-run', 'call_dispatched', 4, call_id='replacement-owner', role='designer', receipt_path=str(log / 'receipt.json'), activity_log=dict(provider='codex', path=str(path)))
+    refused = adapter.activity(ident, reset['next_cursor'])['data']
+    assert refused['availability'] == 'unreadable' and refused['actions'] == []
+
+
+def test_activity_legacy_session_and_dsh_tools_are_scoped(project):
+    from opc.observer.adapter import ObserverAdapter
+    adapter = ObserverAdapter(project)
+    current = observed_run(adapter, 'old-run')
+    ident = current['calls'][0]['id']
+    page = adapter.activity(ident)['data']
+    assert page['actions'][0]['object'] == 'pytest'
+    assert page['actions'][0]['state'] == 'completed'
+    path = project / '.opc/local/artifacts/test/dma/old-run/attempts/a000002/expert-events.jsonl'
+    with path.open('a') as out:
+        for row in [dict(type='tool_call', callId='c1', tool='read', input={'file_path': 'params.json'}),
+                    dict(type='tool_result', callId='c1', status='completed', result='{}')]:
+            out.write(json.dumps(row) + '\n')
+    dsh = adapter.activity(current['calls'][1]['id'])['data']
+    assert dsh['actions'][0]['object'] == 'params.json'
+    assert dsh['actions'][0]['summary'] == '动作完成'
+    assert dsh['actions'][0]['state'] == 'completed'
+    path.write_text('{"type":"session","sessionId":"different-owner"}\n')
+    assert adapter.activity(current['calls'][1]['id'])['data']['availability'] == 'unreadable'
+
+
+def test_inspection_binds_saved_call_input_and_material_purpose(project):
+    from opc.observer.adapter import ObserverAdapter, ObserverError
+    log = project / '.opc/local/artifacts/test/dma/old-run/attempts/a000002'
+    outputs = log / 'outputs'
+    outputs.mkdir(exist_ok=True)
+    (outputs / 'answer.md').write_text('# 用户产出\n\n[内部材料](../decision.json)\n', encoding='utf-8')
+    (outputs / 'internal.json').write_text('{"audit":"not user content"}')
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        for call_id, purpose, ok in [('first-try', '修复第一次输入', False), ('retry', '修复第二次输入', True)]:
+            inputs = dict(plan=dict(title='修复解析', changes=purpose, deliverables=['answer.md']),
+                          context=dict(task=dict(goal='用户任务'), handoff=dict(purpose=purpose, evidence='internal-secret'), claims=['internal-claim']))
+            result = dict(ok=ok, output=dict(summary=purpose + '结果', evidence_files=['internal.json']), error='' if ok else 'parser failed')
+            db.execute('INSERT INTO calls(call_id,run_id,attempt_no,role,state,input,result,receipt_path,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
+                       (call_id, 'old-run', 2, 'designer', 'completed', json.dumps(inputs), json.dumps(result), str(log / call_id / 'receipt.json'), AT))
+            event(db, 'old-run', 'call_dispatched', 2, call_id=call_id, role='designer', inputs=inputs)
+            event(db, 'old-run', 'worker_call', 2, call_id=call_id, role='designer', ok=ok, error=result['error'])
+            if ok:
+                event(db, 'old-run', 'deliverables_saved', 2, paths=['outputs/answer.md', 'outputs/internal.json'])
+    adapter = ObserverAdapter(project)
+    rid = adapter._id('run', 'old-run')
+    page = adapter.inspection(rid, 2)['data']
+    assert page['input']['purpose'] == '修复第二次输入'
+    assert [m['name'] for m in page['materials']] == ['answer.md']
+    first = next(c for c in page['calls'] if c['error'] == 'parser failed')
+    earlier = adapter.inspection(rid, 2, first['id'])['data']
+    assert earlier['input']['purpose'] == '修复第一次输入'
+    assert earlier['output']['summary'] == '修复第一次输入结果'
+    assert earlier['materials'] == []
+    assert 'internal-secret' not in json.dumps(page) and 'internal-claim' not in json.dumps(page)
+    with pytest.raises(ObserverError, match='调用不属于'):
+        adapter.inspection(rid, 1, first['id'])
+    material = page['materials'][0]
+    content = adapter.content(material['id'], 0, 20)['data']
+    assert content['content'].startswith('# 用户产出') and not content['eof']
+    assert adapter.artifact(material['id'])['data'].get('link_targets', {}) == {}
+
+
+def test_inspection_code_uses_registered_version_and_old_outputs_do_not_read_replacements(project):
+    import subprocess
+    from opc.observer.adapter import ObserverAdapter, ObserverError
+    def git(*args):
+        return subprocess.check_output(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', *args], cwd=project, text=True).strip()
+    git('init', '-q')
+    (project / 'parser.py').write_text('old input\n')
+    git('add', 'parser.py'); git('commit', '-qm', 'base')
+    parent = git('rev-parse', 'HEAD')
+    (project / 'parser.py').write_text('saved result\n')
+    git('commit', '-qam', 'candidate')
+    candidate = git('rev-parse', 'HEAD')
+    (project / 'parser.py').write_text('current unrelated content\n')
+    adir = project / '.opc/local/artifacts/test/dma/old-run/attempts/a000002'
+    (adir / 'outputs').mkdir(exist_ok=True)
+    (adir / 'outputs/answer.txt').write_text('newer replacement')
+    put(adir.parent.parent / 'frozen/component.json', dict(editable=['*.py'], frozen=[], evaluator_files=[]))
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        event(db, 'old-run', 'call_dispatched', 2, call_id='old-material-call', role='designer', inputs=dict(plan=dict(changes='saved input', deliverables=['answer.txt'])))
+        event(db, 'old-run', 'worker_call', 2, call_id='old-material-call', role='designer', ok=True)
+        event(db, 'old-run', 'candidate_saved', 2, parent=parent, commit=candidate)
+        event(db, 'old-run', 'deliverables_saved', 2, paths=['outputs/answer.txt'])
+        event(db, 'old-run', 'call_dispatched', 2, call_id='later-material-call', role='designer', inputs=dict(plan=dict(changes='later input', deliverables=['answer.txt'])))
+        event(db, 'old-run', 'deliverables_saved', 2, paths=['outputs/answer.txt'])
+    adapter = ObserverAdapter(project)
+    rid = adapter._id('run', 'old-run')
+    page = adapter.inspection(rid, 2)['data']
+    old = next(c for c in page['calls'] if c['state'] == 'finished' and c['role'] == 'designer')
+    page = adapter.inspection(rid, 2, old['id'])['data']
+    materials = {m['name']:m for m in page['materials']}
+    assert materials['answer.txt']['availability'] == 'missing'
+    with pytest.raises(ObserverError, match='不可用'):
+        adapter.content(materials['answer.txt']['id'])
+    assert adapter.content(materials['parser.py']['id'])['data']['content'] == 'saved result\n'
+    (adir / 'outputs/answer.txt').unlink()
+    missing = adapter.inspection(rid, 2)['data']['materials'][0]
+    assert missing['availability'] == 'missing'
+
+
+def test_workbench_delivery_result_is_structured_and_does_not_expose_report(project):
+    from opc.observer.adapter import ObserverAdapter
+    adir = project / '.opc/local/artifacts/test/dma/old-run'
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        task_digest = db.execute("SELECT task_digest FROM runs WHERE run_id='old-run'").fetchone()[0]
+        report = dict(candidate=dict(commit='b'*40), acceptance_task_digest=task_digest, complete=False,
+                      next_step=dict(action='repair_candidate', gaps=[dict(text='internal-report-marker')]))
+        path = adir / 'promotion/result.json'
+        put(path, report)
+        event(db, 'old-run', 'promotion_report', selected_commit='b'*40, complete=False, report_path=str(path))
+    adapter = ObserverAdapter(project)
+    scene = adapter.workbench(adapter._id('run', 'old-run'))['data']
+    assert scene['result']['complete'] is False and scene['result']['reason'] == '交付内容仍需修正'
+    assert 'internal-report-marker' not in json.dumps(scene)
+    assert scene['stop_reason'] == '本次运行已结束'
+    # S4 may register delivery against a later acceptance revision on this same Run.
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        revised_digest = db.execute("SELECT task_digest FROM runs WHERE run_id='new-run'").fetchone()[0]
+    report.update(acceptance_revision='r0002', acceptance_task_digest=revised_digest, acceptance_source_digest=revised_digest, complete=True)
+    put(path, report)
+    assert adapter.workbench(adapter._id('run', 'old-run'))['data']['result']['complete'] is True
+
+
+def test_inspection_allows_declared_dependency_output_but_not_internal_dependency(project):
+    from opc.observer.adapter import ObserverAdapter
+    run_dir = project / '.opc/local/artifacts/test/dma/old-run'
+    (run_dir / 'attempts/a000001/outputs').mkdir(exist_ok=True)
+    (run_dir / 'attempts/a000001/outputs/input.txt').write_text('registered task input')
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        db.execute("UPDATE attempts SET plan=? WHERE run_id='old-run' AND attempt_no=1", (json.dumps(dict(work_id='upstream',deliverables=['input.txt'])),))
+        event(db, 'old-run', 'deliverables_saved', 1, paths=['outputs/input.txt'])
+        event(db, 'old-run', 'call_dispatched', 2, call_id='dependency-call', role='designer', inputs=dict(plan=dict(changes='use input'), context=dict(handoff=dict(inputs=[dict(work_id='upstream', artifact='outputs/input.txt'),dict(work_id='upstream',artifact='decision.json')]))))
+    adapter=ObserverAdapter(project)
+    page=adapter.inspection(adapter._id('run','old-run'),2)['data']
+    assert [(m['name'],m['purpose']) for m in page['materials']] == [('input.txt','传入任务材料')]
+    assert adapter.content(page['materials'][0]['id'])['data']['content'] == 'registered task input'
+
+
+def test_task_material_rejects_changed_and_binary_content(project):
+    from opc.observer.adapter import ObserverAdapter, ObserverError
+    path = project / '.opc/local/artifacts/test/dma/old-run/attempts/a000002/outputs/answer.txt'
+    path.parent.mkdir()
+    path.write_text('saved task content')
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        event(db, 'old-run', 'call_dispatched', 2, call_id='content-call', role='designer', inputs=dict(plan=dict(deliverables=['answer.txt'])))
+        event(db, 'old-run', 'deliverables_saved', 2, paths=['outputs/answer.txt'])
+    adapter = ObserverAdapter(project)
+    rid = adapter._id('run', 'old-run')
+    item = adapter.inspection(rid, 2)['data']['materials'][0]
+    path.write_text('replacement task content')
+    with pytest.raises(ObserverError, match='已变化'):
+        adapter.content(item['id'])
+    path.write_bytes(b'\x00\xff\xfe')
+    item = adapter.inspection(rid, 2)['data']['materials'][0]
+    with pytest.raises(ObserverError, match='不支持文本预览'):
+        adapter.content(item['id'])
+
+
+def test_workbench_run_display_is_stable_and_refreshes_for_newly_recorded_runs(project):
+    from opc.observer.adapter import ObserverAdapter
+    first = ObserverAdapter(project)
+    original = next(r for r in first.overview()['data']['unlinked_runs'] if r['source_run_id'] == 'new-run')
+    assert original['source_run_id'] not in original['display_label']
+    assert first.workbench(original['id'])['data']['display_label'] == original['display_label']
+    with sqlite3.connect(project / '.opc/local/ledger.sqlite3') as db:
+        db.execute("INSERT INTO runs SELECT 'run-7eaf1f6341ac',task_id,revision,task_digest,component,base_commit,evaluator_digest,toolchain_digest,champion_ref,direction,state,stop_reason,'2026-11-02T00:00:00Z',closed_at FROM runs WHERE run_id='new-run'")
+    second = ObserverAdapter(project)
+    added = next(r for r in second.overview()['data']['unlinked_runs'] if r['source_run_id'] == 'run-7eaf1f6341ac')
+    assert added['display_label'] != original['display_label']
+    assert first.workbench(added['id'])['data']['display_label'] == added['display_label']
+    assert first.workbench(original['id'])['data']['display_label'] == original['display_label']

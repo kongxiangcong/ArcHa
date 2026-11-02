@@ -1,4 +1,4 @@
-"""DeepSeek Harness worker: `dsh --profile headless --json`, one fresh session per role call.
+"""DeepSeek Harness worker: `dsh --profile headless --json`, explicit Expert session continuation.
 
 The headless bundle is a one-shot runner: it answers one task, prints a
 newline-delimited event stream, and exits 0 (completed) or 1 (aborted/errored).
@@ -35,11 +35,12 @@ import time
 from pathlib import Path
 
 from ..core.platform import Process, command_prefix
+from ..core.tool_boundary import worker_policy, validate_cli_boundary_args
 from typing import Any
 
 from ..core.model import Cost, OPCError, write_json, write_text
 from .prompts import designer_prompt, expert_prompt
-from .worker import request_rejected, EXHAUSTED_SENTINEL, WorkerCall
+from .worker import designer_output, request_rejected, EXHAUSTED_SENTINEL, WorkerCall
 
 #: Wording that names an account or host condition. The structured code covers
 #: most cases; this is the fallback for a reply whose code is absent or unknown.
@@ -99,6 +100,14 @@ def parse_events(text: str) -> dict[str, Any]:
             runner_error = str(ev.get("message") or "")
         elif kind == "final":
             last_text = ev.get("text", "") or ""
+            session_id = ev.get("sessionId") or session_id
+            # The final event's reason describes this invocation's last turn;
+            # a preceding successful turn cannot establish its completion.
+            if "reason" in ev:
+                reason = ev["reason"] or {}
+                end_kind = reason.get("kind")
+                error = reason.get("error") or {}
+                end_code, end_message = str(error.get("code") or ""), str(error.get("message") or "")
         elif kind == "status" and ev.get("phase") == "step_end":
             usage = ev.get("usage")
             if isinstance(usage, dict):
@@ -175,6 +184,12 @@ class DshWorker:
     """A worker driven by the `dsh` launcher's one-shot headless profile."""
 
     def __init__(self, options: dict[str, Any]):
+        self.session_id: str | None = None
+        self.tool_scope = {"tool_policy": options["tool_policy"]} if "tool_policy" in options else {}
+        self.binary_unavailable = options.get("binary_unavailable", False)
+        self.native_selection_error = options.get("native_selection_error")
+        if options.get("frozen_config") and not (options.get("provider") and options.get("model")):
+            self.native_selection_error = "DSH native defaults cannot be frozen by this adapter; configure explicit provider and model for this role before creating a Run"
         self.binary = options.get("binary") or os.environ.get("OPC_DSH_BIN", "dsh")
         self.profile = str(options.get("profile") or "headless")
         self.timeout = options.get("timeout_s")
@@ -186,7 +201,7 @@ class DshWorker:
         if self.selection and not all(self.selection.get(k) for k in ("provider", "model")):
             raise OPCError("dsh model overrides require both provider and model; "
                            "reasoning_effort is optional")
-        self.dsh_home = options.get("dsh_home") or os.environ.get("OPC_DSH_HOME")
+        self.dsh_home = options.get("dsh_home") if options.get("frozen_config") else options.get("dsh_home") or os.environ.get("OPC_DSH_HOME")
         self.env = {str(k): str(v) for k, v in (options.get("env") or {}).items()}
 
     def _env(self, tree: Path, sandbox: str) -> dict[str, str]:
@@ -198,42 +213,74 @@ class DshWorker:
         env["DSH_PERMISSION_MODE"] = sandbox
         if self.dsh_home:
             env["DSH_HOME"] = str(self.dsh_home)
-        # Keep the child from inheriting a stale session working directory that
-        # would make --session-id adoption refuse; every call is a fresh Session.
+        # Adopt only the explicit ID supplied for this Run; inherited process
+        # context must not silently choose another native Session.
         env.pop("DSH_SESSION_ID", None)
         return env
 
     def _run(self, role: str, prompt: str, tree: Path, log_dir: Path, sandbox: str,
-             schema: dict | None = None) -> tuple[WorkerCall, str]:
+             schema: dict | None = None, *, ctx: dict | None = None) -> tuple[WorkerCall, str]:
         """Signature-compatible with `CodexWorker._run` so this is a drop-in.
 
         `schema` is accepted and ignored: headless has no `--output-schema`, and
         the core validates the plan either way.
         """
-        log_dir.mkdir(parents=True, exist_ok=True)
-        argv = [*command_prefix(self.binary), *self.extra, "--profile", self.profile, "--json", "-"]
-        if self.selection:
-            # JSON is a YAML subset. An invocation-local patch never edits DSH_HOME.
-            selection = {"provider": self.selection["provider"], "model": self.selection["model"]}
-            if "reasoning_effort" in self.selection:
-                selection["reasoningEffort"] = self.selection["reasoning_effort"]
-            overlay = log_dir / ("%s-model.patch.json" % role)
-            write_json(overlay, [{"id": "agent-default-model", "config": selection}])
-            argv[-2:-2] = ["--patch", str(overlay.resolve())]
-        write_text(log_dir / ("%s-prompt.md" % role), prompt)
-        write_json(log_dir / ("%s-request.json" % role),
-                   {"argv": argv, "cwd": str(tree), "sandbox": sandbox,
-                    "timeout_s": self.timeout})
         t0 = time.time()
+        try:
+            validate_cli_boundary_args("dsh", self.extra)
+            log_dir.mkdir(parents=True, exist_ok=True)
+            session_id = (ctx or {}).get("session_id", self.session_id)
+            policy = worker_policy(role, tree, log_dir, ctx or self.tool_scope)
+            write_json(log_dir / "tool-policy.json", policy)
+            from ..core import tool_boundary
+            import sys
+            patch = [{"id": "sandbox", "config": {
+                        "runnerCommand": [sys.executable, str(Path(tool_boundary.__file__).resolve()), str((log_dir / "tool-policy.json").resolve())],
+                        "runnerFailureSignatures": ["archa-tool-boundary:"], "probeTimeoutMs": 5000}},
+                     {"id": "tool-bash", "config": {"enableRunInBackground": False, "promoteOnTimeout": False}},
+                     {"insert": [{"id": "archa-tool-boundary", "name": str(Path(__file__).with_name("dsh-tool-boundary.mjs").resolve())}]}]
+            patch += [{"id": name, "disabled": True} for name in
+                      ("tool-fs", "tool-fs-search", "tool-pwsh", "tool-web", "tool-subagent", "tool-subagent-fork", "tool-subagent-control", "tool-workflow", "tool-executor-ptc")]
+            patch.append({"id": "tool-executor-native", "disabled": False})
+            overlay = log_dir / "tool-boundary.patch.json"
+            write_json(overlay, patch)
+            argv = [*command_prefix(self.binary), *self.extra, "--profile", self.profile, "--patch", str(overlay.resolve()), "--json", "-"]
+            prompt += "\nArcHa tool boundary: use foreground bash for all reads, edits and checks. Other tools, background calls and permission escalation are disabled.\n"
+            if role == "expert" and session_id:
+                argv[-1:-1] = ["--session-id", session_id]
+            if self.selection:
+                # JSON is a YAML subset. An invocation-local patch never edits DSH_HOME.
+                selection = {"provider": self.selection["provider"], "model": self.selection["model"]}
+                if "reasoning_effort" in self.selection:
+                    selection["reasoningEffort"] = self.selection["reasoning_effort"]
+                overlay = log_dir / ("%s-model.patch.json" % role)
+                write_json(overlay, [{"id": "agent-default-model", "config": selection}])
+                at = argv.index("--patch")
+                argv[at:at] = ["--patch", str(overlay.resolve())]
+            write_text(log_dir / ("%s-prompt.md" % role), prompt)
+            write_json(log_dir / ("%s-request.json" % role),
+                       {"argv": argv, "cwd": str(tree), "sandbox": sandbox,
+                        "timeout_s": self.timeout})
+        except (OPCError, OSError, ValueError) as exc:
+            return WorkerCall(role, False, Cost(time.time() - t0, 0, None),
+                              error="dsh task tool boundary could not be prepared: " + str(exc),
+                              log_dir=str(log_dir), extra={"infra": True, "not_started": True,
+                                  "usage_complete": True, "capability_gap": True}), ""
         events = log_dir / ("%s-events.jsonl" % role)
         with open(events, "wb") as out, open(log_dir / ("%s-stderr.txt" % role), "wb") as err:
             try:
+                if self.binary_unavailable:
+                    executable = Path(command_prefix(self.binary)[0])
+                    if not executable.is_absolute() or not executable.is_file():
+                        raise FileNotFoundError("configured executable was unavailable when this Run was frozen: %s" % self.binary)
+                if self.native_selection_error:
+                    raise OSError(self.native_selection_error)
                 p = Process(argv, cwd=str(tree), env=self._env(tree, sandbox),
                                      stdin=subprocess.PIPE, stdout=out, stderr=err)
             except OSError as exc:
                 return WorkerCall(role, False, Cost(time.time() - t0, 0, None),
                                   error="dsh could not start: %s" % exc,
-                                  extra={"infra": True}), ""
+                                  extra={"infra": True, "not_started": True, "usage_complete": True}), ""
             with p:
                 try:
                     p.communicate(prompt.encode(), timeout=self.timeout)
@@ -247,7 +294,15 @@ class DshWorker:
                           log_dir=str(log_dir))
         call.extra.update({"usage_complete": info["usage_complete"],
                            "tool_calls": info["tool_calls"],
-                           "turn_end": info["end_kind"], "code": info["end_code"]})
+                           "turn_end": info["end_kind"], "code": info["end_code"],
+                           "session_id": info["session_id"],
+                           "terminal_completed": info["end_kind"] == "completed",
+                           "tool_policy": str(log_dir / "tool-policy.json"),
+                           "tool_boundary": "confined bash; DSH integration not runtime verified",
+                           "boundary_limitations": policy["limitations"]})
+        if p.cancel_reason and info["end_kind"] == "completed":
+            call.ok = True
+            return call, info["text"]
         if timed_out:
             call.error, call.extra["infra"] = "dsh timed out after %ss" % self.timeout, True
             return call, info["text"]
@@ -256,7 +311,15 @@ class DshWorker:
             return call, info["text"]
         message = info["end_message"] or info["runner_error"] or info["end_kind"] or \
             "dsh exited %s" % p.returncode
-        call.error = message[:500]
+        if not info["session_id"]:
+            stderr = (log_dir / ("%s-stderr.txt" % role)).read_text(encoding="utf-8", errors="replace")
+            message = info["runner_error"] or stderr.strip() or message
+        call.error = message[:2000]
+        if (role == "expert" and session_id and not info["tool_calls"] and not info["output_tokens"]
+                and any(marker in call.error.lower() for marker in ("session not found", "no session found", "no stored session", "cannot be adopted", "not adoptable"))):
+            call.extra.update(session_unavailable=True, not_started=True, usage_complete=True)
+        elif info["end_kind"] is None:
+            call.extra["execution_unknown"] = True
         if info["end_code"] in INFRA_CODES:
             call.extra["infra"] = True
         elif info["end_kind"] == "interrupted":
@@ -276,7 +339,7 @@ class DshWorker:
         # Headless has no --output-schema, so the prompt carries the output-shape
         # rules that codex receives through its schema instead.
         call, text = self._run("expert", expert_prompt(ctx, plain_text_reply=True), tree,
-                               log_dir, "read-only")
+                               log_dir, "read-only", ctx=ctx)
         if not call.ok:
             return call
         if text.strip() == EXHAUSTED_SENTINEL:
@@ -295,6 +358,10 @@ class DshWorker:
     def implement(self, plan: dict[str, Any], ctx: dict[str, Any], tree: Path,
                   log_dir: Path) -> WorkerCall:
         call, text = self._run("designer", designer_prompt(plan, ctx), tree, log_dir,
-                               "workspace-write")
-        call.output = {"summary": text[-2000:]}
+                               "workspace-write", ctx=ctx)
+        try:
+            call.output = designer_output(text)
+        except ValueError as exc:
+            call.output = {"summary": text[-2000:]}
+            call.ok, call.error = False, "; ".join(part for part in (call.error, str(exc)) if part)
         return call

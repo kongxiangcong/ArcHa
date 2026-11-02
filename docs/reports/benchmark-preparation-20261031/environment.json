@@ -1,0 +1,12 @@
+{
+  "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.39",
+  "machine": "x86_64",
+  "compiler": "g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "python": "Python 3.11.18",
+  "cmake": "cmake version 3.31.10",
+  "dependencies": {
+    "argparse": "997da9255618311d1fcb0135ce86022729d1f1cb",
+    "spdlog": "ad0e89cbfb4d0c1ce4d097e134eb7be67baebb36",
+    "yaml-cpp": "0579ae3d976091d7d664aa9d2527e0d0cff25763"
+  }
+}

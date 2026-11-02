@@ -1,0 +1,38 @@
+[
+  {
+    "name": "stream-100000",
+    "trace_sha256": "4c13d908218f732c141ba415d6839c5d148f786d9c6d3afd79d8acd945d07266",
+    "bytes": 1082636,
+    "seed": 20261031
+  },
+  {
+    "name": "random-100000",
+    "trace_sha256": "49d994740839076e3401f34600f136295c48d3a34f13a974b640cc17df9288ea",
+    "bytes": 1296694,
+    "seed": 20261031
+  },
+  {
+    "name": "samebank-100000",
+    "trace_sha256": "e273a652bd4b12b9f3d611fda6510ecbf181d22920191a397ce3590360534843",
+    "bytes": 1295994,
+    "seed": 20261031
+  },
+  {
+    "name": "stream-1000000",
+    "trace_sha256": "71e3be6cf635585b7fcf70016f5fb7842356b4ec8392a6d054b19098b1d39cde",
+    "bytes": 11826386,
+    "seed": 20261031
+  },
+  {
+    "name": "random-1000000",
+    "trace_sha256": "ae93b3acc09847ff51f2b27f842514ede6eba61d24e30ccd519d1b709d9505a8",
+    "bytes": 12965348,
+    "seed": 20261031
+  },
+  {
+    "name": "samebank-1000000",
+    "trace_sha256": "404b67b6e068080fc4bd8fe4b0cfc4c3633e3c826df5b214e8cb223f722f084a",
+    "bytes": 12963214,
+    "seed": 20261031
+  }
+]

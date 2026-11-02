@@ -1,0 +1,1386 @@
+[
+  {
+    "case": "full_no_l2",
+    "samples": [
+      {
+        "case": "full_no_l2",
+        "config": {
+          "size": 256,
+          "connected": 8,
+          "capacity": 0,
+          "pressure": true
+        },
+        "cold_s": 0.029306942014954984,
+        "warm_s": 0.02793933099019341,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 0,
+          "maxsize": 8,
+          "currsize": 0
+        },
+        "warm_cache": {
+          "hits": 0,
+          "misses": 0,
+          "maxsize": 8,
+          "currsize": 0
+        },
+        "digest": "5a99f3d5e93f5ede5ca40c2d9d8e074a9b0992e8187386629e55ba32a88c2d8a",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 102068,
+        "output": {
+          "cycles": 4272.0,
+          "read_bytes": 2359296.0,
+          "write_bytes": 262144.0,
+          "profiles": 20,
+          "l2": null,
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      },
+      {
+        "case": "full_no_l2",
+        "config": {
+          "size": 256,
+          "connected": 8,
+          "capacity": 0,
+          "pressure": true
+        },
+        "cold_s": 0.029604284005472437,
+        "warm_s": 0.027679793012794107,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 0,
+          "maxsize": 8,
+          "currsize": 0
+        },
+        "warm_cache": {
+          "hits": 0,
+          "misses": 0,
+          "maxsize": 8,
+          "currsize": 0
+        },
+        "digest": "5a99f3d5e93f5ede5ca40c2d9d8e074a9b0992e8187386629e55ba32a88c2d8a",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 101848,
+        "output": {
+          "cycles": 4272.0,
+          "read_bytes": 2359296.0,
+          "write_bytes": 262144.0,
+          "profiles": 20,
+          "l2": null,
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      },
+      {
+        "case": "full_no_l2",
+        "config": {
+          "size": 256,
+          "connected": 8,
+          "capacity": 0,
+          "pressure": true
+        },
+        "cold_s": 0.02869706301135011,
+        "warm_s": 0.02824372600298375,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 0,
+          "maxsize": 8,
+          "currsize": 0
+        },
+        "warm_cache": {
+          "hits": 0,
+          "misses": 0,
+          "maxsize": 8,
+          "currsize": 0
+        },
+        "digest": "5a99f3d5e93f5ede5ca40c2d9d8e074a9b0992e8187386629e55ba32a88c2d8a",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 101812,
+        "output": {
+          "cycles": 4272.0,
+          "read_bytes": 2359296.0,
+          "write_bytes": 262144.0,
+          "profiles": 20,
+          "l2": null,
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      }
+    ],
+    "cold_median_s": 0.029306942014954984,
+    "warm_median_s": 0.02793933099019341,
+    "peak_rss_kib": 102068,
+    "stable_across_processes": true,
+    "stable_within_process": true
+  },
+  {
+    "case": "shared_no_l2",
+    "samples": [
+      {
+        "case": "shared_no_l2",
+        "config": {
+          "size": 256,
+          "connected": 2,
+          "capacity": 0,
+          "pressure": true
+        },
+        "cold_s": 0.04646928500733338,
+        "warm_s": 0.04497567701037042,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 0,
+          "maxsize": 8,
+          "currsize": 0
+        },
+        "warm_cache": {
+          "hits": 0,
+          "misses": 0,
+          "maxsize": 8,
+          "currsize": 0
+        },
+        "digest": "5da0eef2f86ffaf6d197de4e4bdee6c618b40e938869081f2b6d8fce592289d5",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 101940,
+        "output": {
+          "cycles": 8952.0,
+          "read_bytes": 2359296.0,
+          "write_bytes": 262144.0,
+          "profiles": 20,
+          "l2": null,
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      },
+      {
+        "case": "shared_no_l2",
+        "config": {
+          "size": 256,
+          "connected": 2,
+          "capacity": 0,
+          "pressure": true
+        },
+        "cold_s": 0.05033935702522285,
+        "warm_s": 0.04418570300913416,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 0,
+          "maxsize": 8,
+          "currsize": 0
+        },
+        "warm_cache": {
+          "hits": 0,
+          "misses": 0,
+          "maxsize": 8,
+          "currsize": 0
+        },
+        "digest": "5da0eef2f86ffaf6d197de4e4bdee6c618b40e938869081f2b6d8fce592289d5",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 102192,
+        "output": {
+          "cycles": 8952.0,
+          "read_bytes": 2359296.0,
+          "write_bytes": 262144.0,
+          "profiles": 20,
+          "l2": null,
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      },
+      {
+        "case": "shared_no_l2",
+        "config": {
+          "size": 256,
+          "connected": 2,
+          "capacity": 0,
+          "pressure": true
+        },
+        "cold_s": 0.04509571299422532,
+        "warm_s": 0.04569682897999883,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 0,
+          "maxsize": 8,
+          "currsize": 0
+        },
+        "warm_cache": {
+          "hits": 0,
+          "misses": 0,
+          "maxsize": 8,
+          "currsize": 0
+        },
+        "digest": "5da0eef2f86ffaf6d197de4e4bdee6c618b40e938869081f2b6d8fce592289d5",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 101892,
+        "output": {
+          "cycles": 8952.0,
+          "read_bytes": 2359296.0,
+          "write_bytes": 262144.0,
+          "profiles": 20,
+          "l2": null,
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      }
+    ],
+    "cold_median_s": 0.04646928500733338,
+    "warm_median_s": 0.04497567701037042,
+    "peak_rss_kib": 102192,
+    "stable_across_processes": true,
+    "stable_within_process": true
+  },
+  {
+    "case": "shared_fifo_small",
+    "samples": [
+      {
+        "case": "shared_fifo_small",
+        "config": {
+          "size": 256,
+          "connected": 2,
+          "capacity": 8192,
+          "pressure": true
+        },
+        "cold_s": 0.20461745801731013,
+        "warm_s": 0.17917421599850059,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "warm_cache": {
+          "hits": 1,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "digest": "31f79735953f33357a31044167d26d9798c2be1c69000216ed76550c7e0fb896",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 102836,
+        "output": {
+          "cycles": 8952.0,
+          "read_bytes": 2359296.0,
+          "write_bytes": 262144.0,
+          "profiles": 72,
+          "l2": {
+            "spec": {
+              "capacity_bytes": 8192,
+              "line_bytes": 128,
+              "policy": "fifo",
+              "output_pressure": true
+            },
+            "a": {
+              "accesses": 512,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 512,
+              "accessed_lines": 16384,
+              "hit_lines": 0,
+              "miss_lines": 16384
+            },
+            "b": {
+              "accesses": 512,
+              "hits": 256,
+              "partial_hits": 0,
+              "misses": 256,
+              "accessed_lines": 16384,
+              "hit_lines": 8192,
+              "miss_lines": 8192
+            },
+            "output_pressure": {
+              "accesses": 64,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 64,
+              "accessed_lines": 2048,
+              "hit_lines": 0,
+              "miss_lines": 2048
+            },
+            "peak_resident_lines": 64,
+            "final_resident_lines": 64,
+            "trace_accesses": 1088
+          },
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      },
+      {
+        "case": "shared_fifo_small",
+        "config": {
+          "size": 256,
+          "connected": 2,
+          "capacity": 8192,
+          "pressure": true
+        },
+        "cold_s": 0.20570309698814526,
+        "warm_s": 0.148627223999938,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "warm_cache": {
+          "hits": 1,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "digest": "31f79735953f33357a31044167d26d9798c2be1c69000216ed76550c7e0fb896",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 102704,
+        "output": {
+          "cycles": 8952.0,
+          "read_bytes": 2359296.0,
+          "write_bytes": 262144.0,
+          "profiles": 72,
+          "l2": {
+            "spec": {
+              "capacity_bytes": 8192,
+              "line_bytes": 128,
+              "policy": "fifo",
+              "output_pressure": true
+            },
+            "a": {
+              "accesses": 512,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 512,
+              "accessed_lines": 16384,
+              "hit_lines": 0,
+              "miss_lines": 16384
+            },
+            "b": {
+              "accesses": 512,
+              "hits": 256,
+              "partial_hits": 0,
+              "misses": 256,
+              "accessed_lines": 16384,
+              "hit_lines": 8192,
+              "miss_lines": 8192
+            },
+            "output_pressure": {
+              "accesses": 64,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 64,
+              "accessed_lines": 2048,
+              "hit_lines": 0,
+              "miss_lines": 2048
+            },
+            "peak_resident_lines": 64,
+            "final_resident_lines": 64,
+            "trace_accesses": 1088
+          },
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      },
+      {
+        "case": "shared_fifo_small",
+        "config": {
+          "size": 256,
+          "connected": 2,
+          "capacity": 8192,
+          "pressure": true
+        },
+        "cold_s": 0.20475105399964377,
+        "warm_s": 0.15288378502009436,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "warm_cache": {
+          "hits": 1,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "digest": "31f79735953f33357a31044167d26d9798c2be1c69000216ed76550c7e0fb896",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 102192,
+        "output": {
+          "cycles": 8952.0,
+          "read_bytes": 2359296.0,
+          "write_bytes": 262144.0,
+          "profiles": 72,
+          "l2": {
+            "spec": {
+              "capacity_bytes": 8192,
+              "line_bytes": 128,
+              "policy": "fifo",
+              "output_pressure": true
+            },
+            "a": {
+              "accesses": 512,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 512,
+              "accessed_lines": 16384,
+              "hit_lines": 0,
+              "miss_lines": 16384
+            },
+            "b": {
+              "accesses": 512,
+              "hits": 256,
+              "partial_hits": 0,
+              "misses": 256,
+              "accessed_lines": 16384,
+              "hit_lines": 8192,
+              "miss_lines": 8192
+            },
+            "output_pressure": {
+              "accesses": 64,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 64,
+              "accessed_lines": 2048,
+              "hit_lines": 0,
+              "miss_lines": 2048
+            },
+            "peak_resident_lines": 64,
+            "final_resident_lines": 64,
+            "trace_accesses": 1088
+          },
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      }
+    ],
+    "cold_median_s": 0.20475105399964377,
+    "warm_median_s": 0.15288378502009436,
+    "peak_rss_kib": 102836,
+    "stable_across_processes": true,
+    "stable_within_process": true
+  },
+  {
+    "case": "shared_fifo_large",
+    "samples": [
+      {
+        "case": "shared_fifo_large",
+        "config": {
+          "size": 256,
+          "connected": 2,
+          "capacity": 131072,
+          "pressure": true
+        },
+        "cold_s": 0.17203228699509054,
+        "warm_s": 0.12651832299889065,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "warm_cache": {
+          "hits": 1,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "digest": "680fe37144c928ce610414033915377a034311a9b46cf2265aa482250171118d",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 102716,
+        "output": {
+          "cycles": 5880.0,
+          "read_bytes": 1310720.0,
+          "write_bytes": 262144.0,
+          "profiles": 72,
+          "l2": {
+            "spec": {
+              "capacity_bytes": 131072,
+              "line_bytes": 128,
+              "policy": "fifo",
+              "output_pressure": true
+            },
+            "a": {
+              "accesses": 512,
+              "hits": 256,
+              "partial_hits": 0,
+              "misses": 256,
+              "accessed_lines": 16384,
+              "hit_lines": 8192,
+              "miss_lines": 8192
+            },
+            "b": {
+              "accesses": 512,
+              "hits": 448,
+              "partial_hits": 0,
+              "misses": 64,
+              "accessed_lines": 16384,
+              "hit_lines": 14336,
+              "miss_lines": 2048
+            },
+            "output_pressure": {
+              "accesses": 64,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 64,
+              "accessed_lines": 2048,
+              "hit_lines": 0,
+              "miss_lines": 2048
+            },
+            "peak_resident_lines": 1024,
+            "final_resident_lines": 1024,
+            "trace_accesses": 1088
+          },
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      },
+      {
+        "case": "shared_fifo_large",
+        "config": {
+          "size": 256,
+          "connected": 2,
+          "capacity": 131072,
+          "pressure": true
+        },
+        "cold_s": 0.18053860898362473,
+        "warm_s": 0.12958962697302923,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "warm_cache": {
+          "hits": 1,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "digest": "680fe37144c928ce610414033915377a034311a9b46cf2265aa482250171118d",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 102380,
+        "output": {
+          "cycles": 5880.0,
+          "read_bytes": 1310720.0,
+          "write_bytes": 262144.0,
+          "profiles": 72,
+          "l2": {
+            "spec": {
+              "capacity_bytes": 131072,
+              "line_bytes": 128,
+              "policy": "fifo",
+              "output_pressure": true
+            },
+            "a": {
+              "accesses": 512,
+              "hits": 256,
+              "partial_hits": 0,
+              "misses": 256,
+              "accessed_lines": 16384,
+              "hit_lines": 8192,
+              "miss_lines": 8192
+            },
+            "b": {
+              "accesses": 512,
+              "hits": 448,
+              "partial_hits": 0,
+              "misses": 64,
+              "accessed_lines": 16384,
+              "hit_lines": 14336,
+              "miss_lines": 2048
+            },
+            "output_pressure": {
+              "accesses": 64,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 64,
+              "accessed_lines": 2048,
+              "hit_lines": 0,
+              "miss_lines": 2048
+            },
+            "peak_resident_lines": 1024,
+            "final_resident_lines": 1024,
+            "trace_accesses": 1088
+          },
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      },
+      {
+        "case": "shared_fifo_large",
+        "config": {
+          "size": 256,
+          "connected": 2,
+          "capacity": 131072,
+          "pressure": true
+        },
+        "cold_s": 0.17866683099418879,
+        "warm_s": 0.12951503400108777,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "warm_cache": {
+          "hits": 1,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "digest": "680fe37144c928ce610414033915377a034311a9b46cf2265aa482250171118d",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 102844,
+        "output": {
+          "cycles": 5880.0,
+          "read_bytes": 1310720.0,
+          "write_bytes": 262144.0,
+          "profiles": 72,
+          "l2": {
+            "spec": {
+              "capacity_bytes": 131072,
+              "line_bytes": 128,
+              "policy": "fifo",
+              "output_pressure": true
+            },
+            "a": {
+              "accesses": 512,
+              "hits": 256,
+              "partial_hits": 0,
+              "misses": 256,
+              "accessed_lines": 16384,
+              "hit_lines": 8192,
+              "miss_lines": 8192
+            },
+            "b": {
+              "accesses": 512,
+              "hits": 448,
+              "partial_hits": 0,
+              "misses": 64,
+              "accessed_lines": 16384,
+              "hit_lines": 14336,
+              "miss_lines": 2048
+            },
+            "output_pressure": {
+              "accesses": 64,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 64,
+              "accessed_lines": 2048,
+              "hit_lines": 0,
+              "miss_lines": 2048
+            },
+            "peak_resident_lines": 1024,
+            "final_resident_lines": 1024,
+            "trace_accesses": 1088
+          },
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      }
+    ],
+    "cold_median_s": 0.17866683099418879,
+    "warm_median_s": 0.12951503400108777,
+    "peak_rss_kib": 102844,
+    "stable_across_processes": true,
+    "stable_within_process": true
+  },
+  {
+    "case": "shared_fifo_no_pressure",
+    "samples": [
+      {
+        "case": "shared_fifo_no_pressure",
+        "config": {
+          "size": 256,
+          "connected": 2,
+          "capacity": 131072,
+          "pressure": false
+        },
+        "cold_s": 0.17063593099010177,
+        "warm_s": 0.15614364901557565,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "warm_cache": {
+          "hits": 1,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "digest": "0ce600fc4b6e7d378651b7346d94ff251fc449e38b1a7c47473b7ac3d40b5e5b",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 102952,
+        "output": {
+          "cycles": 5880.0,
+          "read_bytes": 1310720.0,
+          "write_bytes": 262144.0,
+          "profiles": 72,
+          "l2": {
+            "spec": {
+              "capacity_bytes": 131072,
+              "line_bytes": 128,
+              "policy": "fifo",
+              "output_pressure": false
+            },
+            "a": {
+              "accesses": 512,
+              "hits": 256,
+              "partial_hits": 0,
+              "misses": 256,
+              "accessed_lines": 16384,
+              "hit_lines": 8192,
+              "miss_lines": 8192
+            },
+            "b": {
+              "accesses": 512,
+              "hits": 448,
+              "partial_hits": 0,
+              "misses": 64,
+              "accessed_lines": 16384,
+              "hit_lines": 14336,
+              "miss_lines": 2048
+            },
+            "output_pressure": {
+              "accesses": 0,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 0,
+              "accessed_lines": 0,
+              "hit_lines": 0,
+              "miss_lines": 0
+            },
+            "peak_resident_lines": 1024,
+            "final_resident_lines": 1024,
+            "trace_accesses": 1024
+          },
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      },
+      {
+        "case": "shared_fifo_no_pressure",
+        "config": {
+          "size": 256,
+          "connected": 2,
+          "capacity": 131072,
+          "pressure": false
+        },
+        "cold_s": 0.16408402301021852,
+        "warm_s": 0.12490840000100434,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "warm_cache": {
+          "hits": 1,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "digest": "0ce600fc4b6e7d378651b7346d94ff251fc449e38b1a7c47473b7ac3d40b5e5b",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 102324,
+        "output": {
+          "cycles": 5880.0,
+          "read_bytes": 1310720.0,
+          "write_bytes": 262144.0,
+          "profiles": 72,
+          "l2": {
+            "spec": {
+              "capacity_bytes": 131072,
+              "line_bytes": 128,
+              "policy": "fifo",
+              "output_pressure": false
+            },
+            "a": {
+              "accesses": 512,
+              "hits": 256,
+              "partial_hits": 0,
+              "misses": 256,
+              "accessed_lines": 16384,
+              "hit_lines": 8192,
+              "miss_lines": 8192
+            },
+            "b": {
+              "accesses": 512,
+              "hits": 448,
+              "partial_hits": 0,
+              "misses": 64,
+              "accessed_lines": 16384,
+              "hit_lines": 14336,
+              "miss_lines": 2048
+            },
+            "output_pressure": {
+              "accesses": 0,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 0,
+              "accessed_lines": 0,
+              "hit_lines": 0,
+              "miss_lines": 0
+            },
+            "peak_resident_lines": 1024,
+            "final_resident_lines": 1024,
+            "trace_accesses": 1024
+          },
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      },
+      {
+        "case": "shared_fifo_no_pressure",
+        "config": {
+          "size": 256,
+          "connected": 2,
+          "capacity": 131072,
+          "pressure": false
+        },
+        "cold_s": 0.15570364001905546,
+        "warm_s": 0.11690250399988145,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "warm_cache": {
+          "hits": 1,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "digest": "0ce600fc4b6e7d378651b7346d94ff251fc449e38b1a7c47473b7ac3d40b5e5b",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 103096,
+        "output": {
+          "cycles": 5880.0,
+          "read_bytes": 1310720.0,
+          "write_bytes": 262144.0,
+          "profiles": 72,
+          "l2": {
+            "spec": {
+              "capacity_bytes": 131072,
+              "line_bytes": 128,
+              "policy": "fifo",
+              "output_pressure": false
+            },
+            "a": {
+              "accesses": 512,
+              "hits": 256,
+              "partial_hits": 0,
+              "misses": 256,
+              "accessed_lines": 16384,
+              "hit_lines": 8192,
+              "miss_lines": 8192
+            },
+            "b": {
+              "accesses": 512,
+              "hits": 448,
+              "partial_hits": 0,
+              "misses": 64,
+              "accessed_lines": 16384,
+              "hit_lines": 14336,
+              "miss_lines": 2048
+            },
+            "output_pressure": {
+              "accesses": 0,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 0,
+              "accessed_lines": 0,
+              "hit_lines": 0,
+              "miss_lines": 0
+            },
+            "peak_resident_lines": 1024,
+            "final_resident_lines": 1024,
+            "trace_accesses": 1024
+          },
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      }
+    ],
+    "cold_median_s": 0.16408402301021852,
+    "warm_median_s": 0.12490840000100434,
+    "peak_rss_kib": 103096,
+    "stable_across_processes": true,
+    "stable_within_process": true
+  },
+  {
+    "case": "shared_fifo_512",
+    "samples": [
+      {
+        "case": "shared_fifo_512",
+        "config": {
+          "size": 512,
+          "connected": 2,
+          "capacity": 131072,
+          "pressure": true
+        },
+        "cold_s": 1.272147451993078,
+        "warm_s": 0.8807973280199803,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "warm_cache": {
+          "hits": 1,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "digest": "3e17a0721bf9d9d20d08b3eadba24f52a3c72075244aa12301671e6c52815974",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 106104,
+        "output": {
+          "cycles": 37600.0,
+          "read_bytes": 10485760.0,
+          "write_bytes": 1048576.0,
+          "profiles": 544,
+          "l2": {
+            "spec": {
+              "capacity_bytes": 131072,
+              "line_bytes": 128,
+              "policy": "fifo",
+              "output_pressure": true
+            },
+            "a": {
+              "accesses": 4096,
+              "hits": 2048,
+              "partial_hits": 0,
+              "misses": 2048,
+              "accessed_lines": 131072,
+              "hit_lines": 65536,
+              "miss_lines": 65536
+            },
+            "b": {
+              "accesses": 4096,
+              "hits": 3584,
+              "partial_hits": 0,
+              "misses": 512,
+              "accessed_lines": 131072,
+              "hit_lines": 114688,
+              "miss_lines": 16384
+            },
+            "output_pressure": {
+              "accesses": 256,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 256,
+              "accessed_lines": 8192,
+              "hit_lines": 0,
+              "miss_lines": 8192
+            },
+            "peak_resident_lines": 1024,
+            "final_resident_lines": 1024,
+            "trace_accesses": 8448
+          },
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      },
+      {
+        "case": "shared_fifo_512",
+        "config": {
+          "size": 512,
+          "connected": 2,
+          "capacity": 131072,
+          "pressure": true
+        },
+        "cold_s": 1.1112924680055585,
+        "warm_s": 0.8825417760235723,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "warm_cache": {
+          "hits": 1,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "digest": "3e17a0721bf9d9d20d08b3eadba24f52a3c72075244aa12301671e6c52815974",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 106628,
+        "output": {
+          "cycles": 37600.0,
+          "read_bytes": 10485760.0,
+          "write_bytes": 1048576.0,
+          "profiles": 544,
+          "l2": {
+            "spec": {
+              "capacity_bytes": 131072,
+              "line_bytes": 128,
+              "policy": "fifo",
+              "output_pressure": true
+            },
+            "a": {
+              "accesses": 4096,
+              "hits": 2048,
+              "partial_hits": 0,
+              "misses": 2048,
+              "accessed_lines": 131072,
+              "hit_lines": 65536,
+              "miss_lines": 65536
+            },
+            "b": {
+              "accesses": 4096,
+              "hits": 3584,
+              "partial_hits": 0,
+              "misses": 512,
+              "accessed_lines": 131072,
+              "hit_lines": 114688,
+              "miss_lines": 16384
+            },
+            "output_pressure": {
+              "accesses": 256,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 256,
+              "accessed_lines": 8192,
+              "hit_lines": 0,
+              "miss_lines": 8192
+            },
+            "peak_resident_lines": 1024,
+            "final_resident_lines": 1024,
+            "trace_accesses": 8448
+          },
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      },
+      {
+        "case": "shared_fifo_512",
+        "config": {
+          "size": 512,
+          "connected": 2,
+          "capacity": 131072,
+          "pressure": true
+        },
+        "cold_s": 1.1156067329866346,
+        "warm_s": 0.8860536089923698,
+        "cold_cache": {
+          "hits": 0,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "warm_cache": {
+          "hits": 1,
+          "misses": 1,
+          "maxsize": 8,
+          "currsize": 1
+        },
+        "digest": "3e17a0721bf9d9d20d08b3eadba24f52a3c72075244aa12301671e6c52815974",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 106636,
+        "output": {
+          "cycles": 37600.0,
+          "read_bytes": 10485760.0,
+          "write_bytes": 1048576.0,
+          "profiles": 544,
+          "l2": {
+            "spec": {
+              "capacity_bytes": 131072,
+              "line_bytes": 128,
+              "policy": "fifo",
+              "output_pressure": true
+            },
+            "a": {
+              "accesses": 4096,
+              "hits": 2048,
+              "partial_hits": 0,
+              "misses": 2048,
+              "accessed_lines": 131072,
+              "hit_lines": 65536,
+              "miss_lines": 65536
+            },
+            "b": {
+              "accesses": 4096,
+              "hits": 3584,
+              "partial_hits": 0,
+              "misses": 512,
+              "accessed_lines": 131072,
+              "hit_lines": 114688,
+              "miss_lines": 16384
+            },
+            "output_pressure": {
+              "accesses": 256,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 256,
+              "accessed_lines": 8192,
+              "hit_lines": 0,
+              "miss_lines": 8192
+            },
+            "peak_resident_lines": 1024,
+            "final_resident_lines": 1024,
+            "trace_accesses": 8448
+          },
+          "candidates": 1,
+          "best_layout": "linear"
+        }
+      }
+    ],
+    "cold_median_s": 1.1156067329866346,
+    "warm_median_s": 0.8825417760235723,
+    "peak_rss_kib": 106636,
+    "stable_across_processes": true,
+    "stable_within_process": true
+  },
+  {
+    "case": "shared_layout_search",
+    "samples": [
+      {
+        "case": "shared_layout_search",
+        "config": {
+          "size": 128,
+          "connected": 2,
+          "capacity": 32768,
+          "pressure": true,
+          "search": true
+        },
+        "cold_s": 0.2559474240115378,
+        "warm_s": 0.34552586200879887,
+        "cold_cache": {
+          "hits": 9,
+          "misses": 4,
+          "maxsize": 8,
+          "currsize": 4
+        },
+        "warm_cache": {
+          "hits": 22,
+          "misses": 4,
+          "maxsize": 8,
+          "currsize": 4
+        },
+        "digest": "c6cda989ccfb93a5dd33ae08bc0e79ca04a8566e619318caad952e5fc7b7c352",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 103556,
+        "output": {
+          "cycles": 550.0,
+          "read_bytes": 98304.0,
+          "write_bytes": 65536.0,
+          "profiles": 10,
+          "l2": {
+            "spec": {
+              "capacity_bytes": 32768,
+              "line_bytes": 128,
+              "policy": "fifo",
+              "output_pressure": true
+            },
+            "a": {
+              "accesses": 64,
+              "hits": 48,
+              "partial_hits": 0,
+              "misses": 16,
+              "accessed_lines": 2048,
+              "hit_lines": 1536,
+              "miss_lines": 512
+            },
+            "b": {
+              "accesses": 64,
+              "hits": 56,
+              "partial_hits": 0,
+              "misses": 8,
+              "accessed_lines": 2048,
+              "hit_lines": 1792,
+              "miss_lines": 256
+            },
+            "output_pressure": {
+              "accesses": 16,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 16,
+              "accessed_lines": 512,
+              "hit_lines": 0,
+              "miss_lines": 512
+            },
+            "peak_resident_lines": 256,
+            "final_resident_lines": 256,
+            "trace_accesses": 144
+          },
+          "candidates": 13,
+          "best_layout": "bank_cyclic"
+        }
+      },
+      {
+        "case": "shared_layout_search",
+        "config": {
+          "size": 128,
+          "connected": 2,
+          "capacity": 32768,
+          "pressure": true,
+          "search": true
+        },
+        "cold_s": 0.26047884399304166,
+        "warm_s": 0.2323067870165687,
+        "cold_cache": {
+          "hits": 9,
+          "misses": 4,
+          "maxsize": 8,
+          "currsize": 4
+        },
+        "warm_cache": {
+          "hits": 22,
+          "misses": 4,
+          "maxsize": 8,
+          "currsize": 4
+        },
+        "digest": "c6cda989ccfb93a5dd33ae08bc0e79ca04a8566e619318caad952e5fc7b7c352",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 103860,
+        "output": {
+          "cycles": 550.0,
+          "read_bytes": 98304.0,
+          "write_bytes": 65536.0,
+          "profiles": 10,
+          "l2": {
+            "spec": {
+              "capacity_bytes": 32768,
+              "line_bytes": 128,
+              "policy": "fifo",
+              "output_pressure": true
+            },
+            "a": {
+              "accesses": 64,
+              "hits": 48,
+              "partial_hits": 0,
+              "misses": 16,
+              "accessed_lines": 2048,
+              "hit_lines": 1536,
+              "miss_lines": 512
+            },
+            "b": {
+              "accesses": 64,
+              "hits": 56,
+              "partial_hits": 0,
+              "misses": 8,
+              "accessed_lines": 2048,
+              "hit_lines": 1792,
+              "miss_lines": 256
+            },
+            "output_pressure": {
+              "accesses": 16,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 16,
+              "accessed_lines": 512,
+              "hit_lines": 0,
+              "miss_lines": 512
+            },
+            "peak_resident_lines": 256,
+            "final_resident_lines": 256,
+            "trace_accesses": 144
+          },
+          "candidates": 13,
+          "best_layout": "bank_cyclic"
+        }
+      },
+      {
+        "case": "shared_layout_search",
+        "config": {
+          "size": 128,
+          "connected": 2,
+          "capacity": 32768,
+          "pressure": true,
+          "search": true
+        },
+        "cold_s": 0.27015582600142807,
+        "warm_s": 0.2347297959786374,
+        "cold_cache": {
+          "hits": 9,
+          "misses": 4,
+          "maxsize": 8,
+          "currsize": 4
+        },
+        "warm_cache": {
+          "hits": 22,
+          "misses": 4,
+          "maxsize": 8,
+          "currsize": 4
+        },
+        "digest": "c6cda989ccfb93a5dd33ae08bc0e79ca04a8566e619318caad952e5fc7b7c352",
+        "cold_warm_equal": true,
+        "after_config_change_equal": true,
+        "max_rss_kib": 103608,
+        "output": {
+          "cycles": 550.0,
+          "read_bytes": 98304.0,
+          "write_bytes": 65536.0,
+          "profiles": 10,
+          "l2": {
+            "spec": {
+              "capacity_bytes": 32768,
+              "line_bytes": 128,
+              "policy": "fifo",
+              "output_pressure": true
+            },
+            "a": {
+              "accesses": 64,
+              "hits": 48,
+              "partial_hits": 0,
+              "misses": 16,
+              "accessed_lines": 2048,
+              "hit_lines": 1536,
+              "miss_lines": 512
+            },
+            "b": {
+              "accesses": 64,
+              "hits": 56,
+              "partial_hits": 0,
+              "misses": 8,
+              "accessed_lines": 2048,
+              "hit_lines": 1792,
+              "miss_lines": 256
+            },
+            "output_pressure": {
+              "accesses": 16,
+              "hits": 0,
+              "partial_hits": 0,
+              "misses": 16,
+              "accessed_lines": 512,
+              "hit_lines": 0,
+              "miss_lines": 512
+            },
+            "peak_resident_lines": 256,
+            "final_resident_lines": 256,
+            "trace_accesses": 144
+          },
+          "candidates": 13,
+          "best_layout": "bank_cyclic"
+        }
+      }
+    ],
+    "cold_median_s": 0.26047884399304166,
+    "warm_median_s": 0.2347297959786374,
+    "peak_rss_kib": 103860,
+    "stable_across_processes": true,
+    "stable_within_process": true
+  }
+]

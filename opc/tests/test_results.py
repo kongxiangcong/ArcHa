@@ -13,15 +13,35 @@ from opc.tests.test_research_loop import Sequence, plan, stop, use_sequence
 ENTRY = 'research/results/README.md'
 
 
+def test_host_summary_preserves_live_registration_and_suffix(tmp_path):
+    from opc.core.results import apply_summary, START
+    register(tmp_path, ENTRY, [dict(key='existing/a1', status='failed',
+                                  question='Preserve failed observation', refs={}, issues=['unresolved'])])
+    entry = tmp_path / ENTRY
+    entry.write_text(entry.read_text() + '\nHost follow-up.\n', encoding='utf-8')
+    suffix = entry.read_text().split(START, 1)[1]
+    summary = tmp_path / 'proposed.md'
+    summary.write_text('# Supported result\n\n[original](../raw.json)\n', encoding='utf-8')
+    apply_summary(tmp_path, ENTRY, summary)
+    assert entry.read_text().startswith('# Supported result\n')
+    assert entry.read_text().split(START, 1)[1] == suffix
+    assert split(entry.read_text())[1][0]['status'] == 'failed'
+    summary.write_text(START, encoding='utf-8')
+    original = entry.read_bytes()
+    with pytest.raises(OPCError, match='registration markers'):
+        apply_summary(tmp_path, ENTRY, summary)
+    assert entry.read_bytes() == original
+
+
 def test_external_batch_idempotence_preserves_judgments_and_originals(tmp_path):
     root = tmp_path
     raw = root / 'research/raw'
     raw.mkdir(parents=True)
-    (raw / 'plan.md').write_text('A predicts 4, B predicts 2; same conditions')
-    (raw / 'index.json').write_text('{"observed": 3}')
+    (raw / 'plan.md').write_text('A predicts 4, B predicts 2; same conditions', encoding="utf-8")
+    (raw / 'index.json').write_text('{"observed": 3}', encoding="utf-8")
     register(root, ENTRY, [])
     entry = root / ENTRY
-    entry.write_text(entry.read_text().replace('待分析；独立审核待完成。', 'C1: 尚不能判定；条件为 X。'))
+    entry.write_text(entry.read_text(encoding="utf-8").replace('待分析；独立审核待完成。', 'C1: 尚不能判定；条件为 X。'), encoding="utf-8")
     kwargs = dict(root=root, artifact_root=root / 'artifacts', value=ENTRY, batch='batch-1',
                   experiment_id='E001', question='distinguish A/B', status='completed',
                   refs={'plan':'../raw/plan.md', 'evidence':'../raw/index.json'})
@@ -30,7 +50,7 @@ def test_external_batch_idempotence_preserves_judgments_and_originals(tmp_path):
     external_batch(**kwargs)
     assert entry.read_bytes() == first
     assert 'C1: 尚不能判定' in first.decode()
-    assert (raw / 'index.json').read_text() == '{"observed": 3}'
+    assert (raw / 'index.json').read_text(encoding="utf-8") == '{"observed": 3}'
     rows = split(first.decode())[1]
     assert len(rows) == 1 and rows[0]['key'] == 'external/batch-1'
     assert rows[0]['issues'] == ['analysis: 未提供', 'review: 未提供']
@@ -53,14 +73,14 @@ def test_two_runs_external_batch_and_current_conclusion(make_project, engine_for
     original = (root / 'research/raw.json').read_bytes()
     external_batch(root, e.bindings.artifact_root, ENTRY, 'control-1', 'E001', 'control', 'failed',
                    {'evidence': '../raw.json'})
-    (root / 'research/spec.md').write_text('C1: refuted by control; condition X; old review does not cover revision')
+    (root / 'research/spec.md').write_text('C1: refuted by control; condition X; old review does not cover revision', encoding="utf-8")
     seq = Sequence([plan(1, experiment_id='E001'), stop], [5])
     e2 = use_sequence(engine_for(root), seq)
     e2.run(new_run=True)
     assert e2.run_id != first_run
     assert seq.contexts[0]['history'] == []
     assert 'refuted by control' in json.dumps(seq.contexts[0]['task_results'])
-    rows = split((root / ENTRY).read_text())[1]
+    rows = split((root / ENTRY).read_text(encoding="utf-8"))[1]
     questions = [r for r in rows if r.get('experiment_id') == 'E001']
     assert len(questions) == 3
     assert {r['key'].split('/')[0] for r in questions} == {first_run, e2.run_id, 'external'}
@@ -81,13 +101,22 @@ def test_registration_failure_retries_without_running_experiment(make_project, e
     result = e.run()
     assert result['state'] == 'closed'
     assert e.attempt_records()[0]['candidate']
-    report = json.loads((e.artifact_dir() / 'views/report.json').read_text())
+    report = json.loads((e.artifact_dir() / 'views/report.json').read_text(encoding="utf-8"))
     assert report['results_registration_error'] == 'disk full'
     cost = e.ledger.totals(e.run_id)
+    calls = [c['call_id'] for c in e.ledger.calls(e.run_id)]
+    candidate = e.attempt_records()[0]['candidate']
     monkeypatch.setattr(results, 'write_text', real)
     e.write_views()
-    assert len(split((root / ENTRY).read_text())[1]) == 2
+    rows = split((root / ENTRY).read_text(encoding="utf-8"))[1]
+    assert len(rows) == 1  # Stop is a Run decision, not a second execution.
+    assert rows[0]['key'] == e.run_id + '/a1' and rows[0]['experiment_id'] == 'E1'
+    assert rows[0]['status'] == e.attempt_records()[0]['outcome']
+    evidence = ((root / ENTRY).parent / rows[0]['refs']['evidence']).resolve()
+    assert evidence == e.attempt_dir(1) / 'eval/evaluation.json'
+    assert json.loads(evidence.read_text())['commit'] == candidate
     assert e.ledger.totals(e.run_id) == cost
+    assert [c['call_id'] for c in e.ledger.calls(e.run_id)] == calls
     assert len(seq.contexts) == 2
 
 
@@ -95,7 +124,7 @@ def test_missing_sources_bounds_and_path_boundary(tmp_path):
     register(tmp_path, ENTRY, [])
     path = tmp_path / ENTRY
     path.write_text('# Current\n[missing](../missing.md)\n[escape](../../../../etc/passwd)\n'
-                    '[secret](../../.env)\n' + 'unknown; ' * 3000)
+                    '[secret](../../.env)\n' + 'unknown; ' * 3000, encoding="utf-8")
     result = snapshot(tmp_path, tmp_path / 'artifacts', ENTRY, budget=120)
     assert sum(len(s['excerpt']) for s in result['sources']) <= 120
     assert result['sources'][0]['truncated']
@@ -107,7 +136,7 @@ def test_missing_sources_bounds_and_path_boundary(tmp_path):
             entry_path(tmp_path, bad)
 
 
-def test_review_keeps_consumed_version_and_does_not_remeasure_on_text_change(make_project, engine_for, monkeypatch):
+def test_unselected_results_text_does_not_replace_delivery_material_or_remeasure(make_project, engine_for, monkeypatch):
     from opc.core.promote import promote
     root = make_project(tsk=task(results_path=ENTRY), extra={
         ENTRY: '# Findings\n[C1](../spec.md)\n', 'research/spec.md': 'C1 v1: support under X'})
@@ -121,19 +150,20 @@ def test_review_keeps_consumed_version_and_does_not_remeasure_on_text_change(mak
     first = promote(e, review='codex')
     old = Path(first['report_dir']) / 'report.json'
     old_bytes = old.read_bytes()
-    assert 'C1 v1: support' in json.dumps(supplied[0])
+    assert 'C1 v1: support' in json.dumps(e.results_context())
+    assert supplied[0]['claims'] == [] and supplied[0]['sources'] == []
     assert not any('older source versions' in i for i in e.results_context()['issues'])
-    (root / 'research/spec.md').write_text('C1 v2: refuted; review pending')
+    (root / 'research/spec.md').write_text('C1 v2: refuted; review pending', encoding="utf-8")
     def no_measurements(*a, **kw):
         raise AssertionError('text revision should reuse unchanged delivery measurements')
     monkeypatch.setattr(e, 'evaluate_commit', no_measurements)
     second = promote(e, review='codex')
     assert first['evidence_key'] == second['evidence_key']
     assert second['evidence_source'] == str(old)
-    assert 'C1 v2: refuted' in json.dumps(supplied[-1])
+    assert 'C1 v2: refuted' in json.dumps(e.results_context())
+    assert 'C1 v2: refuted' not in json.dumps(supplied[-1])
     assert old.read_bytes() == old_bytes
-    assert first['task_results'] != second['task_results']
-    assert any('older source versions' in s for s in supplied[-1]['issues'])
+    assert first['task_results'] == second['task_results']
 
 
 def test_old_contract_and_new_revision_binding(make_project):
@@ -143,7 +173,7 @@ def test_old_contract_and_new_revision_binding(make_project):
     new = {**original.raw, 'revision': 'r0002', 'results_path': ENTRY}
     p = original.path.parent.parent / 'r0002/task.json'
     p.parent.mkdir()
-    p.write_text(json.dumps(new))
+    p.write_text(json.dumps(new), encoding="utf-8")
     assert TaskSpec.load(root, 't-toy').raw['results_path'] == ENTRY
     assert TaskSpec.load(root, 't-toy', 'r0001').digest == original.digest
 
@@ -155,7 +185,7 @@ def test_external_cli_works_without_engine_run(make_project, capsys):
     assert main(args + ['--initialize']) == 0
     assert main(args + ['--batch', 'b1', '--experiment-id', 'E1', '--status', 'aborted']) == 0
     assert not (root / '.opc/local/ledger.sqlite3').exists()
-    assert split((root / ENTRY).read_text())[1][0]['status'] == 'aborted'
+    assert split((root / ENTRY).read_text(encoding="utf-8"))[1][0]['status'] == 'aborted'
     assert 'aborted' in capsys.readouterr().out
 
 
@@ -173,7 +203,7 @@ def test_observer_reads_results_and_explicit_links_without_writes(make_project):
     assert any(a['title'] == '任务成果' for a in detail['artifacts'])
     assert any(a['meta']['availability'] == 'missing' for a in detail['artifacts'])
     spec = root / 'research/spec.md'
-    resolved = adapter._markdown_links(spec, spec.read_text())
+    resolved = adapter._markdown_links(spec, spec.read_text(encoding="utf-8"))
     assert 'raw.json' in resolved and '../.env' not in resolved
     after = {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file() and '.git' not in p.parts}
     assert before == after
@@ -184,24 +214,30 @@ def test_interrupted_and_cached_batches_are_not_new_measurements(make_project, e
     e = use_sequence(engine_for(root), Sequence([plan(1, experiment_id='E1')], ['interrupt']))
     result = e.run()
     assert result['state'] == 'paused'
-    rows = split((root / ENTRY).read_text())[1]
+    rows = split((root / ENTRY).read_text(encoding="utf-8"))[1]
     assert rows[0]['run_state'] == 'paused'
     assert not rows[0]['refs'].get('evidence')
     assert e.task.acceptance.objective_metric is None
     external_batch(root, e.bindings.artifact_root, ENTRY, 'old-data', 'E1', 'reuse', 'cached',
                    {'evidence': '../missing-index.json#repeat-2'})
-    text = (root / ENTRY).read_text()
+    text = (root / ENTRY).read_text(encoding="utf-8")
     assert '历史缓存，非新实测' in text
     assert split(text)[1][0]['refs']['evidence'].endswith('#repeat-2')
 
 
 def test_invalid_worker_plan_cannot_corrupt_results(make_project, engine_for):
     root = make_project(tsk=task(results_path=ENTRY))
+    register(root, ENTRY, [dict(key='external/control', experiment_id='E0', question='existing control',
+                                status='completed', refs={}, issues=[])])
+    previous = split((root / ENTRY).read_text(encoding="utf-8"))[1]
     e = use_sequence(engine_for(root), Sequence([plan(1, experiment_id=['not', 'an', 'ID']), stop]))
-    e.run()
-    row = e.attempt_records()[0]
-    assert row['outcome'] == 'worker_failed'
-    assert split((root / ENTRY).read_text())[1][0]['experiment_id'] is None
+    result = e.run()
+    assert result['state'] == 'blocked' and e.attempt_records() == []
+    call = next(c for c in e.ledger.calls(e.run_id) if c['role'] == 'expert')
+    assert call['attempt_no'] is None and call['result']['output']['experiment_id'] == ['not', 'an', 'ID']
+    rejection = e.ledger.events(e.run_id, 'expert_rejected')[-1]['body']
+    assert rejection['call_id'] == call['call_id'] and 'experiment_id' in rejection['reason']
+    assert split((root / ENTRY).read_text(encoding="utf-8"))[1] == previous
 
 
 def test_missing_entry_is_visible_and_symlinks_cannot_expose_secrets(make_project):
@@ -222,13 +258,13 @@ def test_missing_entry_is_visible_and_symlinks_cannot_expose_secrets(make_projec
         register(root, ENTRY, [])
     # A file registered earlier is rechecked at read time, even within project root.
     assert not adapter._allowed(entry)
-    assert (root / '.env').read_text() == 'PRIVATE'
+    assert (root / '.env').read_text(encoding="utf-8") == 'PRIVATE'
 
 
 def test_malformed_registration_keeps_existing_text(tmp_path):
     path = tmp_path / ENTRY
     path.parent.mkdir(parents=True)
-    path.write_text('# Conclusion\n<!-- archa-results:start -->\nbroken')
+    path.write_text('# Conclusion\n<!-- archa-results:start -->\nbroken', encoding="utf-8")
     before = path.read_bytes()
     with pytest.raises(OPCError, match='markers'):
         register(tmp_path, ENTRY, [])
@@ -265,3 +301,382 @@ def test_external_cli_respects_controller_lock(make_project):
     with writer(root):
         assert main(['results', '-p', str(root), '--task', 't-toy', '--initialize']) == 2
     assert not (root / ENTRY).exists()
+
+
+def test_worker_claim_query_preserves_counterevidence_and_reads_scoped_sources(make_project, engine_for):
+    import subprocess
+    from opc.core.tool_boundary import worker_policy, runner_argv
+    received = []
+    class QueryWorker(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            if received:
+                material = ctx['knowledge']
+                assert 'history' not in ctx and 'task_results' not in ctx
+                policy = worker_policy('designer', tree, log_dir, ctx)
+                policy_path = log_dir / 'query-policy.json'
+                policy_path.parent.mkdir(parents=True, exist_ok=True)
+                policy_path.write_text(json.dumps(policy))
+                def query(*args):
+                    result = subprocess.run(runner_argv(policy_path, material['command'] + list(args)),
+                                            cwd=tree, text=True, capture_output=True)
+                    assert result.returncode == 0, result.stderr
+                    return json.loads(result.stdout)
+                found = query('--status', 'supported', '--text', 'long')
+                assert found['scope']['task_ids'] == ['t-toy']
+                assert found['as_of'] == 'fixed_call_input'
+                assert len(found['claims']) == 1
+                claim = found['claims'][0]
+                assert claim['scope'] == 'long fields only'
+                assert claim['counterevidence'][0]['availability'] == 'not_expanded'
+                assert claim['unresolved'] == ['Repeat measurement needed']
+                assert found['omitted'] == 1
+                expanded = query('--claim-id', 'long', '--source', '0')
+                assert expanded['source']['availability'] == 'read'
+                assert 'metrics' in expanded['source']['content']
+                denied = subprocess.run(runner_argv(policy_path, material['command'] + ['--task-id', 'other-task']),
+                                        cwd=tree, text=True, capture_output=True)
+                assert denied.returncode != 0 and 'authorized' in denied.stderr
+            received.append(ctx)
+            return super().implement(p, ctx, tree, log_dir)
+    def register_claims(ctx):
+        source = dict(run_id=e.run_id, attempt=1, artifact='eval/evaluation.json')
+        return dict(plan(2), claims=[
+            dict(claim_id='general', statement='Less copying always helps', scope='all fields',
+                 status='unresolved', reason='Short fields unknown', evidence=[source]),
+            dict(claim_id='long', statement='Less copying helps long fields', scope='long fields only',
+                 status='supported', reason='Controlled long field observation', evidence=[source],
+                 counterevidence=[source], unresolved=['Repeat measurement needed'])])
+    e = use_sequence(engine_for(make_project()), QueryWorker([plan(1), register_claims, stop], [4, 5]))
+    assert e.run()['state'] == 'closed'
+    assert len(received) == 2
+    from opc.observer.adapter import ObserverAdapter
+    before = e.ledger.path.read_bytes()
+    observer = ObserverAdapter(e.root)
+    observed = observer.run(observer._id('run', e.run_id))['data']
+    source = observed['claims'][1]['counterevidence'][0]
+    assert source['availability'] == 'not_expanded'
+    assert 'metrics' in observer.content(source['artifact_id'])['data']['content']
+    assert e.ledger.path.read_bytes() == before
+
+
+def test_cross_task_claim_query_requires_named_material_dependency(make_project, engine_for):
+    from opc.tests.conftest import task
+    from opc.core.results import query_claims
+    def register_claims(ctx):
+        return dict(stop(ctx), claims=[
+            dict(claim_id=name, statement=name + ' proposition', scope='fixed inputs',
+                 status='supported', reason='Measurement supports scoped claim',
+                 evidence=[dict(run_id=origin.run_id, attempt=1, artifact='eval/evaluation.json')])
+            for name in ('shared', 'private')])
+    root = make_project()
+    origin = use_sequence(engine_for(root), Sequence([plan(1), register_claims], [4]))
+    origin.run()
+    def add_task(ident, dependencies):
+        path = root / '.opc/tasks' / ident / 'revisions/r0001/task.json'
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(task(task_id=ident, knowledge_dependencies=dependencies)))
+        from opc.tests.conftest import git
+        git(root, 'add', str(path.relative_to(root)))
+        git(root, 'commit', '-qm', 'add dependent task')
+        return engine_for(root, task_id=ident)
+    authorized = add_task('t-dependent', [{'task_id': 't-toy', 'claim_id': 'shared'}])
+    seq = Sequence([stop])
+    use_sequence(authorized, seq).run()
+    context = seq.contexts[0]
+    found = query_claims(context, task_id='t-toy')
+    assert [c['claim_id'] for c in found['claims']] == ['shared']
+    assert query_claims(context, claim_id='private')['claims'] == []
+    assert query_claims(context, claim_id='shared', source=0)['source']['availability'] == 'read'
+    denied = add_task('t-isolated', [])
+    seq2 = Sequence([stop])
+    use_sequence(denied, seq2).run()
+    with pytest.raises(ValueError, match='authorized'):
+        query_claims(seq2.contexts[0], task_id='t-toy')
+
+
+def test_claim_source_expansion_distinguishes_missing_and_access_denied(make_project, engine_for):
+    from opc.core.results import query_claims
+    def register_claim(ctx):
+        return dict(plan(2), claims=[dict(claim_id='copy', statement='Copying affects speed', scope='fixed inputs',
+                    status='supported', reason='Observation supports claim',
+                    evidence=[dict(run_id=e.run_id, attempt=1, artifact='eval/evaluation.json')])])
+    root = make_project()
+    seq = Sequence([plan(1), register_claim, stop], [4, 5])
+    e = use_sequence(engine_for(root), seq)
+    e.run()
+    context = seq.contexts[2]
+    ref = context['claims'][0]['evidence'][0]
+    source = Path(ref['source'])
+    source.unlink()
+    missing = query_claims(context, claim_id='copy', source=0)
+    assert missing['source']['availability'] == 'missing'
+    assert missing['claims'][0]['status'] == 'supported'
+    private = root / 'private.txt'
+    private.write_text('private sibling data')
+    source.symlink_to(private)
+    denied = query_claims(context, claim_id='copy', source=0)
+    assert denied['source']['availability'] == 'access_denied'
+    assert 'content' not in denied['source']
+
+
+@pytest.mark.parametrize('worker_ok,invalid_adoption', [(True, False), (False, False), (True, True)])
+def test_designer_discovered_originals_survive_cleanup_and_candidate_rejection(make_project, engine_for, worker_ok,
+                                                                              invalid_adoption):
+    from opc.core.results import query_claims
+    from opc.tests.conftest import component
+    trees = []
+    class EvidenceWorker(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            trees.append(tree)
+            raw = tree / 'measurements/long.json'
+            raw.parent.mkdir(parents=True)
+            raw.write_text('{"field":"long","latency":17}')
+            (raw.parent / 'trace.bin').write_bytes(b'\x00\xffnative-trace')
+            call = super().implement(p, ctx, tree, log_dir)
+            call.output['evidence_files'] = ['measurements/long.json', 'measurements/trace.bin']
+            call.ok = worker_ok
+            call.error = '' if worker_ok else 'Work incomplete; observations retained'
+            if invalid_adoption:
+                call.output['adopted_claims'] = [dict(claim_id='missing', version=1)]
+            return call
+    def register_claim(ctx):
+        saved = ctx['history'][0]['execution']['saved_files']
+        assert saved == ['outputs/measurements/long.json', 'outputs/measurements/trace.bin']
+        return dict(stop(ctx), claims=[dict(claim_id='long', statement='Less copying helps long fields',
+                    scope='long fields only', status='supported', reason='Controlled long field observation',
+                    evidence=[dict(run_id=e.run_id, attempt=1, artifact=path) for path in saved])])
+    root = make_project(comp=component(scratch=['measurements/**']))
+    e = use_sequence(engine_for(root), EvidenceWorker([
+        plan(1, deliverables=['measurements/long.json']), register_claim], [0]))
+    result = e.run()
+    assert result['state'] == 'closed'
+    assert e.attempt_records()[0]['outcome'] == ('no_gain' if worker_ok and not invalid_adoption else 'worker_failed')
+    assert json.loads((root / 'params.json').read_text()) == {'x': 3}
+    assert not trees[0].exists()
+    original = e.attempt_dir(1) / 'outputs/measurements/long.json'
+    trace = e.attempt_dir(1) / 'outputs/measurements/trace.bin'
+    assert original.read_text() == '{"field":"long","latency":17}'
+    assert trace.read_bytes() == b'\x00\xffnative-trace'
+    assert sorted(p.name for p in original.parent.iterdir()) == ['long.json', 'trace.bin']
+    old_stat = original.stat().st_mtime_ns
+    seq = Sequence([stop])
+    restored = use_sequence(engine_for(root), seq)
+    restored.run(new_run=True)
+    expanded = query_claims(seq.contexts[0], claim_id='long', source=0)
+    assert expanded['source']['availability'] == 'read'
+    assert json.loads(expanded['source']['content'])['latency'] == 17
+    assert original.stat().st_mtime_ns == old_stat
+
+
+def test_missing_claim_original_is_preserved_as_gap_after_fresh_observation(make_project, engine_for):
+    from opc.core.results import query_claims
+    from opc.tests.conftest import component
+    from opc.adapters.worker import WorkerCall
+    from opc.core.model import Cost
+    claim = dict(claim_id='long', statement='Less copying helps long fields', scope='long fields only',
+                 status='supported', reason='First controlled observation')
+    class EvidenceWorker(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            raw = tree / 'measurements/long.json'
+            raw.parent.mkdir(parents=True)
+            raw.write_text('{"observation":"fresh measurement","latency":22}')
+            return WorkerCall('designer', True, Cost(), output=dict(
+                summary='New controlled long-field observation; does not recover old execution',
+                evidence_files=['measurements/long.json']))
+    def register_claim(ctx):
+        return dict(stop(ctx), claims=[dict(claim, evidence=[dict(
+                    run_id=first.run_id, attempt=1, artifact='outputs/measurements/long.json')])])
+    root = make_project(comp=component(scratch=['measurements/**']))
+    first = use_sequence(engine_for(root), EvidenceWorker([plan(1), register_claim]))
+    first.run()
+    missing = first.attempt_dir(1) / 'outputs/measurements/long.json'
+    missing.unlink()
+    original_run = first.run_id
+    old_ref = dict(run_id=original_run, attempt=1, artifact='outputs/measurements/long.json')
+    def recover(ctx):
+        found = query_claims(ctx, claim_id='long', source=0)
+        assert found['source']['availability'] == 'missing'
+        assert found['claims'][0]['status'] == 'supported'
+        return dict(plan(1), changes='Obtain a new long-field observation; original execution remains missing')
+    def reconsider(ctx):
+        assert ctx['pending_feedback'][0]['attempt'] == 1
+        return dict(stop(ctx), claims=[dict(claim, base_version=1,
+                    reason='Fresh observation supports scope; original historical execution remains missing',
+                    evidence=[old_ref, dict(run_id=second.run_id, attempt=1,
+                                           artifact='outputs/measurements/long.json')],
+                    unresolved=['Original historical execution could not be recovered'])])
+    seq = EvidenceWorker([recover, reconsider])
+    second = use_sequence(engine_for(root), seq)
+    assert second.run(new_run=True)['state'] == 'closed'
+    assert second.run_id != original_run
+    final_seq = Sequence([stop])
+    final = use_sequence(engine_for(root), final_seq)
+    final.run(new_run=True)
+    ctx = final_seq.contexts[0]
+    current = query_claims(ctx, claim_id='long')
+    assert current['claims'][0]['version'] == 2
+    assert current['claims'][0]['unresolved'] == ['Original historical execution could not be recovered']
+    assert query_claims(ctx, claim_id='long', source=0)['source']['availability'] == 'missing'
+    assert query_claims(ctx, claim_id='long', source=1)['source']['availability'] == 'read'
+    old = query_claims(ctx, claim_id='long', version=1, source=0)
+    assert old['source']['availability'] == 'missing'
+    assert old['claims'][0]['reason'] == 'First controlled observation'
+    assert not missing.exists()
+    from opc.observer.adapter import ObserverAdapter
+    before = final.ledger.path.read_bytes()
+    observer = ObserverAdapter(root)
+    observed = observer.run(observer._id('run', second.run_id))['data']
+    assert observed['claims'][0]['version'] == 2
+    assert observed['claims'][0]['evidence'][0]['availability'] == 'missing'
+    assert observed['claim_history'][0]['reason'] == 'First controlled observation'
+    assert final.ledger.path.read_bytes() == before
+
+
+@pytest.mark.parametrize('evidence_files', [
+    '../outside.txt', ['../outside.txt'], ['.opc/eval/evaluate.py'],
+])
+def test_discovered_evidence_rejects_invalid_or_unauthorized_paths(make_project, engine_for, evidence_files):
+    from opc.adapters.worker import WorkerCall
+    from opc.core.model import Cost
+    class EvidenceWorker(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            return WorkerCall('designer', True, Cost(), output=dict(
+                summary='Attempted evidence declaration', evidence_files=evidence_files))
+    e = use_sequence(engine_for(make_project()), EvidenceWorker([plan(1), stop]))
+    e.run()
+    result = e.attempt_records()[0]
+    assert result['outcome'] == 'worker_failed'
+    assert 'evidence_files' in result['reason']
+    assert not (e.attempt_dir(1) / 'outputs').exists()
+
+
+def test_discovered_evidence_cannot_archive_protected_file_through_scratch_link(make_project, engine_for):
+    from opc.adapters.worker import WorkerCall
+    from opc.core.model import Cost
+    from opc.tests.conftest import component
+    class EvidenceWorker(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            raw = tree / 'measurements/linked.py'
+            raw.parent.mkdir()
+            raw.symlink_to(tree / '.opc/eval/evaluate.py')
+            return WorkerCall('designer', True, Cost(), output=dict(
+                summary='Attempted protected source alias', evidence_files=['measurements/linked.py']))
+    e = use_sequence(engine_for(make_project(comp=component(scratch=['measurements/**']))),
+                     EvidenceWorker([plan(1), stop]))
+    e.run()
+    assert e.attempt_records()[0]['outcome'] == 'worker_failed'
+    assert not (e.attempt_dir(1) / 'outputs/measurements/linked.py').exists()
+
+
+@pytest.mark.parametrize('has_results', [False, True])
+def test_claim_review_keeps_exact_revision_after_later_run_updates(make_project, engine_for, monkeypatch, has_results):
+    from opc.core.promote import promote
+    claim = dict(claim_id='copy-all', statement='Reducing copying always improves speed',
+                 scope='Comparable long and short fields', status='unresolved', reason='Need evidence', evidence=[])
+    e = use_sequence(engine_for(make_project(tsk=task(results_path=ENTRY) if has_results else task())),
+                     Sequence([plan(1), lambda ctx: dict(stop(ctx), finish='request_acceptance', claims=[claim],
+                         delivery_claims=[dict(claim_id='copy-all', version=1)])], [4]))
+    e.run()
+    supplied = []
+    def reviewer(*args):
+        supplied.append(args[-1])
+        return dict(ok=True, verdict='accept', summary='Only supplied version and scope')
+    monkeypatch.setattr('opc.core.promote.run_reviewer', reviewer)
+    reviewed = promote(e, review='codex')
+    assert supplied[0]['claims'][0]['version'] == 1
+    review_path = Path(reviewed['report_dir']) / 'report.json'
+    old_review = review_path.read_bytes()
+    seq = Sequence([dict(select_work=False, claims=[dict(claim, base_version=1,
+                        status='refuted', reason='Comparable short field counterexample')]), stop])
+    later = use_sequence(engine_for(e.root), seq)
+    later.run(new_run=True)
+    assert later.claims('copy-all')[0]['version'] == 2
+    assert later.summary()['claims'][0]['status'] == 'refuted'
+    assert review_path.read_bytes() == old_review
+    assert json.loads(old_review)['task_results']['claims'][0]['version'] == 1
+    assert not later.ledger.events(later.run_id, 'promotion_report')
+
+
+def test_fixed_claim_query_expands_explicit_historical_revision(make_project, engine_for):
+    from opc.core.results import query_claims
+    claim = dict(claim_id='copy', statement='Less copying always helps', scope='fixed fields',
+                 status='unresolved', reason='Need comparable evidence', evidence=[])
+    e = use_sequence(engine_for(make_project()), Sequence([
+        plan(1), dict(select_work=False, claims=[claim]),
+        dict(select_work=False, claims=[dict(claim, base_version=1, status='refuted', reason='Valid counterexample')]),
+        stop], [4]))
+    e.run()
+    context = [c['input']['context'] for c in e.ledger.calls(e.run_id) if c['role'] == 'expert'][-1]
+    current = query_claims(context, claim_id='copy')
+    assert current['claims'][0]['version'] == 2 and current['claims'][0]['status'] == 'refuted'
+    historical = query_claims(context, claim_id='copy', version=1)
+    assert historical['claims'][0]['status'] == 'unresolved'
+    assert historical['claims'][0]['reason'] == 'Need comparable evidence'
+
+
+def test_historical_source_index_is_lazy_until_explicit_expansion(make_project, engine_for, monkeypatch):
+    from opc.core.results import query_claims
+    from opc.observer.adapter import ObserverAdapter, ObserverError
+    claim = dict(claim_id='copy', statement='Less copying helps', scope='fixed fields',
+                 status='supported', reason='Historical observation')
+    original = None
+    inspections = []
+    is_file = Path.is_file
+    def track(path):
+        if path == original:
+            inspections.append(str(path))
+        return is_file(path)
+    def register(ctx):
+        nonlocal original
+        original = engine.attempt_dir(1) / 'archive/original.txt'
+        original.parent.mkdir()
+        original.write_text('Historical original measurement')
+        return dict(select_work=False, claims=[dict(claim, evidence=[dict(
+            run_id=engine.run_id, attempt=1, artifact='archive/original.txt')])])
+    def revise(ctx):
+        monkeypatch.setattr(Path, 'is_file', track)
+        return dict(select_work=False, claims=[dict(claim, base_version=1,
+                    evidence=[], status='unresolved', reason='New validity concern')])
+    def inspect(ctx):
+        assert inspections == []  # Creating the next input and views did not probe the old source.
+        old = ctx['claim_history'][0]['evidence'][0]
+        assert old['availability'] == 'not_expanded'
+        before = engine.ledger.path.read_bytes()
+        observer = ObserverAdapter(engine.root)
+        observed = observer.run(observer._id('run', engine.run_id))['data']
+        assert inspections == []
+        historical = observed['claim_history'][0]['evidence'][0]
+        assert historical['availability'] == 'not_expanded'
+        expanded = query_claims(ctx, claim_id='copy', version=1, source=0)
+        assert expanded['source']['content'] == 'Historical original measurement'
+        assert observer.artifact_bytes(historical['artifact_id']) == b'Historical original measurement'
+        assert inspections  # Actual expansion inspects just this chosen source.
+        secret = engine.root / '.env'
+        secret.write_text('unrelated private input')
+        original.unlink()
+        original.symlink_to(secret)
+        assert query_claims(ctx, claim_id='copy', version=1, source=0)['source']['availability'] == 'access_denied'
+        with pytest.raises(ObserverError) as denied:
+            observer.artifact_bytes(historical['artifact_id'])
+        assert denied.value.code == 'path_denied'
+        assert engine.ledger.path.read_bytes() == before
+        return stop(ctx)
+    engine = use_sequence(engine_for(make_project()), Sequence([plan(1), register, revise, inspect], [4]))
+    assert engine.run()['state'] == 'closed'
+
+
+def test_snapshot_reports_changed_sources_of_historical_review(tmp_path):
+    entry = tmp_path / ENTRY
+    entry.parent.mkdir(parents=True)
+    entry.write_text('# Findings\n[claim](../spec.md)\n')
+    claim_path = tmp_path / 'research/spec.md'
+    claim_path.write_text('Original bounded claim')
+    old = snapshot(tmp_path, tmp_path / 'artifacts', ENTRY)
+    (tmp_path / 'research/review.json').write_text(json.dumps(dict(
+        promotion_id='historical', selected_version='fixed', complete=True,
+        task_results=old, reviewer=dict(verdict='accept'))))
+    entry.write_text('# Findings\n[claim](../spec.md)\n[old review](../review.json)\n')
+    claim_path.write_text('Revised claim after counterevidence')
+    current = snapshot(tmp_path, tmp_path / 'artifacts', ENTRY)
+    assert any('older source versions' in issue for issue in current['issues'])
+    assert 'Revised claim' in json.dumps(current)

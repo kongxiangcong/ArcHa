@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "benchmark": "dma-backpressure",
+  "experiment": "20261029-comparison",
+  "status": "incomplete",
+  "framework_delivery_complete": false,
+  "candidate_external_acceptance_passed": true,
+  "stop_reason": "budget_exhausted",
+  "selected_commit": "0dc2e28d25c64d1a010815b1eb05df19bd1c6521",
+  "source": "Migrated historical experiment; not rerun during layout migration.",
+  "conditions": {
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "medium",
+    "codex_cli": "0.165.0",
+    "budget_tokens": 150000,
+    "budget_seconds": 900,
+    "max_iterations": 3
+  },
+  "metrics": {
+    "external_function_cases_passed": 82,
+    "external_function_cases_total": 82,
+    "archa_total_tokens": 206381
+  },
+  "evidence": {
+    "report": "report.md",
+    "comparison": "comparison.json",
+    "environment": "environment.json",
+    "framework_report": "archa-report.json",
+    "original_run": "work/dma-ab-20261029/"
+  }
+}

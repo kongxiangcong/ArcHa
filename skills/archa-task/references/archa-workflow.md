@@ -12,7 +12,7 @@ task-brief 技能生成简报后自动调用上述流程并核对产出；把简
 - `- R*:` → `task.requirements[]`（`verification` 原样对应；`evaluator=待建/未知` 成为 Open item）。
 - `Objective:` → `acceptance.objective`；数值必须由真实评价器产生，`none` 映射 objective=null，完成条件使用 requirements、冻结 gates 和必要 review；不构造伪分数。
 - In/Out → 起草时细化成可改/冻结路径和基线 ref。
-- Open decisions → `.opc/README.md` Open items，token/时间默认无上限，仅用户明确给出时写入 .opc/local/workers.json 的 budget，不为预算提问。
+- Open decisions → `.opc/README.md` Open items，默认 token 无上限、Task 时间额度两小时，仅用户明确给出时写入 .opc/local/workers.json 的 budget，不为预算提问。
 
 当前引擎不原生支持：没有源码补丁的纯取证、每轮独立研究审核、跨任务依赖调度。任务需要这些时在 Open decisions 写明，不要编造优化分数来套用。
 

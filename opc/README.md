@@ -19,7 +19,7 @@ python3 -m opc status|pause|stop|report -p . --task t-xxx
 python3 -m opc promote   -p . --task t-xxx --confirm 2 [--review codex] [--apply main]
 ```
 
-合同改了（新 revision）要 `run --new-run`，可用 `--base opc/t-xxx` 从上一轮 champion 接着跑。champion 在分支 `opc/<task>`；用户检出的分支只有 `promote --apply` 才会快进。
+准备与审核不冻结候选；首次执行绑定后，同一 revision 的合同不可覆盖。执行明确的新 revision 会创建新 Run；同 revision 的独立执行使用 `--new-run`。新 Run 默认从任务基线开始，只有显式 `--base <commit/ref>` 才继承指定成果；实际起点和解析配置保存在 Run 的 frozen 快照中。champion 在分支 `opc/<task>`；用户检出的分支只有 `promote --apply` 才会快进。
 
 接入写法见 [scaffold/ONBOARDING.md](scaffold/ONBOARDING.md)（`opc init` 会把它拷进项目）。
 

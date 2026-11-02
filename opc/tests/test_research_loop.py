@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from opc.adapters.worker import WorkerCall, validate_plan
-from opc.core.model import Cost, Outcome
+from opc.core.model import Cost, OPCError, Outcome
 from opc.tests.conftest import EVALUATE, component, git, task
 
 
@@ -46,12 +46,193 @@ class Sequence:
 def stop(ctx):
     return {'exhausted': True, 'stop_reason': 'No worthwhile work remains for this task',
             'conclusions': [{'attempt': a['attempt'], 'conclusion': f"a{a['attempt']}: evidence supports capability; objective still uncertain"}
-                            for a in ctx['history'] if a['conclusion'] is None]}
+                            for a in ctx['pending_feedback']]}
 
 
 def use_sequence(e, seq):
-    e._workers = (seq, seq)
+    e.workers = lambda tree: (seq, seq)
     return e
+
+
+def test_later_run_discovers_and_analyzes_historical_pending_feedback(make_project, engine_for):
+    from opc.observer.adapter import ObserverAdapter
+    root = make_project()
+    first = use_sequence(engine_for(root), Sequence([plan(1)], [4]))
+    first.run(max_attempts_now=1)
+    old_run = first.run_id
+    original = (first.attempt_dir(1) / 'context.json').read_bytes()
+    def interpret(ctx):
+        assert ctx['history'] == [] and ctx['pending_feedback'] == []
+        pending = ctx['historical_pending_feedback']
+        assert [(p['run_id'], p['attempt']) for p in pending] == [(old_run, 1)]
+        assert Path(pending[0]['evidence']).is_dir()
+        observer = ObserverAdapter(root)
+        observed = observer.run(observer._id('run', later.run_id))['data']['historical_pending_feedback']
+        assert [(p['run_id'], p['attempt']) for p in observed] == [(old_run, 1)]
+        import subprocess
+        from opc.core.model import write_json
+        from opc.core.tool_boundary import worker_policy, runner_argv
+        policy = later.artifact_dir() / 'read-feedback-policy.json'
+        write_json(policy, worker_policy('expert', Path(ctx['knowledge']['context']).parent,
+                                        later.artifact_dir() / 'read-feedback', ctx))
+        original_source = Path(pending[0]['evidence']) / 'eval/evaluation.json'
+        read = subprocess.run(runner_argv(policy, ['/bin/cat', str(original_source)]),
+                              check=True, capture_output=True, text=True)
+        assert json.loads(read.stdout)['metrics']['values'] == {'loss': 10, 'correct': 1}
+        return dict(select_work=False, conclusions=[dict(run_id=old_run, attempt=1,
+                    conclusion='Historical comparable long field supports the limited scope; short fields unknown')])
+    def finish(ctx):
+        assert ctx['historical_pending_feedback'] == []
+        return stop(ctx)
+    later = use_sequence(engine_for(root), Sequence([interpret, finish]))
+    result = later.run(new_run=True)
+    assert result['state'] == 'closed' and later.run_id != old_run
+    assert first.attempt_records()[0]['conclusion'].startswith('Historical comparable')
+    assert (first.attempt_dir(1) / 'context.json').read_bytes() == original
+    assert not later.attempt_records()
+    assert not any(c['role'] == 'designer' for c in later.ledger.calls(later.run_id))
+    before = later.ledger.path.read_bytes()
+    observer = ObserverAdapter(root)
+    assert observer.run(observer._id('run', later.run_id))['data']['historical_pending_feedback'] == []
+    assert later.ledger.path.read_bytes() == before
+
+
+@pytest.mark.parametrize('measurement,explanation', [
+    ({'short_latency': 12, 'before': 10, 'interference': True},
+     'Interference makes the short observation invalid as counterevidence'),
+    ({'short_latency': [8, 12], 'before': 10, 'interference': False},
+     'Comparable short observations disagree; variability remains unexplained'),
+])
+def test_analyzed_measurement_can_leave_claim_unresolved(make_project, engine_for, measurement, explanation):
+    root = make_project(comp=component(scratch=['raw/**']))
+    claim = dict(claim_id='copy-all', statement='Reducing copying always improves speed',
+                 scope='Comparable long and short fields', status='unresolved', reason='Need valid short data')
+    class Measurement(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            call = super().implement(p, ctx, tree, log_dir)
+            (tree / 'raw').mkdir()
+            (tree / 'raw/short.json').write_text(json.dumps(measurement))
+            call.output['evidence_files'] = ['raw/short.json']
+            return call
+    def analyze(ctx):
+        assert ctx['pending_feedback'][0]['attempt'] == 1
+        saved = ctx['history'][0]['execution']['saved_files']
+        assert saved == ['outputs/raw/short.json']
+        actual = json.loads((Path(ctx['pending_feedback'][0]['evidence']) / saved[0]).read_text())
+        assert actual == measurement
+        return dict(stop(ctx), claims=[dict(claim, base_version=1, reason=explanation,
+                    evidence=[dict(run_id=engine.run_id, attempt=1, artifact=saved[0])],
+                    counterevidence=[], unresolved=[explanation])])
+    engine = use_sequence(engine_for(root), Measurement([dict(plan(1), claims=[claim]), analyze]))
+    result = engine.run()
+    assert result['state'] == 'closed' and result['pending_conclusions'] == []
+    assert result['claims'][0]['status'] == 'unresolved'
+    assert result['claims'][0]['counterevidence'] == []
+    assert result['claims'][0]['reason'] == explanation
+    assert engine.attempt_records()[0]['conclusion'] is not None
+
+
+@pytest.mark.parametrize('identity', ['absent-run', [], 'foreign-task-run'])
+def test_historical_feedback_rejects_invalid_run_identity(make_project, engine_for, identity):
+    root = make_project()
+    if identity == 'foreign-task-run':
+        path = root / '.opc/tasks/t-other/revisions/r0001/task.json'
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(task(task_id='t-other')))
+        git(root, 'add', str(path.relative_to(root)))
+        git(root, 'commit', '-qm', 'add separate feedback owner')
+        foreign = use_sequence(engine_for(root, task_id='t-other'), Sequence([plan(1)], [4]))
+        foreign.run(max_attempts_now=1)
+        identity = foreign.run_id
+    seq = Sequence([plan(1), dict(plan(2), conclusions=[dict(run_id=identity, attempt=1,
+                            conclusion='Do not process an unauthorized execution')])], [4])
+    engine = use_sequence(engine_for(root), seq)
+    result = engine.run()
+    assert result['state'] == 'blocked' and 'pending attempts' in result['stop_reason']
+    assert result['pending_conclusions'] == [1] and len(engine.attempt_records()) == 1
+    if isinstance(identity, str) and identity.startswith('run-'):
+        assert foreign.attempt_records()[0]['conclusion'] is None
+
+
+def test_copying_claim_loop_changes_scoped_choice_in_later_run(make_project, engine_for):
+    from opc.core.results import query_claims
+    from opc.observer.adapter import ObserverAdapter
+    root = make_project(comp=component(scratch=['raw/**']))
+    broad = dict(claim_id='copy-all', statement='Reducing copying always improves speed',
+                 scope='Comparable long and short fields; fixed code/input/tool',
+                 status='unresolved', reason='Only long fields measured', unresolved=['Short fields unknown'])
+    limited = dict(claim_id='copy-long', statement='Reducing copying helps long fields',
+                   scope='Long fields only; fixed code/input/tool', status='supported',
+                   reason='Controlled long field fixture improved', related_claims=['copy-all'])
+    def ref(attempt):
+        return dict(run_id=first.run_id, attempt=attempt, artifact='outputs/raw/measurement.json')
+    def analyze_long(ctx):
+        return dict(plan(2), changes='Measure short fields under the same code/input/tool',
+                    claims=[dict(broad, evidence=[ref(1)]), dict(limited, evidence=[ref(1)])],
+                    conclusions=[dict(attempt=1, conclusion='Comparable long field supports only the limited scope')])
+    class Measurements(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            call = super().implement(p, ctx, tree, log_dir)
+            raw = tree / 'raw'
+            raw.mkdir(exist_ok=True)
+            (raw / 'measurement.json').write_text(json.dumps(dict(
+                field='long' if p['title'] == 'experiment 1' else 'short',
+                before=10, after=8 if p['title'] == 'experiment 1' else 12,
+                conditions='fixed code/input/tool', comparable=True)))
+            call.output['evidence_files'] = ['raw/measurement.json']
+            return call
+    first = use_sequence(engine_for(root), Measurements([plan(1), analyze_long], [4, 0]))
+    paused = first.run(max_attempts_now=2)
+    assert paused['pending_conclusions'] == [2]
+    assert [(c['claim_id'], c['status']) for c in paused['claims']] == [
+        ('copy-all', 'unresolved'), ('copy-long', 'supported')]
+    old_input = (first.attempt_dir(2) / 'context.json').read_bytes()
+    old_raw = (first.attempt_dir(1) / ref(1)['artifact']).read_bytes()
+    def analyze_short(ctx):
+        assert ctx['pending_feedback'][0]['attempt'] == 2
+        assert ctx['claims'][0]['pending_feedback'][0]['attempt'] == 2
+        assert ctx['claims'][0]['status'] == 'unresolved'
+        return dict(select_work=False, claims=[dict(broad, evidence=[ref(1)],
+                    base_version=1, status='refuted', counterevidence=[ref(2)], unresolved=[],
+                    reason='Valid comparable short field counterexample is inside the stated scope')],
+                    conclusions=[dict(attempt=2, conclusion='Short field degradation is valid and refutes the broad proposition')])
+    restored = use_sequence(engine_for(root), Sequence([analyze_short, stop]))
+    closed = restored.run()
+    assert closed['pending_conclusions'] == []
+    assert [(c['claim_id'], c['version'], c['status']) for c in closed['claims']] == [
+        ('copy-all', 2, 'refuted'), ('copy-long', 1, 'supported')]
+    received = []
+    def reuse(ctx):
+        assert ctx['history'] == [] and ctx['historical_pending_feedback'] == []
+        assert query_claims(ctx, claim_id='copy-all', version=1)['claims'][0]['status'] == 'unresolved'
+        supported = query_claims(ctx, status='supported', text='long fields')['claims']
+        assert [c['claim_id'] for c in supported] == ['copy-long']
+        assert query_claims(ctx, claim_id='copy-long', source=0)['source']['availability'] == 'read'
+        assert query_claims(ctx, claim_id='copy-all', source=1)['source']['availability'] == 'read'
+        return dict(plan(1), changes='Reuse copying reduction only for long fields; retain baseline for short fields',
+                    evaluate=False, adopted_claims=[dict(claim_id='copy-all', version=2),
+                                                   dict(claim_id='copy-long', version=1)])
+    class ScopedChoice(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            received.append((p, ctx))
+            assert p['evaluate'] is False and 'only for long fields' in p['changes']
+            assert [(r['claim_id'], r['version']) for r in ctx['handoff']['adopted_claims']] == [
+                ('copy-all', 2), ('copy-long', 1)]
+            return super().implement(p, ctx, tree, log_dir)
+    later = use_sequence(engine_for(root), ScopedChoice([reuse, stop]))
+    result = later.run(new_run=True)
+    assert result['state'] == 'closed' and later.run_id != first.run_id
+    assert len(received) == 1 and len(later.attempt_records()) == 1
+    assert later.attempt_records()[0]['experiment'] is None  # Historical evidence was reused, not remeasured.
+    assert (first.attempt_dir(2) / 'context.json').read_bytes() == old_input
+    assert (first.attempt_dir(1) / ref(1)['artifact']).read_bytes() == old_raw
+    before = later.ledger.path.read_bytes()
+    observer = ObserverAdapter(root)
+    observed = observer.run(observer._id('run', later.run_id))['data']
+    assert [(c['claim_id'], c['version'], c['status']) for c in observed['claims']] == [
+        ('copy-all', 2, 'refuted'), ('copy-long', 1, 'supported')]
+    assert observer.attempt(observer._id('run', later.run_id), 1)['data']['adopted_claims'] == later.attempt_records()[0]['adopted_claims']
+    assert later.ledger.path.read_bytes() == before
 
 
 def test_expert_material_and_full_history_are_research_only(make_project, engine_for):
@@ -128,9 +309,9 @@ def test_no_patch_measurements_are_fresh_and_different_from_not_executed(make_pr
         assert row['experiment']['status'] == 'completed'
         assert row['experiment']['cached'] is False
         assert row['experiment']['data'][0]['data']['metrics']['loss'] == 17
-    assert rows[2]['outcome'] == Outcome.WORKER_FAILED.value
-    assert rows[2]['experiment'] is None and rows[2]['execution'] is None
-    assert e.summary()['pending_conclusions'] == [1, 2, 3]  # resource cap: no extra call
+    assert len(rows) == 2  # invalid input selection is a Run decision failure, not work
+    assert e.summary()['state'] == 'blocked'
+    assert e.summary()['pending_conclusions'] == [1, 2]
     assert len(seq.contexts) == 3
 
 
@@ -139,8 +320,9 @@ def test_interruption_preserves_pending_review_without_extra_call(make_project, 
     e = use_sequence(engine_for(make_project()), seq)
     s = e.run()
     assert s['state'] == 'paused' and len(seq.contexts) == 2
-    assert s['pending_conclusions'] == [1, 2]
-    assert e.attempt_records()[1]['outcome'] == Outcome.ABANDONED.value
+    assert s['pending_conclusions'] == [1]
+    assert e.attempt_records()[1]['outcome'] is None
+    assert e.ledger.calls(e.run_id)[-1]['state'] == 'dispatched'
 
 
 def test_conclusions_cannot_be_attached_to_a_different_attempt(make_project, engine_for):
@@ -149,8 +331,30 @@ def test_conclusions_cannot_be_attached_to_a_different_attempt(make_project, eng
     e = use_sequence(engine_for(make_project()), seq)
     e.run(max_attempts_now=2)
     assert e.attempt_records()[0]['conclusion'] is None
-    assert e.attempt_records()[1]['outcome'] == Outcome.WORKER_FAILED.value
+    assert len(e.attempt_records()) == 1
+    assert e.summary()['state'] == 'blocked'
+    assert e.ledger.events(e.run_id, 'expert_rejected')
     assert not e.ledger.events(e.run_id, 'conclusion')
+
+
+def test_resume_supplies_rejected_decision_reason_without_applying_it(make_project, engine_for):
+    root = make_project()
+    first = use_sequence(engine_for(root), Sequence([
+        dict(plan(1), conclusions=[dict(attempt=1, conclusion='No prior result exists')])]))
+    result = first.run(max_attempts_now=1)
+    assert result['state'] == 'blocked'
+    assert first.attempt_records() == []
+    def corrected(ctx):
+        rejected = ctx['decision_rejections']
+        assert len(rejected) == 1
+        assert 'pending attempts' in rejected[0]['reason']
+        assert ctx['pending_feedback'] == []
+        return dict(plan(1), conclusions=[])
+    resumed = use_sequence(engine_for(root), Sequence([corrected], [4]))
+    resumed.run(max_attempts_now=1)
+    assert resumed.run_id == first.run_id
+    assert len(resumed.attempt_records()) == 1
+    assert not resumed.ledger.events(resumed.run_id, 'conclusion')
 
 
 def test_plan_does_not_require_file_guesses():
@@ -278,7 +482,7 @@ def test_selected_delivery_and_review_reuses_exact_evidence(make_project, engine
     from opc.core.engine import Engine
     root = make_project(tsk=task(acceptance={}, requirements=[
         {'id': 'R1', 'text': 'usable', 'verification': 'review'}]))
-    e = use_sequence(engine_for(root), Sequence([plan(1), {'exhausted': True, 'base_attempt': 1}], [4]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), lambda ctx: {**stop(ctx), 'base_attempt': 1}], [4]))
     s = e.run()
     count = []
     original = Engine.evaluate_commit
@@ -288,12 +492,13 @@ def test_selected_delivery_and_review_reuses_exact_evidence(make_project, engine
     monkeypatch.setattr(Engine, 'evaluate_commit', evaluate)
     first = promote(e)
     assert not first['complete'] and first['selected_version'] == s['selected_version']
-    monkeypatch.setattr('opc.core.promote.run_reviewer', lambda *a: {'ok': True, 'verdict': 'accept'})
+    monkeypatch.setattr('opc.core.promote.run_reviewer', lambda *a: {'ok': True, 'verdict': 'accept', 'requirement_findings': [
+        {'id': 'R1', 'status': 'met', 'evidence': ['Selected candidate satisfies usable interface'], 'gap': ''}]})
     second = promote(e, review='codex')
     assert second['complete'] and second['evidence_source']
     assert len(count) == 1
     assert second['champion'] is None
-    assert len(e.attempt_records()) == 2
+    assert len(e.attempt_records()) == 1  # stop decision creates no execution node
     # A different selected version cannot borrow that receipt.
     e.ledger.event(e.run_id, 'selected_version', None, commit=s['baseline'])
     promote(e, review='codex')
@@ -317,8 +522,9 @@ def test_context_bounds_machine_data_and_history(make_project, engine_for):
     assert data['cases']['last'][-1]['latency'] == 1002
     raw = json.loads((e.attempt_dir(15) / 'eval/evaluation.json').read_text())
     assert len(raw['metrics']['values']) == 2158 and len(raw['data'][0]['data']['cases']) == 1000
-    assert len(expert_prompt(ctx)) < 2000
-    assert e.save_conclusions({'conclusions': []}, ctx, 17) is None
+    assert len(expert_prompt(ctx)) < 2600
+    assert len(ctx['pending_feedback']) == 15
+    assert len(e.ledger.events(e.run_id, 'conclusion')) == 15
 
 
 def test_development_local_steps_and_explicit_measurement(make_project, engine_for):
@@ -346,7 +552,7 @@ def test_direct_task_to_delivery_and_environment_invalidation(make_project, engi
     git(root, 'add', '-A'); git(root, 'commit', '-qm', 'confirmed direct task')
     e = use_sequence(engine_for(root), Sequence([plan(1)], [4]))
     e.run(max_attempts_now=1)
-    seq = Sequence([plan(2), {'exhausted': True, 'base_attempt': 2}], [7])
+    seq = Sequence([plan(2), lambda ctx: {**stop(ctx), 'base_attempt': 2}], [7])
     resumed = use_sequence(engine_for(root), seq)
     s = resumed.run()
     assert resumed.attempt_records()[1]['parent'] == resumed.attempt_records()[0]['candidate']
@@ -362,7 +568,7 @@ def test_direct_task_to_delivery_and_environment_invalidation(make_project, engi
 def test_selected_nonchampion_reports_its_own_measurement(make_project, engine_for):
     from opc.core.promote import promote
     e = use_sequence(engine_for(make_project()), Sequence([
-        plan(1), plan(2), {'exhausted': True, 'base_attempt': 2}], [7, 6]))
+        plan(1), plan(2), lambda ctx: {**stop(ctx), 'base_attempt': 2}], [7, 6]))
     e.run()
     r = promote(e)
     assert r['selected_metrics']['loss'] == 2
@@ -379,7 +585,12 @@ def test_delivery_missing_evidence_blocks(make_project, engine_for, monkeypatch,
     acc = {'constraints': [{'metric': 'missing', 'op': '==', 'value': 1}]} if case == 'metrics' else {}
     ev = EVALUATE+'\nraise SystemExit(1)\n' if case == 'gates' else EVALUATE
     e = use_sequence(engine_for(make_project(evaluate=ev, tsk=task(acceptance=acc, requirements=requirements))),
-                     Sequence([plan(1), {'exhausted': True, 'base_attempt': 0}], [4]))
+                     Sequence([plan(1), lambda ctx: {**stop(ctx), 'base_attempt': 0}], [4]))
+    if case == 'metrics':
+        with pytest.raises(OPCError, match='required metrics: missing'):
+            e.run()
+        assert not e.ledger.runs()
+        return
     s = e.run()
     assert s['selected_version'] == s['baseline']
     monkeypatch.setattr('opc.core.promote.run_reviewer', lambda *a: {
@@ -462,7 +673,7 @@ def test_metered_preparation_to_formal_execution(make_project, engine_for, monke
         if case == 'unknown':
             from opc.core.ledger import Ledger
             ledger = Ledger(root / '.opc/local/ledger.sqlite3')
-            rid = ledger.runs()[-1]['run_id']
+            rid = ledger.preparation_scope('t-toy')
             seq = ledger.unresolved_accounting(rid)[0]['seq']
             evidence = root / '.opc/local/usage-evidence.json'
             evidence.write_text('{"actual_tokens": 80, "already_charged": 80}')
@@ -564,7 +775,7 @@ def test_confirmed_revision_reuses_measurements_without_rewriting_failure(make_p
 def test_cli_delivery_consumes_selected_run_and_never_applies(make_project, engine_for, monkeypatch, capsys):
     from opc.cli import main
     root = make_project(tsk=task(acceptance={}, requirements=[]))
-    e = use_sequence(engine_for(root), Sequence([plan(1), stop], [7]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), lambda ctx: {**stop(ctx), "finish": "request_acceptance"}], [7]))
     monkeypatch.setattr('opc.cli._engine', lambda *a, **k: e)
     before = git(root, 'rev-parse', 'HEAD')
     assert main(['run','-p',str(root),'--task','t-toy','--deliver']) == 0
@@ -690,7 +901,7 @@ def test_delivery_confirmation_repeats_allow_diagnostic_failure(make_project, en
         'import json; exit(1 if json.load(open("params.json"))["x"] == 7 else 0)']})
     root = make_project(comp=comp, tsk=task(requirements=[
         {'id': 'D', 'text': 'diagnostic', 'gates': ['diagnostic'], 'required': False}]))
-    e = use_sequence(engine_for(root), Sequence([plan(1), {'exhausted': True, 'base_attempt': 1}], [7]))
+    e = use_sequence(engine_for(root), Sequence([plan(1), lambda ctx: {**stop(ctx), 'base_attempt': 1}], [7]))
     s = e.run()
     report = promote(e, source_run=s['run_id'], confirm_repeats=2)
     assert report['complete'], report['findings']
@@ -715,3 +926,871 @@ def test_delivery_rejects_incomplete_hard_gate_receipts(make_project, engine_for
     report = promote(e, source_run=s['run_id'])
     assert not report['complete']
     assert any(f['check'] == 'gates' and 'not passed' in f['text'] for f in report['findings'])
+
+
+def test_run_expert_stop_does_not_create_attempt(make_project, engine_for):
+    e = use_sequence(engine_for(make_project()), Sequence([stop]))
+    result = e.run()
+    assert result['state'] == 'closed'
+    assert e.ledger.attempts(e.run_id) == []
+    expert_calls = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'expert']
+    assert len(expert_calls) == 1 and expert_calls[0]['attempt_no'] is None
+
+
+def test_measurement_can_skip_designer_and_last_result_is_interpreted(make_project, engine_for):
+    seq = Sequence([plan(1, designer=False, evaluate=True), stop])
+    e = use_sequence(engine_for(make_project()), seq)
+    result = e.run()
+    assert result['state'] == 'closed' and result['pending_conclusions'] == []
+    assert len(e.ledger.attempts(e.run_id)) == 1
+    assert not [c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer']
+    assert e.attempt_records()[0]['experiment']['cached'] is False
+    assert len({str(c['input']['tree']) for c in e.ledger.calls(e.run_id) if c['role'] == 'expert'}) == 1
+
+
+@pytest.mark.parametrize('handoff', ['receipt', 'decision', 'selection'])
+def test_run_decision_recovery_does_not_repeat_expert_or_selected_work(make_project, engine_for, monkeypatch, handoff):
+    root = make_project()
+    seq = Sequence([plan(1, evaluate=False)], [4])
+    e = use_sequence(engine_for(root), seq)
+    target = 'record_decision' if handoff == 'receipt' else 'begin_selected_attempt'
+    original = getattr(e.ledger, target)
+    def interrupt(*args, **kwargs):
+        if handoff == 'selection':
+            original(*args, **kwargs)
+        raise RuntimeError('handoff interrupted')
+    monkeypatch.setattr(e.ledger, target, interrupt)
+    with pytest.raises(RuntimeError, match='handoff interrupted'):
+        e.run(max_attempts_now=1)
+    assert len(seq.contexts) == 1
+    assert len(e.ledger.attempts(e.run_id)) == (1 if handoff == 'selection' else 0)
+    seq2 = Sequence([stop], [4])
+    resumed = use_sequence(engine_for(root), seq2)
+    result = resumed.run(max_attempts_now=1)
+    assert result['state'] == 'paused' and len(resumed.ledger.attempts(resumed.run_id)) == 1
+    assert seq2.contexts == []
+    assert len([c for c in resumed.ledger.calls(resumed.run_id) if c['role'] == 'expert']) == 1
+    assert len(resumed.ledger.events(resumed.run_id, 'expert_decision')) == 1
+    result = resumed.run(max_attempts_now=0)
+    assert len(resumed.ledger.attempts(resumed.run_id)) == 1
+
+
+def test_read_acknowledgment_does_not_clear_pending_feedback(make_project, engine_for):
+    seq = Sequence([plan(1, evaluate=False), {'exhausted': True,
+        'conclusions': [{'attempt': 1, 'conclusion': '已读。'}]}], [4])
+    e = use_sequence(engine_for(make_project()), seq)
+    result = e.run()
+    assert result['state'] == 'blocked' and result['pending_conclusions'] == [1]
+    assert len(e.ledger.attempts(e.run_id)) == 1
+    assert len(e.ledger.events(e.run_id, 'expert_decision')) == 1
+
+
+def test_review_only_decision_can_interpret_multiple_results_without_work(make_project, engine_for):
+    e = use_sequence(engine_for(make_project()), Sequence([plan(1, evaluate=False), plan(2, evaluate=False)], [4, 5]))
+    first = e.run(max_attempts_now=2)
+    assert first['pending_conclusions'] == [1, 2]
+    seq = Sequence([lambda ctx: {**stop(ctx), 'exhausted': False, 'select_work': False}, stop])
+    e.workers = lambda tree: (seq, seq)
+    result = e.run()
+    assert result['state'] == 'closed' and result['pending_conclusions'] == []
+    assert len(e.ledger.attempts(e.run_id)) == 2
+    conclusions = e.ledger.events(e.run_id, 'conclusion')
+    assert len(conclusions) == 2 and len({c['body']['reviewed_by_call'] for c in conclusions}) == 1
+    from opc.observer.adapter import ObserverAdapter
+    observer = ObserverAdapter(e.root)
+    ref = next(r for r in observer.overview()['data']['unlinked_runs'] if r['source_run_id'] == e.run_id)
+    run = observer.run(ref['id'])['data']
+    assert run['pending_feedback'] == []
+    assert len(run['decisions']) == 4
+
+
+def test_failed_run_expert_is_charged_without_creating_attempt(make_project, engine_for):
+    class FailedExpert:
+        def propose(self, ctx, tree, log_dir):
+            return WorkerCall('expert', False, Cost(1, 3, None), error='provider unavailable',
+                              extra={'infra': True, 'usage_complete': True})
+    failed = FailedExpert()
+    e = use_sequence(engine_for(make_project()), failed)
+    result = e.run()
+    assert result['state'] == 'blocked' and result['spent']['tokens'] == 3
+    assert e.ledger.attempts(e.run_id) == []
+    assert e.ledger.calls(e.run_id)[-1]['attempt_no'] is None
+
+
+def test_expert_session_loss_rebuilds_from_materials_in_new_call(make_project, engine_for):
+    class Sessions(Sequence):
+        def propose(self, ctx, tree, log_dir):
+            self.contexts.append(ctx)
+            if len(self.contexts) == 1:
+                assert 'session_id' not in ctx
+                return WorkerCall('expert', True, Cost(0, 2), call_id='native-session', output=plan(1))
+            if len(self.contexts) == 2:
+                assert ctx['session_id'] == 'native-session'
+                return WorkerCall('expert', False, Cost(0, 0), error='session not found',
+                    extra={'session_unavailable': True, 'not_started': True, 'usage_complete': True})
+            assert 'session_id' not in ctx and ctx['pending_feedback']
+            return WorkerCall('expert', True, Cost(0, 3), call_id='rebuilt-session',
+                              output=stop(ctx), exhausted=True)
+    root = make_project()
+    worker = Sessions([], [4])
+    e = use_sequence(engine_for(root), worker)
+    result = e.run()
+    assert result['state'] == 'closed' and len(e.ledger.attempts(e.run_id)) == 1
+    calls = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'expert']
+    assert len({c['call_id'] for c in calls}) == 3
+    assert calls[1]['state'] == 'not_started'
+    assert calls[0]['session_id'] == 'native-session' and calls[2]['session_id'] == 'rebuilt-session'
+    assert e.ledger.events(e.run_id, 'expert_session_rebuilt')[0]['body']['reason'] == 'session not found'
+    assert not result['pending_conclusions']
+
+
+REVIEW_CLI = """import json,os,sys,time
+from pathlib import Path
+sys.stdin.read()
+print(json.dumps({'type':'thread.started','thread_id':'review-session'}),flush=True)
+Path(os.environ['REVIEW_READY']).touch()
+while not Path(os.environ['REVIEW_RELEASE']).exists():
+    time.sleep(.01)
+reply = {'verdict':'accept','summary':'review completed','overreach':[],'requirement_findings':[]}
+print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':json.dumps(reply)}}),flush=True)
+if os.environ.get('REVIEW_UNKNOWN') != '1':
+    print(json.dumps({'type':'turn.completed','usage':{'input_tokens':3,'output_tokens':2}}),flush=True)
+"""
+
+
+def reviewer_case(make_project, engine_for, tmp_path, monkeypatch):
+    from opc.tests.conftest import write
+    cli = tmp_path / 'reviewer.py'
+    cli.write_text(REVIEW_CLI)
+    ready, release = tmp_path / 'review-ready', tmp_path / 'review-release'
+    monkeypatch.setenv('REVIEW_READY', str(ready))
+    monkeypatch.setenv('REVIEW_RELEASE', str(release))
+    root = make_project()
+    write(root / '.opc/local/workers.json', json.dumps({'reviewer': {'kind':'codex','binary':str(cli)}}))
+    e = engine_for(root)
+    e.run(max_attempts_now=0)
+    commit, measurements = e.ledger.champion(e.run_id)
+    selected = {'commit_sha':commit,'metrics':measurements.as_dict()}
+    return e, selected, e.artifact_dir() / 'promotion/test-review', ready, release
+
+
+def test_reviewer_stop_uses_call_receipt_and_finite_cancellation(make_project, engine_for, tmp_path, monkeypatch):
+    import threading
+    import time
+    from opc.core.ledger import Ledger
+    from opc.core.model import DispatchStopped
+    from opc.core.promote import run_reviewer
+    e, selected, out, ready, release = reviewer_case(make_project, engine_for, tmp_path, monkeypatch)
+    def stop():
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        other = Ledger(e.ledger.path)
+        other.set_control(e.run_id, 'stop')
+        other.db.close()
+    requester = threading.Thread(target=stop)
+    requester.start()
+    fallback = threading.Timer(2, release.touch)
+    fallback.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(DispatchStopped, match='stopped by user'):
+            run_reviewer(e, 'codex', out, '', selected, selected, [])
+    finally:
+        fallback.cancel()
+        release.touch()
+        requester.join(timeout=5)
+    assert time.monotonic() - started < 1.5
+    calls = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'reviewer']
+    assert len(calls) == 1 and calls[0]['state'] == 'cancelled'
+    assert calls[0]['session_id'] == 'review-session'
+    assert Path(calls[0]['receipt_path']).is_file()
+    assert not calls[0]['result']['ok']
+    assert len(e.ledger.events(e.run_id, 'worker_call')) == 1
+
+
+
+def test_reviewer_replays_saved_reply_without_new_call_or_charge(make_project, engine_for, tmp_path, monkeypatch):
+    from opc.core.promote import run_reviewer
+    e, selected, out, ready, release = reviewer_case(make_project, engine_for, tmp_path, monkeypatch)
+    release.touch()
+    first = run_reviewer(e, 'codex', out, '', selected, selected, [])
+    assert first['ok'] and first['verdict'] == 'accept'
+    calls = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'reviewer']
+    assert len(calls) == 1 and calls[0]['call_id'] == first['call_id']
+    assert calls[0]['session_id'] == 'review-session'
+    used = e.ledger.totals(e.run_id)
+    ready.unlink()
+    release.unlink()
+    replay = run_reviewer(e, 'codex', out, '', selected, selected, [])
+    assert replay == first
+    assert not ready.exists()  # no subprocess was started again
+    assert e.ledger.totals(e.run_id) == used
+    assert not Path(calls[0]['input']['tree']).exists()
+
+
+def test_unknown_reviewer_keeps_selected_checkout_and_blocks_redispatch(make_project, engine_for, tmp_path, monkeypatch):
+    from opc.core.promote import run_reviewer
+    e, selected, out, ready, release = reviewer_case(make_project, engine_for, tmp_path, monkeypatch)
+    monkeypatch.setenv('REVIEW_UNKNOWN', '1')
+    release.touch()
+    with pytest.raises(OPCError, match='execution unknown'):
+        run_reviewer(e, 'codex', out, '', selected, selected, [])
+    calls = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'reviewer']
+    assert len(calls) == 1 and calls[0]['state'] == 'unknown'
+    assert (Path(calls[0]['input']['tree']) / 'params.json').is_file()
+    with pytest.raises(OPCError, match='execution unknown'):
+        run_reviewer(e, 'codex', out.parent / 'another-review', '', selected, selected, [])
+    assert len([c for c in e.ledger.calls(e.run_id) if c['role'] == 'reviewer']) == 1
+
+
+def test_delivery_requires_project_writer_before_any_execution(make_project, engine_for):
+    from opc.core.ledger import Ledger
+    from opc.core.promote import promote
+    e = engine_for(make_project())
+    e.run(max_attempts_now=0)
+    events = e.ledger.events(e.run_id)
+    calls = e.ledger.calls(e.run_id)
+    other = Ledger(e.ledger.path)
+    try:
+        with other.writer():
+            with pytest.raises(OPCError, match='another controller'):
+                promote(e)
+    finally:
+        other.db.close()
+    assert e.ledger.events(e.run_id) == events
+    assert e.ledger.calls(e.run_id) == calls
+    assert not (e.artifact_dir() / 'promotion').exists()
+
+
+
+def test_delivery_unknown_evaluation_retains_workspace_and_is_not_repeated(make_project, engine_for, monkeypatch):
+    from opc.core.promote import promote
+    from opc.domains.command import CommandDomain
+    e = engine_for(make_project())
+    e.run(max_attempts_now=0)
+    original = CommandDomain.evaluate
+    evaluations = []
+    def lost_terminal(self, tree, out, repeats, **kwargs):
+        original(self, tree, out, repeats, **kwargs)
+        evaluations.append(str(tree))
+        raise RuntimeError('controller lost evaluator terminal before receipt')
+    monkeypatch.setattr(CommandDomain, 'evaluate', lost_terminal)
+    with pytest.raises(RuntimeError, match='lost evaluator terminal'):
+        promote(e)
+    pending = [c for c in e.ledger.calls(e.run_id) if c['result'] is None]
+    assert len(pending) == 1 and pending[0]['role'] == 'evaluator'
+    assert pending[0]['state'] == 'dispatched'
+    tree = Path(pending[0]['input']['tree'])
+    assert (tree / 'params.json').is_file()
+    assert not Path(pending[0]['receipt_path']).exists()
+    calls = e.ledger.calls(e.run_id)
+    with pytest.raises(OPCError, match='execution unknown'):
+        promote(e)
+    assert e.ledger.calls(e.run_id) == calls
+    assert evaluations == [str(tree)]
+    assert (tree / 'params.json').is_file()
+
+
+def test_delivery_completed_evaluation_releases_its_workspace(make_project, engine_for):
+    from opc.core.promote import promote
+    e = engine_for(make_project())
+    e.run(max_attempts_now=0)
+    report = promote(e)
+    assert report['evaluation']['failure'] is None
+    calls = [c for c in e.ledger.calls(e.run_id)
+             if c['role'] == 'evaluator' and c['input'].get('delivery')]
+    assert len(calls) == 1 and calls[0]['state'] == 'completed'
+    assert not Path(calls[0]['input']['tree']).exists()
+
+
+@pytest.mark.parametrize('not_started', [True, False])
+def test_known_designer_infrastructure_failure_retries_original_attempt_in_new_call(make_project, engine_for, not_started):
+    class RetryDesigner(Sequence):
+        def __init__(self):
+            super().__init__([plan(1)], [4])
+            self.design_calls = 0
+        def implement(self, p, ctx, tree, log_dir):
+            self.design_calls += 1
+            if self.design_calls == 1:
+                return WorkerCall('designer', False, Cost(1, 0 if not_started else 3), error='configured tool unavailable',
+                                  extra={'infra': True, 'not_started': not_started, 'usage_complete': True})
+            call = super().implement(p, ctx, tree, log_dir)
+            call.cost = Cost(2, 5)
+            return call
+    root = make_project()
+    worker = RetryDesigner()
+    first = use_sequence(engine_for(root), worker)
+    summary = first.run()
+    assert summary['state'] == 'blocked' and worker.design_calls == 1
+    original = first.ledger.attempts(first.run_id)[0]
+    assert original['outcome'] is None and original['state'] == 'planned'
+    calls = [c for c in first.ledger.calls(first.run_id) if c['role'] == 'designer']
+    assert len(calls) == 1 and calls[0]['state'] == ('not_started' if not_started else 'completed')
+    resumed = use_sequence(engine_for(root), worker)
+    resumed.run(max_attempts_now=0)
+    attempts = resumed.ledger.attempts(resumed.run_id)
+    assert len(attempts) == 1 and attempts[0]['plan'] == original['plan']
+    assert attempts[0]['outcome'] == Outcome.IMPROVEMENT.value
+    assert worker.design_calls == 2 and len(worker.contexts) == 1
+    designers = [c for c in resumed.ledger.calls(resumed.run_id) if c['role'] == 'designer']
+    assert len(designers) == 2 and designers[0]['call_id'] != designers[1]['call_id']
+    assert designers[0]['receipt_path'] != designers[1]['receipt_path']
+    assert attempts[0]['cost']['tokens'] == (5 if not_started else 8)
+    assert attempts[0]['cost']['wall_seconds'] == sum(c['result']['cost']['wall_seconds']
+            for c in resumed.ledger.calls(resumed.run_id) if c['attempt_no'] == 1)
+
+
+def test_claim_registration_is_separate_from_pending_feedback(make_project, engine_for):
+    def interpret(ctx):
+        return dict(select_work=False,
+                    conclusions=[dict(attempt=1, conclusion='Inconclusive: further comparable evidence needed')],
+                    claims=[dict(claim_id='copy-speed', statement='Reducing copying always improves speed',
+                                 scope='Comparable short and long fields', status='unresolved',
+                                 reason='One observation is insufficient',
+                                 evidence=[dict(run_id=e.run_id, attempt=1, artifact='eval/evaluation.json')],
+                                 counterevidence=[], unresolved=['Short fields not measured'])])
+    root = make_project()
+    seq = Sequence([plan(1), interpret, plan(2)], [0, 1])
+    e = use_sequence(engine_for(root), seq)
+    e.run(max_attempts_now=2)
+    claim = seq.contexts[2]['claims'][0]
+    assert claim['claim_id'] == 'copy-speed' and claim['version'] == 1
+    assert claim['status'] == 'unresolved'
+    assert claim['scope'] == 'Comparable short and long fields'
+    assert claim['evidence'][0]['artifact'] == 'eval/evaluation.json'
+    assert e.summary()['claims'][0]['status'] == 'unresolved'
+    assert e.summary()['pending_conclusions'] == [2]
+    seq2 = Sequence([stop])
+    restored = use_sequence(engine_for(root), seq2)
+    restored.run()
+    assert seq2.contexts[0]['claims'][0]['claim_id'] == 'copy-speed'
+    assert seq2.contexts[0]['pending_feedback'][0]['attempt'] == 2
+    report = json.loads((restored.artifact_dir() / 'views/report.json').read_text())
+    assert report['claims'][0]['status'] == 'unresolved'
+    assert 'copy-speed' in (restored.artifact_dir() / 'views/STATE.md').read_text()
+
+
+@pytest.mark.parametrize('change,reason', [
+    ({'related_claims': ['unknown']}, 'unknown related claim'),
+    ({'status': 'verified'}, 'status'),
+    ({'claim_id': '../escape'}, 'claim_id'),
+    ({'task_id': 'other-task'}, 'outside current task'),
+    ({'evidence': [{'run_id': 'absent', 'attempt': 1, 'artifact': 'eval/evaluation.json'}]}, 'unknown'),
+    ({'evidence': [{'run_id': 'absent', 'attempt': 1, 'artifact': '../private'}]}, 'relative artifact'),
+])
+def test_invalid_claim_rejects_feedback_and_next_work(make_project, engine_for, change, reason):
+    claim = dict(claim_id='claim', statement='Copying affects speed', scope='fixed inputs',
+                 status='unresolved', reason='More evidence needed', evidence=[])
+    seq = Sequence([plan(1), dict(plan(2), claims=[dict(claim, **change)],
+                       conclusions=[dict(attempt=1, conclusion='More comparable measurements needed')])], [0])
+    e = use_sequence(engine_for(make_project()), seq)
+    result = e.run()
+    assert result['state'] == 'blocked' and reason in result['stop_reason']
+    assert result['claims'] == [] and result['pending_conclusions'] == [1]
+    assert len(e.attempt_records()) == 1
+
+
+def test_multiple_claims_share_observation_and_observer_is_read_only(make_project, engine_for):
+    from opc.observer.adapter import ObserverAdapter
+    def interpret(ctx):
+        reference = dict(run_id=e.run_id, attempt=1, artifact='eval/evaluation.json')
+        return dict(stop(ctx), claims=[
+            dict(claim_id='general', statement='Copying affects speed', scope='fixed inputs',
+                 status='unresolved', reason='Need short field measurement', evidence=[reference],
+                 unresolved=['Short fields unknown']),
+            dict(claim_id='long', statement='Reducing copying helps long fields', scope='long fields only',
+                 status='supported', reason='Long fields improved', evidence=[reference],
+                 counterevidence=[reference], unresolved=['Independent repeats needed'])])
+    root = make_project()
+    e = use_sequence(engine_for(root), Sequence([plan(1), interpret], [4]))
+    result = e.run()
+    assert [c['claim_id'] for c in result['claims']] == ['general', 'long']
+    ledger_path = e.ledger.path
+    before = ledger_path.read_bytes()
+    observer = ObserverAdapter(root)
+    observed = observer.run(observer._id('run', e.run_id))['data']
+    assert [(c['claim_id'], c['status']) for c in observed['claims']] == [
+        ('general', 'unresolved'), ('long', 'supported')]
+    assert observed['claims'][1]['counterevidence'][0]['attempt'] == 1
+    assert ledger_path.read_bytes() == before
+
+
+
+def test_claim_revision_preserves_broad_identity_and_supported_limited_claim(make_project, engine_for):
+    broad = dict(claim_id='copy-all', statement='Reducing copying always improves speed',
+                 scope='Comparable long and short fields', status='unresolved',
+                 reason='Short fields not tested', evidence=[], unresolved=['Short fields'])
+    limited = dict(claim_id='copy-long', statement='Reducing copying helps long fields',
+                   scope='Long fields', status='supported', reason='Long field observation improved',
+                   evidence=[], related_claims=['copy-all'])
+    def initial(ctx):
+        return dict(plan(2), claims=[broad, limited], conclusions=[
+            dict(attempt=1, conclusion='Long fields improve; broad proposition remains uncertain')])
+    def revise(ctx):
+        assert ctx['claims'][0]['status'] == 'unresolved'
+        return dict(stop(ctx), claims=[dict(broad, base_version=1, status='refuted',
+            reason='Valid comparable short field counterexample is within scope', unresolved=[],
+            counterevidence=[dict(run_id=e.run_id, attempt=2, artifact='eval/evaluation.json')])])
+    e = use_sequence(engine_for(make_project()), Sequence([plan(1), initial, revise], [4, 0]))
+    result = e.run()
+    assert result['state'] == 'closed'
+    assert [(c['claim_id'], c['version'], c['status']) for c in result['claims']] == [
+        ('copy-all', 2, 'refuted'), ('copy-long', 1, 'supported')]
+    assert e.claims('copy-all', version=1)[0]['status'] == 'unresolved'
+    assert [c['version'] for c in e.claims('copy-all', history=True)] == [1, 2]
+    assert e.claims('copy-all', version=2)[0]['reason'].startswith('Valid comparable')
+    assert result['pending_conclusions'] == []
+    assert not e.ledger.events(e.run_id, 'promotion_report')
+
+
+def test_claim_conflict_rejects_entire_reply_and_reconsiders_latest_evidence(make_project, engine_for):
+    broad = dict(claim_id='copy-all', statement='Reducing copying always improves speed',
+                 scope='Comparable long and short fields', status='unresolved', reason='Need evidence', evidence=[])
+    limited = dict(claim_id='copy-long', statement='Reducing copying helps long fields',
+                   scope='Long fields', status='supported', reason='Long field improved', evidence=[])
+    def first(ctx):
+        return dict(plan(2), claims=[broad, limited], conclusions=[dict(attempt=1,
+                    conclusion='Long fields support only the limited claim')])
+    def updated(ctx):
+        return dict(select_work=False, claims=[dict(broad, base_version=1,
+                    reason='Short field validity requires analysis')])
+    def stale(ctx):
+        return dict(plan(3), claims=[dict(broad, base_version=1, status='refuted'),
+                                   dict(limited, base_version=1, status='unresolved')],
+                    conclusions=[dict(attempt=2, conclusion='Short field regression refutes broad claim')])
+    def reconsider(ctx):
+        assert [(c['version'], c['status']) for c in ctx['claims']] == [(2, 'unresolved'), (1, 'supported')]
+        assert [a['attempt'] for a in ctx['pending_feedback']] == [2]
+        assert ctx['decision_conflicts'][-1]['conflicts'] == [dict(
+            claim_id='copy-all', base_version=1, current_version=2)]
+        assert len(e.attempt_records()) == 2
+        assert (e.attempt_dir(2) / 'eval/evaluation.json').is_file()
+        replies = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'expert']
+        rejected_call = ctx['decision_conflicts'][-1]['call_id']
+        assert any(c['call_id'] == rejected_call and c['result']['output']['claims'][0]['base_version'] == 1
+                   for c in replies)
+        return dict(stop(ctx), claims=[dict(broad, base_version=2, status='refuted',
+                    reason='Valid short field counterexample; latest validity concern resolved')])
+    seq = Sequence([plan(1), first, updated, stale, reconsider], [4, 0])
+    e = use_sequence(engine_for(make_project()), seq)
+    result = e.run()
+    assert result['state'] == 'closed'
+    assert [(c['version'], c['status']) for c in result['claims']] == [(3, 'refuted'), (1, 'supported')]
+    assert len(seq.parents) == 2 and len(e.attempt_records()) == 2
+    assert result['pending_conclusions'] == []
+    assert len(e.claims('copy-long', history=True)) == 1
+    assert len(result['decision_conflicts']) == 1
+    from opc.observer.adapter import ObserverAdapter
+    observer = ObserverAdapter(e.root)
+    observed = observer.run(observer._id('run', e.run_id))['data']
+    assert [(c['version'], c['status']) for c in observed['claim_history'] if c['claim_id'] == 'copy-all'] == [
+        (1, 'unresolved'), (2, 'unresolved'), (3, 'refuted')]
+
+
+@pytest.mark.parametrize('after_selection', [False, True])
+def test_claim_revision_recovery_keeps_one_revision_and_one_selected_work(make_project, engine_for, monkeypatch, after_selection):
+    claim = dict(claim_id='copy-all', statement='Reducing copying always improves speed',
+                 scope='Comparable long and short fields', status='unresolved', reason='Need short fields', evidence=[])
+    def initial(ctx):
+        return dict(plan(2), claims=[claim], conclusions=[dict(attempt=1,
+                    conclusion='Long field observation is not yet sufficient')])
+    root = make_project()
+    e = use_sequence(engine_for(root), Sequence([plan(1), initial], [4, 0]))
+    e.run(max_attempts_now=2)
+    revised = dict(plan(3, evaluate=False), claims=[dict(claim, base_version=1, status='refuted',
+                reason='Valid short field counterexample')], conclusions=[dict(attempt=2,
+                conclusion='Comparable short field result refutes broad proposition')])
+    seq = Sequence([revised])
+    e.workers = lambda tree: (seq, seq)
+    original = e.ledger.begin_selected_attempt
+    def interrupt(*args, **kwargs):
+        if after_selection:
+            original(*args, **kwargs)
+        raise RuntimeError('revision handoff interrupted')
+    monkeypatch.setattr(e.ledger, 'begin_selected_attempt', interrupt)
+    with pytest.raises(RuntimeError, match='revision handoff interrupted'):
+        e.run()
+    assert e.claims('copy-all')[0]['version'] == 2
+    assert len(e.claims('copy-all', history=True)) == 2
+    expert_calls = [c['call_id'] for c in e.ledger.calls(e.run_id) if c['role'] == 'expert']
+    seq2 = Sequence([stop], [5])
+    restored = use_sequence(engine_for(root), seq2)
+    result = restored.run(max_attempts_now=1)
+    assert result['state'] == 'paused'
+    assert len(restored.attempt_records()) == 3 and len(seq2.parents) == 1
+    assert seq2.contexts == []
+    assert [c['call_id'] for c in restored.ledger.calls(restored.run_id) if c['role'] == 'expert'] == expert_calls
+    assert [c['version'] for c in restored.claims('copy-all', history=True)] == [1, 2]
+    assert restored.summary()['pending_conclusions'] == [3]
+    before = restored.ledger.totals(restored.run_id)
+    restored.run(max_attempts_now=0)
+    assert restored.ledger.totals(restored.run_id) == before
+
+
+def test_revision_requires_basis_but_allows_expert_editorial_wording(make_project, engine_for):
+    claim = dict(claim_id='copy-all', statement='Reducing copying always improves speed',
+                 scope='Comparable long and short fields', status='unresolved', reason='Need evidence', evidence=[])
+    editorial = dict(claim, base_version=1, statement='Reducing copying always speeds execution',
+                     reason='Editorial wording; proposition and scope unchanged')
+    seq = Sequence([dict(plan(1), claims=[claim]), dict(select_work=False, claims=[editorial]),
+                    dict(stop_reason='done', exhausted=True, claims=[dict(editorial, base_version=None)])])
+    e = use_sequence(engine_for(make_project()), seq)
+    result = e.run()
+    assert result['state'] == 'blocked' and 'base_version' in result['stop_reason']
+    assert e.claims('copy-all')[0]['version'] == 2
+    assert e.claims('copy-all', version=1)[0]['statement'] == claim['statement']
+    assert result['pending_conclusions'] == [1]
+
+
+def test_explicit_adopted_claim_versions_survive_handoff_and_resume(make_project, engine_for):
+    from opc.core.results import query_claims
+    from opc.observer.adapter import ObserverAdapter
+    claim = dict(statement='Copying affects speed', scope='fixed input', status='unresolved',
+                 reason='More comparable evidence needed', evidence=[])
+    def register(ctx):
+        return dict(plan(2), claims=[dict(claim, claim_id='general'), dict(claim, claim_id='limited')])
+    def adopt(ctx):
+        chosen = query_claims(ctx, claim_id='general')['claims'][0]
+        return plan(3, adopted_claims=[dict(claim_id=chosen['claim_id'], version=chosen['version'])])
+    class AdoptingSequence(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            call = super().implement(p, ctx, tree, log_dir)
+            if p['title'] == 'experiment 2':
+                assert query_claims(ctx, claim_id='limited')['claims'][0]['version'] == 1
+            if p['title'] == 'experiment 3':
+                assert ctx['handoff']['adopted_claims'] == [dict(task_id='t-toy', claim_id='general', version=1)]
+                call.output['adopted_claims'] = [dict(claim_id='limited', version=1)]
+            return call
+    seq = AdoptingSequence([plan(1), register, adopt], [0, 1, 2])
+    e = use_sequence(engine_for(make_project()), seq)
+    e.run(max_attempts_now=3)
+    records = e.attempt_records()
+    assert records[1]['adopted_claims'] == []  # Reading a material is not adoption.
+    assert records[2]['plan']['adopted_claims'] == [dict(task_id='t-toy', claim_id='general', version=1)]
+    assert records[2]['execution']['adopted_claims'] == [dict(task_id='t-toy', claim_id='limited', version=1)]
+    assert records[2]['adopted_claims'] == [dict(task_id='t-toy', claim_id='general', version=1),
+                                          dict(task_id='t-toy', claim_id='limited', version=1)]
+    original_context = (e.attempt_dir(3) / 'context.json').read_bytes()
+    resumed = use_sequence(engine_for(e.root), Sequence([stop]))
+    resumed.run()
+    assert resumed.attempt_records()[2]['adopted_claims'] == records[2]['adopted_claims']
+    assert (resumed.attempt_dir(3) / 'context.json').read_bytes() == original_context
+    observer = ObserverAdapter(e.root)
+    observed = observer.attempt(observer._id('run', e.run_id), 3)['data']
+    assert observed['adopted_claims'] == records[2]['adopted_claims']
+    report = json.loads((e.artifact_dir() / 'views/report.json').read_text())
+    assert report['attempts'][2]['adopted_claims'] == records[2]['adopted_claims']
+
+
+@pytest.mark.parametrize('reference,reason', [
+    ({'claim_id': 'known', 'version': 99}, r'unknown.*claim.*(?:identity|version)'),
+    ({'claim_id': 'absent', 'version': 1}, r'unknown.*claim.*(?:identity|version)'),
+    ({'task_id': 'other', 'claim_id': 'known', 'version': 1}, 'outside authorized'),
+    ({'claim_id': 'known', 'version': True}, 'positive version'),
+])
+def test_invalid_work_adoption_rejects_whole_decision(make_project, engine_for, reference, reason):
+    import re
+    claim = dict(claim_id='known', statement='Copying affects speed', scope='fixed inputs',
+                 status='unresolved', reason='More evidence needed', evidence=[])
+    seq = Sequence([plan(1), dict(select_work=False, claims=[claim]),
+                    dict(plan(2, adopted_claims=[reference]),
+                         conclusions=[dict(attempt=1, conclusion='Still need comparable evidence')])], [0])
+    e = use_sequence(engine_for(make_project()), seq)
+    result = e.run()
+    assert result['state'] == 'blocked' and re.search(reason, result['stop_reason'])
+    assert result['pending_conclusions'] == [1]
+    assert len(e.attempt_records()) == 1
+
+
+@pytest.mark.parametrize('call_ok', [True, False])
+def test_designer_invalid_adoption_is_visible_and_not_registered(make_project, engine_for, call_ok):
+    import re
+    class InvalidAdoption(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            call = super().implement(p, ctx, tree, log_dir)
+            call.output['adopted_claims'] = [dict(claim_id='absent', version=1)]
+            call.ok = call_ok
+            call.error = '' if call_ok else 'Actual Designer execution failed'
+            return call
+    e = use_sequence(engine_for(make_project()), InvalidAdoption([plan(1), stop], [0]))
+    e.run()
+    actual = e.attempt_records()[0]
+    assert actual['outcome'] == 'worker_failed'
+    assert re.search(r'unknown.*claim.*(?:identity|version)', actual['reason'])
+    if not call_ok:
+        assert 'Actual Designer execution failed' in actual['execution']['error']
+    assert actual['adopted_claims'] == []
+    receipt = next(c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer')
+    assert receipt['result']['output']['adopted_claims'] == [dict(claim_id='absent', version=1)]
+
+
+def test_work_can_adopt_claim_registered_in_same_decision(make_project, engine_for):
+    claim = dict(claim_id='new', statement='Copying affects speed', scope='fixed inputs',
+                 status='unresolved', reason='More evidence needed', evidence=[])
+    e = use_sequence(engine_for(make_project()), Sequence([
+        dict(plan(1, adopted_claims=[dict(claim_id='new', version=1)]), claims=[claim]), stop], [0]))
+    e.run()
+    assert e.attempt_records()[0]['adopted_claims'] == [dict(task_id='t-toy', claim_id='new', version=1)]
+
+
+@pytest.mark.parametrize("race", [False, True])
+def test_planned_work_reconsiders_changed_direct_basis_before_dispatch(make_project, engine_for, race):
+    claim = dict(claim_id='basis', statement='Reducing copying speeds long fields', scope='long fields',
+                 status='supported', reason='Comparable observations support long fields', evidence=[])
+    reference = dict(task_id='t-toy', claim_id='basis', version=1)
+    seq = Sequence([dict(select_work=False, claims=[claim]),
+                    {'works': [plan(1, work_id='first', evaluate=False),
+                               plan(2, work_id='planned', evaluate=False, adopted_claims=[reference])]}])
+    e = use_sequence(engine_for(make_project()), seq)
+    e.run(max_attempts_now=1)
+    e.ledger.record_decision(e.run_id, 'fixture-revision', dict(select_work=False,
+        claims=[dict(claim, base_version=1, status='unresolved', reason='Short fields need comparison')]))
+    e.ledger.event(e.run_id, 'decision_applied', call_id='fixture-revision')
+    class Reviewing(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            assert self.contexts, 'affected work dispatched before Expert reconsideration'
+            assert p['adopted_claims'] == [reference]
+            assert ctx['handoff']['basis_review']['reason'] == 'Long-field scope still applies'
+            return super().implement(p, ctx, tree, log_dir)
+    def reconsider(ctx):
+        review = ctx['basis_review']
+        assert review['attempt'] == 2
+        assert review['changes'][0]['version'] == 1
+        assert review['changes'][0]['current_version'] in (2, 3)
+        if race and review['changes'][0]['current_version'] == 2:
+            resumed.ledger.record_decision(resumed.run_id, 'fixture-second-revision', dict(select_work=False,
+                claims=[dict(claim, base_version=2, status='refuted', reason='New comparable counterexample')]))
+            resumed.ledger.event(resumed.run_id, 'decision_applied', call_id='fixture-second-revision')
+        return dict(select_work=False, basis_review=dict(attempt=2, action='continue',
+                    scope='long fields only', reason='Long-field scope still applies',
+                    changes=review['changes']))
+    resumed_seq = Reviewing([reconsider, reconsider, stop] if race else [reconsider, stop])
+    resumed = use_sequence(engine_for(e.root), resumed_seq)
+    result = resumed.run()
+    assert result['state'] == 'closed'
+    assert resumed.attempt_records()[1]['plan']['adopted_claims'] == [reference]
+    assert resumed.attempt_records()[1]['basis_review']['scope'] == 'long fields only'
+    assert len(result['decision_conflicts']) == int(race)
+
+
+def test_reusing_saved_work_reconsiders_designer_basis_and_adjusts_inputs(make_project, engine_for):
+    claim = dict(claim_id='basis', statement='Reduced copying helps', scope='comparable fields',
+                 status='supported', reason='Initial observations', evidence=[])
+    old = dict(task_id='t-toy', claim_id='basis', version=1)
+    class Producer(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            call = super().implement(p, ctx, tree, log_dir)
+            call.output['adopted_claims'] = [old]
+            return call
+    seq = Producer([dict(select_work=False, claims=[claim]), {'works': [
+        plan(1, work_id='producer', evaluate=False), plan(2, work_id='consumer', evaluate=False,
+             dependencies=[dict(work_id='producer', artifact='result')])]}])
+    e = use_sequence(engine_for(make_project()), seq)
+    seq.actions = iter([0])
+    e.run(max_attempts_now=1)
+    source_context = (e.attempt_dir(1) / 'context.json').read_bytes()
+    source_candidate = e.attempt_records()[0]['candidate']
+    e.ledger.record_decision(e.run_id, 'fixture-revision', dict(select_work=False,
+        claims=[dict(claim, base_version=1, status='refuted', reason='Short fields regress')]))
+    e.ledger.event(e.run_id, 'decision_applied', call_id='fixture-revision')
+    def adjust(ctx):
+        assert ctx['basis_review']['changes'][0]['version'] == 1
+        return dict(plan(2, evaluate=False, base_attempt=1,
+                         dependencies=[dict(work_id='producer', artifact='result')],
+                         adopted_claims=[dict(old, version=2)]), changes='Limit follow-up to long fields',
+                    basis_review=dict(attempt=2, action='adjust', scope='long fields',
+                                      reason='Avoid short-field regression', changes=ctx['basis_review']['changes']))
+    class Consumer(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            assert p['changes'] == 'Limit follow-up to long fields'
+            assert p['adopted_claims'] == [dict(old, version=2)]
+            assert ctx['handoff']['inputs'][0]['work_id'] == 'producer'
+            assert ctx['handoff']['basis_review']['action'] == 'adjust'
+            assert ctx['parent']['commit'] == source_candidate
+            assert git(tree, 'rev-parse', 'HEAD').strip() == ctx['parent']['commit']
+            return super().implement(p, ctx, tree, log_dir)
+    resumed = use_sequence(engine_for(e.root), Consumer([adjust, stop]))
+    result = resumed.run()
+    assert result['state'] == 'closed'
+    rows = resumed.attempt_records()
+    assert rows[0]['adopted_claims'] == [old]
+    assert rows[1]['original_plan']['changes'] == 'implement or measure the method'
+    assert (resumed.attempt_dir(1) / 'context.json').read_bytes() == source_context
+    from opc.observer.adapter import ObserverAdapter
+    observed = ObserverAdapter(e.root).attempt(ObserverAdapter(e.root)._id('run', e.run_id), 2)['data']
+    assert observed['basis_review']['reason'] == 'Avoid short-field regression'
+    assert observed['planned_claims'] == [dict(old, version=2)]
+
+
+def test_inflight_call_keeps_input_and_expert_receives_changed_basis(make_project, engine_for):
+    from opc.core.ledger import Ledger
+    claim = dict(claim_id='basis', statement='Reduced copying helps', scope='fixed fields',
+                 status='supported', reason='Initial observations', evidence=[])
+    ref = dict(task_id='t-toy', claim_id='basis', version=1)
+    class InFlight(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            before = json.dumps(ctx, sort_keys=True)
+            ledger = Ledger(e.ledger.path)
+            try:
+                ledger.record_decision(e.run_id, 'fixture-inflight-revision', dict(select_work=False,
+                    claims=[dict(claim, base_version=1, status='unresolved', reason='New validity doubt')]))
+                ledger.event(e.run_id, 'decision_applied', call_id='fixture-inflight-revision')
+            finally:
+                ledger.close()
+            assert json.dumps(ctx, sort_keys=True) == before
+            assert p['adopted_claims'] == [ref]
+            assert ctx['claims'][0]['version'] == 1
+            return super().implement(p, ctx, tree, log_dir)
+    def interpret(ctx):
+        assert ctx['basis_changes'] == [dict(attempt=1, changes=[dict(ref, current_version=2,
+            current_status='unresolved', reason='New validity doubt')])]
+        return stop(ctx)
+    seq = InFlight([dict(plan(1, adopted_claims=[ref]), claims=[claim]), interpret])
+    e = use_sequence(engine_for(make_project()), seq)
+    result = e.run()
+    assert result['state'] == 'closed'
+    assert e.attempt_records()[0]['adopted_claims'] == [ref]
+    assert json.loads((e.attempt_dir(1) / 'context.json').read_text())['claims'][0]['version'] == 1
+    assert len([c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer']) == 1
+
+
+def test_inflight_designer_adoption_reports_revised_actual_basis(make_project, engine_for):
+    from opc.core.ledger import Ledger
+    claim = dict(claim_id='designer-basis', statement='Reduced copying helps', scope='fixed fields',
+                 status='supported', reason='Initial observations', evidence=[])
+    ref = dict(task_id='t-toy', claim_id='designer-basis', version=1)
+    class Adopting(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            assert p['adopted_claims'] == [] and ctx['handoff']['adopted_claims'] == []
+            original = json.dumps(ctx, sort_keys=True)
+            ledger = Ledger(engine.ledger.path)
+            try:
+                ledger.record_decision(engine.run_id, 'fixture-designer-adoption-change', dict(
+                    select_work=False, claims=[dict(claim, base_version=1, status='unresolved',
+                                                   reason='New evidence questions the adopted claim')]))
+                ledger.event(engine.run_id, 'decision_applied', call_id='fixture-designer-adoption-change')
+            finally:
+                ledger.close()
+            call = super().implement(p, ctx, tree, log_dir)
+            call.output['adopted_claims'] = [ref]
+            assert json.dumps(ctx, sort_keys=True) == original
+            return call
+    expected = [dict(attempt=1, changes=[dict(ref, current_version=2,
+                current_status='unresolved', reason='New evidence questions the adopted claim')])]
+    def analyze(ctx):
+        assert ctx['basis_changes'] == expected
+        return stop(ctx)
+    engine = use_sequence(engine_for(make_project()), Adopting([dict(plan(1, adopted_claims=[]), claims=[claim]), analyze]))
+    result = engine.run()
+    assert result['state'] == 'closed' and result['basis_changes'] == expected
+    assert engine.attempt_records()[0]['plan']['adopted_claims'] == []
+    assert engine.attempt_records()[0]['execution']['adopted_claims'] == [ref]
+
+
+def test_basis_supplement_runs_fresh_work_without_freezing_unrelated_jobs(make_project, engine_for):
+    claim = dict(claim_id='basis', statement='Reduced copying helps', scope='fixed fields',
+                 status='supported', reason='Initial observations', evidence=[])
+    ref = dict(task_id='t-toy', claim_id='basis', version=1)
+    initial = Sequence([dict(select_work=False, claims=[claim]), {'works': [
+        plan(1, work_id='first', evaluate=False),
+        plan(2, work_id='affected', evaluate=False, adopted_claims=[ref]),
+        plan(3, work_id='independent', evaluate=False)]}])
+    e = use_sequence(engine_for(make_project()), initial)
+    e.run(max_attempts_now=1)
+    e.ledger.record_decision(e.run_id, 'fixture-revision', dict(select_work=False,
+        claims=[dict(claim, base_version=1, status='unresolved', reason='Need another observation')]))
+    e.ledger.event(e.run_id, 'decision_applied', call_id='fixture-revision')
+    order = []
+    def supplement(ctx):
+        assert order == ['independent']
+        return dict(plan(4, work_id='supplement', evaluate=False), basis_review=dict(
+            attempt=2, action='supplement', scope='fixed fields', reason='Collect fresh comparable evidence',
+            changes=ctx['basis_review']['changes']))
+    def continue_after(ctx):
+        assert order == ['independent', 'supplement']
+        assert any(a['attempt'] == 4 for a in ctx['pending_feedback'])
+        return dict(select_work=False, basis_review=dict(attempt=2, action='continue',
+            scope='fixed fields', reason='Fresh observation permits scoped continuation',
+            changes=ctx['basis_review']['changes']))
+    class Following(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            order.append(p['work_id'])
+            return super().implement(p, ctx, tree, log_dir)
+    resumed = use_sequence(engine_for(e.root), Following([supplement, continue_after, stop]))
+    result = resumed.run()
+    assert result['state'] == 'closed'
+    assert order == ['independent', 'supplement', 'affected']
+    assert resumed.attempt_records()[1]['adopted_claims'] == [ref]
+    assert len(resumed.attempt_records()) == 4
+
+
+def test_committed_basis_review_recovers_without_repeating_expert_or_dispatch(make_project, engine_for, monkeypatch):
+    claim = dict(claim_id='basis', statement='Reduced copying helps', scope='fixed fields',
+                 status='supported', reason='Initial observations', evidence=[])
+    ref = dict(task_id='t-toy', claim_id='basis', version=1)
+    e = use_sequence(engine_for(make_project()), Sequence([dict(select_work=False, claims=[claim]),
+        {'works': [plan(1, evaluate=False), plan(2, evaluate=False, adopted_claims=[ref])]}]))
+    e.run(max_attempts_now=1)
+    e.ledger.record_decision(e.run_id, 'fixture-revision', dict(select_work=False,
+        claims=[dict(claim, base_version=1, status='unresolved', reason='Need comparison')]))
+    e.ledger.event(e.run_id, 'decision_applied', call_id='fixture-revision')
+    def review(ctx):
+        return dict(select_work=False, basis_review=dict(attempt=2, action='continue',
+            scope='fixed fields', reason='Scoped continuation', changes=ctx['basis_review']['changes']))
+    reviewing = use_sequence(engine_for(e.root), Sequence([review]))
+    original = reviewing.ledger.record_decision
+    def interrupt_after_commit(run_id, call_id, output):
+        original(run_id, call_id, output)
+        if output.get('basis_review'):
+            raise KeyboardInterrupt()
+    monkeypatch.setattr(reviewing.ledger, 'record_decision', interrupt_after_commit)
+    assert reviewing.run()['state'] == 'paused'
+    class Finishing(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            assert ctx['handoff']['basis_review']['reason'] == 'Scoped continuation'
+            return super().implement(p, ctx, tree, log_dir)
+    seq = Finishing([stop])
+    resumed = use_sequence(engine_for(e.root), seq)
+    assert resumed.run()['state'] == 'closed'
+    assert len(seq.contexts) == 1  # Only final feedback; the recorded review is reused.
+    assert len([c for c in resumed.ledger.calls(resumed.run_id) if c['role'] == 'designer']) == 2
+    assert len(resumed.ledger.events(resumed.run_id, 'work_reconsidered')) == 1
+
+
+@pytest.mark.parametrize("action", ["continue", "adjust"])
+@pytest.mark.parametrize('adoption_owner', ['expert', 'designer'])
+def test_new_call_after_infrastructure_failure_reconsiders_changed_basis(make_project, engine_for, action, adoption_owner):
+    claim = dict(claim_id='basis', statement='Reduced copying helps', scope='fixed fields',
+                 status='supported', reason='Initial observations', evidence=[])
+    ref = dict(task_id='t-toy', claim_id='basis', version=1)
+    class Unavailable(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            (tree / 'params.json').write_text('{"x":0}')
+            return WorkerCall('designer', False, Cost(), error='Temporary worker failure', extra={'infra': True},
+                              output={'adopted_claims': [ref]} if adoption_owner == 'designer' else None)
+    e = use_sequence(engine_for(make_project()), Unavailable([dict(plan(1,
+        adopted_claims=[ref] if adoption_owner == 'expert' else []), claims=[claim])]))
+    assert e.run()['state'] == 'blocked'
+    assert e.attempt_records()[0]['adopted_claims'] == [ref]
+    original_context = (e.attempt_dir(1) / 'context.json').read_bytes()
+    e.ledger.record_decision(e.run_id, 'fixture-revision', dict(select_work=False,
+        claims=[dict(claim, base_version=1, status='unresolved', reason='Need comparison')]))
+    e.ledger.event(e.run_id, 'decision_applied', call_id='fixture-revision')
+    def review(ctx):
+        return dict(plan(1, evaluate=False, base_attempt=0, adopted_claims=[ref]) if action == 'adjust'
+                    else dict(select_work=False),
+                    basis_review=dict(attempt=1, action=action, scope='fixed fields',
+                        reason='Retry still valid within scope', changes=ctx['basis_review']['changes']))
+    class Retrying(Sequence):
+        def implement(self, p, ctx, tree, log_dir):
+            assert self.contexts, 'new Call bypassed basis review'
+            assert ctx['handoff']['basis_review']['reason'] == 'Retry still valid within scope'
+            assert json.loads((tree / 'params.json').read_text())['x'] == (3 if action == 'adjust' else 0)
+            return super().implement(p, ctx, tree, log_dir)
+    resumed = use_sequence(engine_for(e.root), Retrying([review, stop]))
+    assert resumed.run()['state'] == 'closed'
+    calls = [c for c in resumed.ledger.calls(resumed.run_id) if c['role'] == 'designer']
+    assert len(calls) == 2 and calls[0]['input']['context']['claims'][0]['version'] == 1
+    assert calls[1]['input']['context']['claims'][0]['version'] == 2
+    assert (resumed.attempt_dir(1) / 'context.json').read_bytes() == original_context

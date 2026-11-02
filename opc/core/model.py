@@ -142,6 +142,13 @@ class OPCError(RuntimeError):
     """A configuration or state problem the user must fix; never retried."""
 
 
+class DispatchStopped(OPCError):
+    """A control request reached a safe call boundary; execution may continue later."""
+    def __init__(self, state: str, reason: str):
+        super().__init__(reason)
+        self.state = state
+
+
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 

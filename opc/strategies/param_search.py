@@ -46,6 +46,10 @@ class ParamSearch:
         return {k: get(cfg, k) for k in self.space}
 
     def propose(self, ctx: dict, tree: Path) -> dict | None:
+        conclusions = [{"attempt": a["attempt"], "conclusion":
+                        "Measured grid point %s produced %s (%s); use the measured champion for the next neighbor, not an inferred mechanism." %
+                        (a.get("plan_params"), a.get("metrics"), a.get("outcome"))}
+                       for a in ctx.get("history", []) if a.get("conclusion") is None]
         cfg = copy.deepcopy(self.initial_config)
         current = next((a for a in reversed(ctx.get("history") or [])
                         if a.get("candidate") == ctx["champion"]["commit"]
@@ -77,8 +81,9 @@ class ParamSearch:
                             "changes": "set %s = %s in %s" % (key, json.dumps(v), self.file),
                             "expected": "objective improves without violating constraints",
                             "falsifier": "objective does not clear the acceptance floor",
-                            "params": cand}
-        return None
+                            "params": cand, "conclusions": conclusions}
+        return {"exhausted": True, "stop_reason": "Every grid neighbor of the measured champion was tried",
+                "conclusions": conclusions}
 
     def implement(self, plan: dict, tree: Path) -> None:
         path = tree / self.file

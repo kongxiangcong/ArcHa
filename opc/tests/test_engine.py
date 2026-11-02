@@ -1,10 +1,11 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
-from opc.tests.conftest import EVALUATE, STRATEGY, component, git, task
+from opc.tests.conftest import EVALUATE, STRATEGY, component, git, task, write
 
 from opc.core.model import OPCError, Outcome
 from opc.core.workspace import read_ref
@@ -72,12 +73,39 @@ def test_ignored_files_cannot_reach_evaluation(make_project, engine_for):
     assert a["metrics"]["values"]["loss"] == 50
 
 
+def test_declared_deliverables_survive_gitignore_in_clean_evaluation(make_project, engine_for):
+    evaluate = EVALUATE + '\nif x != 3: assert Path("results/report.md").read_text() == "measured evidence"\n'
+    strategy = STRATEGY.replace(
+        '(tree / "params.json").write_text(json.dumps(plan["params"]))',
+        '(tree / "params.json").write_text(json.dumps(plan["params"])); '
+        '(tree / "results").mkdir(exist_ok=True); '
+        '(tree / "results/report.md").write_text("measured evidence"); '
+        '(tree / "results/cache.pyc").write_bytes(b"cache"); '
+        '(tree / "results/frozen.md").write_text("must not enter candidate")')
+    root = make_project(evaluate=evaluate, strategy=strategy,
+                        comp=component(editable=['params.json', 'results/**'], frozen=['results/frozen.md']))
+    (root / '.gitignore').write_text((root / '.gitignore').read_text() + '\nresults/\n')
+    git(root, 'add', '.gitignore')
+    git(root, 'commit', '-m', 'ignore generated output directory')
+    e = engine_for(root)
+    e.run(max_attempts_now=1)
+    a = e.attempt_records()[0]
+    assert a['candidate'], a['reason']
+    assert git(root, 'show', a['candidate'] + ':results/report.md') == 'measured evidence'
+    assert 'results/frozen.md' not in git(root, 'ls-tree', '-r', '--name-only', a['candidate'])
+    assert 'results/cache.pyc' not in git(root, 'ls-tree', '-r', '--name-only', a['candidate'])
+
+
 def test_infra_failures_block_without_consuming_search_budget(make_project, engine_for):
     evaluate = EVALUATE + '\nimport os\nif json.loads(Path("params.json").read_text())["x"] != 3: raise SystemExit(75)\n'
     e = engine_for(make_project(evaluate=evaluate))
     s = e.run()
     assert s["state"] == "blocked"
-    assert outcomes(e) == [Outcome.INFRA.value, Outcome.INFRA.value]
+    attempts = e.ledger.attempts(e.run_id)
+    assert len(attempts) == 1 and attempts[0]['outcome'] is None
+    assert attempts[0]['state'] == 'designed'
+    assert attempts[0]['gates'][0]['status'] == 'infra'
+
     assert s["spent"]["search_attempts"] == 0
 
 
@@ -101,7 +129,10 @@ def test_skipped_gate_is_rejected_by_default(make_project, engine_for):
     e = engine_for(make_project(comp=comp, extra={".opc/eval/perf.py": perf}))
     s = e.run()
     assert s["state"] == "blocked"
-    assert all(o == Outcome.INFRA.value for o in outcomes(e))
+    attempts = e.ledger.attempts(e.run_id)
+    assert len(attempts) == 1 and attempts[0]['outcome'] is None
+    assert any(g['status'] == 'skipped' for g in attempts[0]['gates'])
+
 
 
 def test_degraded_evidence_is_not_compared_with_full_evidence(make_project, engine_for):
@@ -152,6 +183,38 @@ def test_toolchain_change_remeasures_champion(make_project, engine_for, tmp_path
     assert "re-measured: toolchain changed" in reasons
 
 
+def test_relative_toolchain_probe_uses_frozen_tree_and_component_environment(make_project, engine_for, tmp_path, monkeypatch):
+    root = make_project(comp=component(toolchain=[['{python}', '.opc/eval/version.py']],
+                                       env={'PROBE_VERSION': 'tool-v1'}))
+    write(root / '.opc/eval/version.py', 'import os\nfrom pathlib import Path\nassert Path("params.json").is_file()\nprint(os.environ["PROBE_VERSION"])\n')
+    git(root, 'add', '.opc/eval/version.py')
+    git(root, 'commit', '-m', 'freeze relative toolchain probe')
+    monkeypatch.chdir(tmp_path)
+    e = engine_for(root)
+    assert e.preflight()['toolchain']['{python} .opc/eval/version.py'] == 'tool-v1'
+    result = e.run(max_attempts_now=1)
+    assert result['state'] == 'paused'
+    assert e.attempt_records()[0]['candidate']
+
+
+def test_parallel_toolchain_probes_keep_their_own_frozen_tree(make_project, engine_for, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    probe = ['{python}', '-c', 'from pathlib import Path; print(Path("version.txt").read_text())']
+    e = engine_for(make_project(comp=component(toolchain=[probe])))
+    e.domain(e.root)
+    barrier = Barrier(2)
+    trees = [tmp_path / 'source-a', tmp_path / 'source-b']
+    for name, tree in zip(('A', 'B'), trees):
+        tree.mkdir(); (tree / 'version.txt').write_text(name)
+    def read(tree):
+        domain = e.domain(tree)
+        barrier.wait(timeout=5)
+        return domain.toolchain()[1][' '.join(probe)]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert list(pool.map(read, trees)) == ['A', 'B']
+
+
 def test_pause_then_resume(make_project, engine_for):
     root = make_project()
     e = engine_for(root)
@@ -163,7 +226,7 @@ def test_pause_then_resume(make_project, engine_for):
     assert s["run_id"] == e.run_id and s["state"] == "closed" and s["result"] == "target_met"
 
 
-def test_crash_mid_attempt_is_reconciled_as_abandoned(make_project, engine_for):
+def test_crash_without_reliable_execution_facts_blocks_without_abandoning(make_project, engine_for):
     root = make_project()
     e = engine_for(root)
     e.run(max_attempts_now=0)
@@ -171,9 +234,11 @@ def test_crash_mid_attempt_is_reconciled_as_abandoned(make_project, engine_for):
     n = e.ledger.begin_attempt(e.run_id, champ, None)
     e.ledger.update_attempt(e.run_id, n, "designed", patch_sha="x", files=["params.json"])
     e2 = engine_for(root)
-    e2.run()
+    with pytest.raises(OPCError, match="cannot resume"):
+        e2.run()
     first = e2.ledger.attempts(e2.run_id)[0]
-    assert first["outcome"] == Outcome.ABANDONED.value and "designed" in first["reason"]
+    assert first["outcome"] is None and first["state"] == "designed"
+    assert e2.summary()["state"] == "blocked"
 
 
 def test_crash_after_ref_move_recovers_champion(make_project, engine_for):
@@ -203,23 +268,6 @@ def test_ref_moved_outside_opc_is_refused(make_project, engine_for):
     git(root, "update-ref", e.ref, git(root, "rev-parse", "HEAD").strip())
     with pytest.raises(OPCError, match="moved outside OPC"):
         engine_for(root).run()
-
-
-def test_contract_change_requires_new_run(make_project, engine_for):
-    root = make_project()
-    e = engine_for(root)
-    e.run(max_attempts_now=0)
-    t = task(revision="r0002")
-    t["budget"]["max_attempts"] = 3
-    p = root / ".opc/tasks/t-toy/revisions/r0002/task.json"
-    p.parent.mkdir(parents=True)
-    p.write_text(json.dumps(t), encoding="utf-8")
-    git(root, "add", "-A")
-    git(root, "commit", "-qm", "r0002")
-    with pytest.raises(OPCError, match="new run"):
-        engine_for(root).run()
-    s = engine_for(root).run(new_run=True)
-    assert s["revision"] == "r0002" and s["run_id"] != e.run_id
 
 
 def test_second_controller_is_refused(make_project, engine_for):
@@ -288,7 +336,8 @@ def test_next_expert_receives_original_plan_and_measured_evidence(make_project, 
     e = engine_for(make_project())
     e.run(max_attempts_now=2)
     attempts = e.ledger.attempts(e.run_id)
-    ctx = json.loads((e.attempt_dir(2) / 'context.json').read_text(encoding='utf-8'))
+    ctx = [call['input']['context'] for call in e.ledger.calls(e.run_id)
+           if call['role'] == 'expert'][-1]
     previous = ctx['history'][0]
     for field in ('hypothesis', 'expected', 'falsifier'):
         assert previous[field] == attempts[0]['plan'][field]
@@ -300,16 +349,731 @@ def test_next_expert_receives_original_plan_and_measured_evidence(make_project, 
         prompt = expert_prompt(ctx, plain_text_reply=plain_text)
         assert 'Read research.json' in prompt
         assert json.dumps(ctx['history'], ensure_ascii=False, indent=2) not in prompt
-        assert 'does not by itself establish its proposed mechanism' in prompt
+        assert 'is not mechanism evidence' in prompt
 
 
 def test_failed_gate_history_preserves_failure_without_inventing_metrics(make_project, engine_for):
     evaluate = EVALUATE + '\nif x != 3: raise SystemExit(1)\n'
     e = engine_for(make_project(evaluate=evaluate))
     e.run(max_attempts_now=2)
-    ctx = json.loads((e.attempt_dir(2) / 'context.json').read_text(encoding='utf-8'))
+    ctx = [call['input']['context'] for call in e.ledger.calls(e.run_id)
+           if call['role'] == 'expert'][-1]
     previous = ctx['history'][0]
     assert previous['outcome'] == Outcome.BROKEN.value
     assert previous['metrics'] is None
     assert previous['experiment']['status'] == 'failed'
     assert previous['falsifier'] == 'loss does not decrease'
+
+
+def test_explicit_new_revision_starts_its_own_run(make_project):
+    from opc.core.engine import Engine
+    root = make_project()
+    first = Engine(root, 't-toy', 'r0001', log=lambda s: None)
+    first.run(max_attempts_now=1)
+    second_contract = task(revision='r0002', goal='same scope, explicitly revised task')
+    path = root / '.opc/tasks/t-toy/revisions/r0002/task.json'
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(second_contract))
+    git(root, 'add', '-A')
+    git(root, 'commit', '-qm', 'new revision')
+    second = Engine(root, 't-toy', 'r0002', log=lambda s: None)
+    result = second.run(max_attempts_now=0)
+    assert result['revision'] == 'r0002'
+    assert result['run_id'] != first.run_id
+    assert result['baseline'] == git(root, 'rev-parse', 'HEAD').strip()
+    assert result['baseline'] != first.summary()['champion']
+
+
+def test_run_freezes_execution_values_sources_and_startpoint(make_project):
+    from opc.core.engine import Engine
+    root = make_project()
+    local = root / '.opc/local/workers.json'
+    local.parent.mkdir(parents=True, exist_ok=True)
+    local.write_text(json.dumps({'expert': {'model': 'local-model'}}))
+    engine = Engine(root, 't-toy', 'r0001', log=lambda s: None)
+    result = engine.run(max_attempts_now=0)
+    frozen = json.loads((engine.artifact_dir() / 'frozen/baseline.json').read_text())
+    assert frozen['execution']['task_digest'] == engine.task.digest
+    assert frozen['execution']['worker_config']['expert']['model'] == 'local-model'
+    assert frozen['execution']['budget']['max_wall_seconds'] == 600
+    assert frozen['startpoint'] == {'kind': 'task_base', 'ref': 'HEAD', 'commit': result['baseline']}
+    assert frozen['sources']['contract'] == '.opc/tasks/t-toy/revisions/r0001/task.json'
+    assert result['startpoint'] == frozen['startpoint']
+
+
+def test_frozen_contract_cannot_be_overwritten_even_for_independent_run(make_project):
+    from opc.core.engine import Engine
+    root = make_project()
+    first = Engine(root, 't-toy', 'r0001', log=lambda s: None)
+    first.run(max_attempts_now=0)
+    path = root / '.opc/tasks/t-toy/revisions/r0001/task.json'
+    changed = task(goal='overwrite historical execution')
+    path.write_text(json.dumps(changed))
+    git(root, 'add', '-A')
+    git(root, 'commit', '-qm', 'overwrite frozen revision')
+    with pytest.raises(OPCError, match='frozen.*revision|revision.*frozen'):
+        Engine(root, 't-toy', 'r0001', log=lambda s: None).run(new_run=True)
+    assert len(first.ledger.runs()) == 1
+
+
+def test_preparation_edits_candidate_then_allocates_after_execution(make_project):
+    from opc.core.config import TaskSpec
+    from opc.core.engine import Engine
+    root = make_project()
+    edited = task(goal='clarified candidate goal')
+    candidate = TaskSpec.save_revision(root, 't-toy', 'r0001', edited)
+    assert candidate.revision == 'r0001'
+    git(root, 'add', '-A')
+    git(root, 'commit', '-qm', 'prepared candidate')
+    Engine(root, 't-toy', 'r0001', log=lambda s: None).run(max_attempts_now=0)
+    reserved = root / '.opc/tasks/t-toy/revisions/r0003'
+    reserved.mkdir()
+    next_contract = TaskSpec.save_revision(root, 't-toy', 'r0001', task(goal='new authorized goal'))
+    assert next_contract.revision == 'r0004'
+    assert TaskSpec.load(root, 't-toy', 'r0001').goal == 'clarified candidate goal'
+    assert next_contract.goal == 'new authorized goal'
+
+
+@pytest.mark.parametrize('frozen', [False, True])
+def test_invalid_candidate_save_preserves_existing_contract(make_project, engine_for, frozen):
+    from opc.core.config import TaskSpec
+    root = make_project()
+    if frozen:
+        engine_for(root).run(max_attempts_now=0)
+    path = root / '.opc/tasks/t-toy/revisions/r0001/task.json'
+    original = path.read_bytes()
+    invalid = task()
+    del invalid['goal']
+    with pytest.raises(OPCError, match='goal'):
+        TaskSpec.save_revision(root, 't-toy', 'r0001', invalid)
+    assert path.read_bytes() == original
+    assert not (path.parent.parent / 'r0002').exists()
+
+
+def test_no_objective_missing_tool_cannot_dispatch_formal_worker(make_project):
+    from opc.core.engine import Engine
+    strategy = STRATEGY.replace('def propose(self, ctx, tree):', 'def propose(self, ctx, tree):\n        raise AssertionError("formal worker must not run")')
+    comp = component(gates=[{'id': 'needed-tool', 'argv': ['archa-missing-executable'], 'timeout_s': 5}])
+    root = make_project(tsk=task(acceptance={'objective': None}, requirements=[]), comp=comp, strategy=strategy)
+    engine = Engine(root, 't-toy', 'r0001', log=lambda s: None)
+    with pytest.raises(OPCError, match='preflight|infrastructure|baseline fails'):
+        engine.run()
+    assert not engine.ledger.runs()
+
+
+def test_independent_run_cannot_change_frozen_evaluation_contract(make_project):
+    from opc.core.engine import Engine
+    root = make_project()
+    first = Engine(root, 't-toy', 'r0001', log=lambda s: None)
+    first.run(max_attempts_now=0)
+    path = root / '.opc/components/toy.json'
+    changed = json.loads(path.read_text())
+    changed['editable'] = ['params.json', 'new-feature.py']
+    path.write_text(json.dumps(changed))
+    git(root, 'add', '-A')
+    git(root, 'commit', '-qm', 'change frozen execution scope')
+    with pytest.raises(OPCError, match='frozen.*revision|revision.*frozen'):
+        Engine(root, 't-toy', 'r0001', log=lambda s: None).run(new_run=True)
+
+
+def test_explicit_work_startpoint_is_checked_before_worker_dispatch(make_project):
+    from opc.core.engine import Engine
+    evaluate = EVALUATE + '\nraise SystemExit(75 if x == 3 else 0)\n'
+    root = make_project(evaluate=evaluate, tsk=task(acceptance={}, requirements=[]))
+    original = git(root, 'rev-parse', 'HEAD').strip()
+    (root / 'params.json').write_text('{"x": 4}')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-qm', 'available task baseline')
+    engine = Engine(root, 't-toy', 'r0001', log=lambda s: None)
+    with pytest.raises(OPCError, match='preflight|baseline fails'):
+        engine.run(base_ref=original)
+    assert not engine.ledger.runs()
+
+
+def test_resume_keeps_original_run_with_unready_new_revision(make_project, engine_for, monkeypatch, capsys):
+    from opc.adapters.worker import WorkerCall
+    from opc.cli import main
+    from opc.core.engine import Engine
+    from opc.core.model import Cost
+    from opc.scaffold.onboard import onboard
+    root = make_project(tsk=task(profile={'name': 'development', 'version': 2}),
+                        extra={'.opc/profiles/development/v2.json': json.dumps({
+                            'name': 'development', 'version': 2,
+                            'workers': {'expert': {'reasoning_effort': 'low'}}})})
+
+    def preparation(self, role, prompt, tree, log, sandbox, schema):
+        log.mkdir(parents=True)
+        evidence = log / 'checks.txt'
+        evidence.write_text('Local toy evaluator and strategy are available; no formal experiment.', encoding='utf-8')
+        return WorkerCall(role, True, Cost(0, 0, None), extra={'usage_complete': True}), json.dumps({
+            'state': 'ready', 'reason': 'local toy capabilities checked',
+            'evidence': [evidence.relative_to(root).as_posix()]})
+
+    monkeypatch.setattr('opc.adapters.codex.CodexWorker._run', preparation)
+    ready = onboard(root, 'codex', task_id='t-toy', revision='r0001',
+                    prior_tokens=0, prior_wall_seconds=0)
+    assert ready['ok'] and ready['revision'] == 'r0001'
+    assert not Engine(root, 't-toy', 'r0001', log=lambda _: None).ledger.runs()
+    first = engine_for(root)
+    paused = first.run(max_attempts_now=1)
+    original_attempts = len(first.ledger.attempts(first.run_id))
+    revised = task(revision='r0002', goal='unready new goal')
+    write(root / '.opc/tasks/t-toy/revisions/r0002/task.json', json.dumps(revised))
+    first.ledger.event(first.ledger.preparation_scope('t-toy'), 'preparation',
+                       task_id='t-toy', revision='r0002', state='pending', reason='not prepared')
+    # Later profile/machine defaults must not alter the original Run.
+    write(root / '.opc/local/workers.json', json.dumps({'budget': {'max_wall_seconds': 1}}))
+    write(root / '.opc/profiles/development/v2.json', '{invalid later profile')
+    first.ledger.set_control(first.run_id, 'pause')
+    assert main(['status', '-p', str(root), '--task', 't-toy', '--run-id', first.run_id]) == 0
+    observed = json.loads(capsys.readouterr().out)
+    assert observed[0]['run_id'] == first.run_id and observed[0]['control'] == 'pause'
+    assert observed[0]['attempts'] == original_attempts
+    automatic = Engine(root, 't-toy', log=lambda _: None)
+    assert automatic.task.revision == 'r0001'
+    resumed = Engine(root, 't-toy', run_id=first.run_id, log=lambda _: None)
+    result = resumed.run()
+    assert result['run_id'] == paused['run_id'] and result['revision'] == 'r0001'
+    assert result['result'] == 'target_met'
+    assert len(resumed.ledger.attempts(first.run_id)) > original_attempts
+    assert result['spent']['wall_seconds'] >= paused['spent']['wall_seconds']
+    assert resumed.task.configuration_sources['profile']['version'] == 2
+    assert main(['status', '-p', str(root), '--task', 't-toy', '--run-id', first.run_id, '--details']) == 0
+    detail = json.loads(capsys.readouterr().out)[0]
+    assert detail['state'] == 'closed' and detail['revision'] == 'r0001'
+    assert detail['execution']['configuration_sources']['profile']['version'] == 2
+
+
+def test_multiple_runs_require_explicit_identity_and_resume_per_run_champion(make_project):
+    from opc.core.engine import Engine
+    root = make_project()
+    first = Engine(root, 't-toy', 'r0001', log=lambda _: None)
+    first.run(max_attempts_now=1)
+    second = Engine(root, 't-toy', 'r0001', log=lambda _: None)
+    second.run(new_run=True, max_attempts_now=2)
+    with pytest.raises(OPCError, match='multiple Runs.*run-id'):
+        Engine(root, 't-toy', 'r0001', log=lambda _: None).run()
+    resumed = Engine(root, 't-toy', run_id=first.run_id, log=lambda _: None)
+    result = resumed.run()
+    assert result['run_id'] == first.run_id and result['result'] == 'target_met'
+    assert len(resumed.ledger.attempts(second.run_id)) == 2
+
+
+def test_closed_run_reports_original_result_without_reopening(make_project, engine_for):
+    root = make_project()
+    first = engine_for(root)
+    original = first.run()
+    from opc.cli import main
+    original_event_count = len(first.ledger.events(first.run_id))
+    assert main(['run', '-p', str(root), '--task', 't-toy', '--run-id', first.run_id, '--deliver']) == 1
+    assert len(first.ledger.events(first.run_id)) == original_event_count
+    first.ledger.set_control(first.run_id, 'stop')
+    event_count = len(first.ledger.events(first.run_id))
+    repeated = engine_for(root).run()
+    assert repeated == {**original, 'control': 'stop'}
+    assert len(first.ledger.events(first.run_id)) == event_count
+    assert first.ledger.control(first.run_id) == 'stop'
+
+
+def test_status_read_preserves_pause_and_explicit_control_targets_old_run(make_project, capsys):
+    from opc.cli import main
+    from opc.core.engine import Engine
+    root = make_project()
+    first = Engine(root, 't-toy', 'r0001', log=lambda _: None)
+    first.run(max_attempts_now=1)
+    second = Engine(root, 't-toy', 'r0001', log=lambda _: None)
+    second.run(new_run=True, max_attempts_now=1)
+    assert main(['pause', '-p', str(root), '--task', 't-toy', '--run-id', first.run_id]) == 0
+    capsys.readouterr()
+    assert main(['status', '-p', str(root), '--task', 't-toy', '--run-id', first.run_id]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert [r['run_id'] for r in rows] == [first.run_id]
+    assert first.ledger.control(first.run_id) == 'pause'
+    assert first.ledger.control(second.run_id) == 'run'
+    assert len(first.ledger.attempts(first.run_id)) == 1
+
+
+def test_resume_without_frozen_execution_source_is_blocked_but_status_readable(make_project, engine_for, capsys):
+    from opc.cli import main
+    from opc.core.engine import Engine
+    root = make_project()
+    first = engine_for(root)
+    first.run(max_attempts_now=1)
+    snapshot = first.artifact_dir() / 'frozen/baseline.json'
+    data = json.loads(snapshot.read_text())
+    data.pop('execution')
+    snapshot.write_text(json.dumps(data))
+    with pytest.raises(OPCError, match='readable.*cannot resume.*frozen execution source'):
+        Engine(root, 't-toy', run_id=first.run_id, log=lambda _: None).run()
+    assert first.ledger.run(first.run_id)['state'] == 'paused'
+    assert main(['status', '-p', str(root), '--task', 't-toy', '--run-id', first.run_id]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert rows[0]['state'] == 'paused' and rows[0]['attempts'] == 1
+
+
+def test_resume_uses_relocated_artifacts_and_workspace_bindings(make_project, engine_for, tmp_path):
+    import shutil
+    from opc.core.engine import Engine
+    root = make_project()
+    e = engine_for(root)
+    first = e.run(max_attempts_now=1)
+    previous = e.bindings
+    artifacts = tmp_path / 'moved-artifacts'
+    workspace = tmp_path / 'moved-workspaces'
+    shutil.move(str(previous.artifact_root), artifacts)
+    write(root / '.opc/local/bindings.json', json.dumps({
+        'artifact_root': str(artifacts), 'workspace_root': str(workspace)}))
+    resumed = Engine(root, 't-toy', run_id=first['run_id'], log=lambda _: None)
+    result = resumed.run(max_attempts_now=0)
+    assert result['run_id'] == first['run_id']
+    assert (resumed.artifact_dir() / 'frozen/task.json').is_file()
+    assert resumed.bindings.artifact_root == artifacts
+    assert resumed.ledger.events(first['run_id'], 'binding_repaired')
+
+
+def test_no_objective_resume_blocks_missing_tool_then_rechecks_drift(make_project, engine_for, tmp_path):
+    marker = tmp_path / 'version.txt'
+    marker.write_text('v1')
+    comp = component(toolchain=[['{python}', '-c',
+        'import pathlib,sys; print(pathlib.Path(sys.argv[1]).read_text())', str(marker)]])
+    root = make_project(comp=comp, tsk=task(acceptance={}, requirements=[{
+        'id': 'REQ-001', 'text': 'working gate', 'verification': 'automated', 'gates': ['evaluate']}]))
+    e = engine_for(root)
+    first = e.run(max_attempts_now=0)
+    marker.unlink()
+    with pytest.raises(OPCError, match='toolchain.*unavailable'):
+        engine_for(root).run(max_attempts_now=0)
+    assert not e.ledger.attempts(first['run_id'])
+    marker.write_text('v2')
+    resumed = engine_for(root)
+    result = resumed.run(max_attempts_now=0)
+    assert result['run_id'] == first['run_id']
+    records = resumed.ledger.events(first['run_id'], 'measurement_baseline')
+    assert records and records[-1]['body']['cached'] is False
+    assert result['compatibility']['record']['state'] == 'readable'
+    assert result['compatibility']['execution']['state'] == 'resumable'
+    assert result['compatibility']['measurement']['state'] == 'rechecked'
+
+
+def test_status_separates_readable_legacy_execution_and_unknown_measurements(make_project, engine_for, capsys):
+    from opc.cli import main
+    root = make_project()
+    e = engine_for(root)
+    first = e.run(max_attempts_now=0)
+    path = e.artifact_dir() / 'frozen/baseline.json'
+    snapshot = json.loads(path.read_text())
+    del snapshot['execution']
+    path.write_text(json.dumps(snapshot))
+    assert main(['status', '-p', str(root), '--task', 't-toy', '--run-id', first['run_id']]) == 0
+    result = json.loads(capsys.readouterr().out)[0]['compatibility']
+    assert result['record']['state'] == 'readable'
+    assert result['execution']['state'] == 'blocked'
+    assert 'legacy' in result['execution']['reason']
+    assert result['measurement']['state'] == 'unknown'
+
+
+def test_environment_drift_cannot_be_certified_by_champion_alone(make_project, engine_for, tmp_path):
+    marker = tmp_path / 'version.txt'
+    marker.write_text('v1')
+    comp = component(toolchain=[['{python}', '-c',
+        'import pathlib,sys; print(pathlib.Path(sys.argv[1]).read_text())', str(marker)]])
+    evaluate = EVALUATE.replace('x = json.loads', 'x = json.loads') + (
+        '\nif Path(%r).read_text() == "v2" and x == 3: sys.exit(1)\n' % str(marker))
+    root = make_project(comp=comp, evaluate=evaluate)
+    e = engine_for(root)
+    first = e.run(max_attempts_now=1)
+    old_evidence = {p: p.read_bytes() for p in (e.artifact_dir() / 'champion').rglob('evaluation.json')}
+    count = len(e.ledger.champions(first['run_id']))
+    marker.write_text('v2')
+    with pytest.raises(OPCError, match='changed environment baseline failed'):
+        engine_for(root).run(max_attempts_now=0)
+    assert len(e.ledger.champions(first['run_id'])) == count
+    assert all(path.read_bytes() == raw for path, raw in old_evidence.items())
+    failed_evidence = {p: p.read_bytes() for p in (e.artifact_dir() / 'environment').rglob('evaluation.json')}
+    assert failed_evidence
+    marker.write_text('v3')
+    resumed = engine_for(root).run(max_attempts_now=0)
+    assert resumed['run_id'] == first['run_id']
+    assert all(path.read_bytes() == raw for path, raw in failed_evidence.items())
+
+
+def test_resume_rejects_changed_frozen_permissions_without_rewriting_history(make_project, engine_for):
+    root = make_project()
+    e = engine_for(root)
+    first = e.run(max_attempts_now=0)
+    path = e.artifact_dir() / 'frozen/component.json'
+    altered = json.loads(path.read_text())
+    altered['editable'] = ['**/*.json']
+    path.write_text(json.dumps(altered))
+    with pytest.raises(OPCError, match='permissions.*new revision'):
+        engine_for(root).run(max_attempts_now=0)
+    assert e.ledger.run(first['run_id'])['revision'] == 'r0001'
+    assert len(e.ledger.runs()) == 1
+
+
+def test_saved_call_receipt_recovers_without_reexecution_or_double_charge(make_project, engine_for, monkeypatch):
+    root = make_project()
+    e = engine_for(root)
+    e.run(max_attempts_now=0)
+    complete = e.ledger.finish_call
+    interrupted = []
+    def crash(call_id, result):
+        if result.get('role') == 'designer' and not interrupted:
+            interrupted.append(call_id)
+            raise RuntimeError('receipt saved, ledger not committed')
+        return complete(call_id, result)
+    monkeypatch.setattr(e.ledger, 'finish_call', crash)
+    with pytest.raises(RuntimeError, match='receipt saved'):
+        e.run(max_attempts_now=1)
+    old = e.ledger.calls(e.run_id)
+    designer = [c for c in old if c['role'] == 'designer'][0]
+    assert designer['state'] == 'dispatched'
+    assert Path(designer['input']['tree']).exists()
+    e2 = engine_for(root)
+    e2.run(max_attempts_now=0)
+    recovered = [c for c in e2.ledger.calls(e2.run_id) if c['role'] == 'designer']
+    assert len(recovered) == 1 and recovered[0]['state'] == 'completed'
+    before = e2.ledger.totals(e2.run_id)
+    engine_for(root).run(max_attempts_now=0)
+    assert e2.ledger.totals(e2.run_id) == before
+    assert len(e2.ledger.attempts(e2.run_id)) == 1
+    assert e2.ledger.attempts(e2.run_id)[0]['outcome'] == Outcome.IMPROVEMENT.value
+
+
+def test_dispatch_without_terminal_receipt_is_not_reissued(make_project, engine_for, monkeypatch):
+    root = make_project()
+    e = engine_for(root)
+    e.run(max_attempts_now=0)
+    def disappeared(*args, **kwargs):
+        raise KeyboardInterrupt
+    expert, _ = e.workers(e.workspaces().checkout('loader', e.working_commit()))
+    monkeypatch.setattr(type(expert), 'propose', disappeared)
+    e.run(max_attempts_now=1)
+    calls = e.ledger.calls(e.run_id)
+    assert len(calls) == 2  # baseline evaluation plus Expert dispatch
+    assert calls[-1]['state'] == 'dispatched'
+    e2 = engine_for(root)
+    with pytest.raises(OPCError, match='execution unknown'):
+        e2.run()
+    assert len(e2.ledger.calls(e2.run_id)) == 2
+    assert e2.ledger.attempts(e2.run_id) == []  # unknown Expert selected no work
+
+
+def test_evaluator_start_failure_retries_same_attempt_with_new_call(make_project, engine_for, monkeypatch):
+    root = make_project()
+    e = engine_for(root)
+    e.run(max_attempts_now=0)
+    from opc.domains.command import CommandDomain
+    original = CommandDomain.evaluate
+    failed = []
+    def fail_once(self, tree, out, repeats):
+        from opc.domain import Evaluation
+        if not failed:
+            failed.append(True)
+            return Evaluation([], failure=Outcome.INFRA, reason='evaluator could not start')
+        return original(self, tree, out, repeats)
+    monkeypatch.setattr(CommandDomain, "evaluate", fail_once)
+    first = e.run(max_attempts_now=1)
+    assert first['state'] == 'blocked'
+    assert e.ledger.attempts(e.run_id)[0]['outcome'] is None
+    old = e.ledger.calls(e.run_id)
+    e2 = engine_for(root)
+    e2.run(max_attempts_now=0)
+    calls = e2.ledger.calls(e2.run_id)
+    assert len(e2.ledger.attempts(e2.run_id)) == 1
+    assert e2.ledger.attempts(e2.run_id)[0]['outcome'] == Outcome.IMPROVEMENT.value
+    assert len([c for c in calls if c['role'] == 'designer']) == 1
+    assert len(calls) == len(old) + 1
+    assert len({c['call_id'] for c in calls}) == len(calls)
+
+
+def test_saved_baseline_receipt_is_reused_before_champion_registration(make_project, engine_for, monkeypatch):
+    root = make_project()
+    e = engine_for(root)
+    record = e.ledger.set_champion
+    def interrupted(*args, **kwargs):
+        raise RuntimeError('baseline measured before champion registration')
+    monkeypatch.setattr(e.ledger, 'set_champion', interrupted)
+    with pytest.raises(RuntimeError, match='baseline measured'):
+        e.run(max_attempts_now=0)
+    calls = e.ledger.calls(e.run_id)
+    assert len(calls) == 1 and calls[0]['role'] == 'evaluator'
+    used = e.ledger.totals(e.run_id)
+    e2 = engine_for(root)
+    e2.run(max_attempts_now=0)
+    assert len(e2.ledger.calls(e2.run_id)) == 1
+    assert e2.ledger.totals(e2.run_id) == used
+    assert e2.ledger.champion(e2.run_id) is not None
+
+
+CONTROLLED_DESIGN = STRATEGY.replace(
+    '    def implement(self, plan, tree):',
+    """    def implement(self, plan, tree):
+        import os, sys
+        from opc.core.platform import Process
+        from pathlib import Path
+        with Process([sys.executable, '-c',
+            'import time; from pathlib import Path; '
+            'p=Path(' + repr(os.environ['CONTROL_RELEASE']) + '); '
+            'Path(' + repr(os.environ['CONTROL_READY']) + ').touch(); '
+            'exec("while not p.exists(): time.sleep(.02)")']) as child:
+            child.wait(timeout=30)
+""")
+
+
+def control_during_design(e, tmp_path, monkeypatch, command):
+    import threading
+    import time
+    from opc.core.ledger import Ledger
+    ready, release = tmp_path / 'ready', tmp_path / 'release'
+    monkeypatch.setenv('CONTROL_READY', str(ready))
+    monkeypatch.setenv('CONTROL_RELEASE', str(release))
+    observed = []
+    def request():
+        deadline = time.monotonic() + 10
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        if not ready.exists():
+            observed.append('designer never started')
+            return
+        other = Ledger(e.ledger.path)
+        other.set_control(e.run_id, command)
+        time.sleep(.15)
+        observed.append((other.run(e.run_id)['state'],
+                         [c['role'] for c in other.calls(e.run_id) if c['result'] is None]))
+        if command == 'pause':
+            release.touch()
+        other.db.close()
+    worker = threading.Thread(target=request)
+    worker.start()
+    return worker, observed, release
+
+
+def test_pause_drains_call_without_dispatching_evaluation(make_project, engine_for, tmp_path, monkeypatch):
+    e = engine_for(make_project(strategy=CONTROLLED_DESIGN))
+    e.run(max_attempts_now=0)
+    worker, observed, release = control_during_design(e, tmp_path, monkeypatch, 'pause')
+    try:
+        result = e.run(max_attempts_now=1)
+    finally:
+        release.touch()
+        worker.join(timeout=10)
+    assert observed == [('active', ['designer'])]
+    assert result['state'] == 'paused'
+    calls = e.ledger.calls(e.run_id)
+    assert [c['role'] for c in calls].count('evaluator') == 1  # baseline only
+    assert [c['role'] for c in calls].count('designer') == 1
+    resumed = engine_for(e.root)
+    resumed.run(max_attempts_now=0)
+    assert [c['role'] for c in resumed.ledger.calls(e.run_id)].count('designer') == 1
+    assert resumed.ledger.attempts(e.run_id)[0]['outcome'] == Outcome.IMPROVEMENT.value
+
+
+def test_stop_cancels_owned_process_without_followup_dispatch(make_project, engine_for, tmp_path, monkeypatch):
+    import threading
+    import time
+    e = engine_for(make_project(strategy=CONTROLLED_DESIGN))
+    e.run(max_attempts_now=0)
+    worker, observed, release = control_during_design(e, tmp_path, monkeypatch, 'stop')
+    fallback = threading.Timer(2, release.touch)
+    fallback.start()
+    started = time.monotonic()
+    try:
+        result = e.run(max_attempts_now=1)
+    finally:
+        fallback.cancel()
+        release.touch()
+        worker.join(timeout=10)
+    assert time.monotonic() - started < 1.5
+    assert result['state'] == 'closed'
+    designer = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer']
+    assert len(designer) == 1 and designer[0]['state'] == 'cancelled'
+    assert not designer[0]['result']['ok']
+    process = json.loads((Path(designer[0]['receipt_path']).parent / 'process.json').read_text())
+    assert process['state'] == 'cancelled' and process['returncode'] is not None
+    assert len([c for c in e.ledger.calls(e.run_id) if c['role'] == 'evaluator']) == 1
+    before = e.ledger.calls(e.run_id)
+    engine_for(e.root).run()
+    assert e.ledger.calls(e.run_id) == before
+
+
+def test_wall_budget_cancels_current_process_and_keeps_partial_work(make_project, engine_for, tmp_path, monkeypatch):
+    import threading
+    t = task()
+    t['budget']['max_wall_seconds'] = .6
+    e = engine_for(make_project(strategy=CONTROLLED_DESIGN, tsk=t))
+    e.run(max_attempts_now=0)
+    ready, release = tmp_path / 'ready', tmp_path / 'release'
+    monkeypatch.setenv('CONTROL_READY', str(ready))
+    monkeypatch.setenv('CONTROL_RELEASE', str(release))
+    fallback = threading.Timer(2, release.touch)
+    fallback.start()
+    try:
+        result = e.run(max_attempts_now=1)
+    finally:
+        fallback.cancel()
+        release.touch()
+    assert result['state'] == 'closed' and result['stop_reason'].startswith('budget_exhausted')
+    designer = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer']
+    assert len(designer) == 1 and designer[0]['state'] == 'cancelled'
+    assert Path(designer[0]['input']['tree']).is_dir()
+    assert e.ledger.attempts(e.run_id)[0]['outcome'] is None
+
+
+CONTROLLED_EVALUATE = EVALUATE + '''
+if x != 3:
+    import os, time
+    Path(os.environ['CONTROL_READY']).touch()
+    while not Path(os.environ['CONTROL_RELEASE']).exists():
+        time.sleep(.02)
+'''
+
+
+def test_pause_during_evaluation_saves_result_without_expert_dispatch(make_project, engine_for, tmp_path, monkeypatch):
+    e = engine_for(make_project(evaluate=CONTROLLED_EVALUATE))
+    e.run(max_attempts_now=0)
+    worker, observed, release = control_during_design(e, tmp_path, monkeypatch, 'pause')
+    try:
+        result = e.run(max_attempts_now=1)
+    finally:
+        release.touch()
+        worker.join(timeout=10)
+    assert observed == [('active', ['evaluator'])]
+    assert result['state'] == 'paused'
+    assert e.ledger.attempts(e.run_id)[0]['outcome'] == Outcome.IMPROVEMENT.value
+    assert len([c for c in e.ledger.calls(e.run_id) if c['role'] == 'expert']) == 1
+    assert result['pending_conclusions'] == [1]
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='POSIX signal failure injection')
+def test_unconfirmed_stop_retains_unknown_call_and_workspace(make_project, engine_for, tmp_path, monkeypatch):
+    import os
+    import signal
+    resistant = CONTROLLED_DESIGN.replace('import time; from pathlib',
+        'import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); from pathlib')
+    e = engine_for(make_project(strategy=resistant))
+    e.run(max_attempts_now=0)
+    worker, observed, release = control_during_design(e, tmp_path, monkeypatch, 'stop')
+    killpg = os.killpg
+    def cannot_confirm(pid, sig):
+        if sig == signal.SIGKILL and (tmp_path / 'ready').exists():
+            raise PermissionError('cannot confirm process tree termination')
+        killpg(pid, sig)
+    monkeypatch.setattr(os, 'killpg', cannot_confirm)
+    try:
+        with pytest.raises(OPCError, match='cannot confirm'):
+            e.run(max_attempts_now=1)
+        record = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer'][0]
+        assert record['result'] is None
+        assert e.ledger.run(e.run_id)['state'] == 'blocked'
+        assert Path(record['input']['tree']).is_dir()
+    finally:
+        release.touch()
+        worker.join(timeout=10)
+        for record in e.ledger.calls(e.run_id):
+            if record['role'] == 'designer':
+                evidence = Path(record['receipt_path']).parent / 'process.json'
+                if evidence.exists():
+                    pid = json.loads(evidence.read_text())['pid']
+                    try:
+                        killpg(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    os.waitpid(pid, 0)
+
+
+def test_numeric_target_alone_blocks_delivery_but_preserves_valid_progress(make_project, engine_for):
+    from opc.core.promote import promote
+    from opc.observer.adapter import ObserverAdapter
+    from opc.tests.test_research_loop import Sequence, plan, stop, use_sequence
+
+    evaluate = EVALUATE.replace('(x - 7) ** 2 + 1', '{3: 100, 4: 94, 5: 80, 6: 98}[x]').replace(
+        '"correct": 1', '"correct": int(x != 5)')
+    t = task(requirements=[])
+    t['acceptance']['target']['value'] = 90
+    t['acceptance']['objective']['min_rel_gain'] = .02
+    root = make_project(tsk=t, evaluate=evaluate)
+    e = use_sequence(engine_for(root), Sequence([plan(1), plan(2), plan(3), stop], [4, 5, 6]))
+    assert e.preflight()['ok']  # baseline need not meet the delivery target
+    summary = e.run()
+    assert summary['champion_metrics'] == {'loss': 94, 'correct': 1}
+    assert summary['target_met'] is False
+    assert outcomes(e) == ['improvement', 'no_gain', 'no_gain']
+    assert len(e.attempt_records()) == 3
+    rep = promote(e)
+    assert rep['complete'] is False and rep['promotable'] is False
+    assert rep['target_met'] is False
+    assert any(f['check'] == 'target' and f['severity'] == 'block' and '94' in f['text']
+               and '90' in f['text'] for f in rep['findings'])
+    observer = ObserverAdapter(root)
+    before = e.ledger.path.read_bytes()
+    assert observer.run(observer._id('run', e.run_id))['data']['acceptance']['value'] == 'failed'
+    assert e.ledger.path.read_bytes() == before
+
+
+@pytest.mark.parametrize('with_target', [False, True])
+def test_delivery_does_not_promote_optional_requirements_to_required(make_project, engine_for, with_target):
+    from opc.core.promote import promote
+    from opc.observer.adapter import ObserverAdapter
+    from opc.tests.test_research_loop import Sequence, stop, use_sequence
+
+    t = task(requirements=[{'id': 'OPTIONAL', 'text': 'extra discussion', 'verification': 'review', 'required': False}])
+    if with_target:
+        t['acceptance']['target']['value'] = 17
+    else:
+        t['acceptance'] = {}
+    e = use_sequence(engine_for(make_project(tsk=t)), Sequence([stop]))
+    e.run()
+    rep = promote(e)
+    assert rep['complete'] is True
+    assert rep['target_met'] is with_target
+    observer = ObserverAdapter(e.root)
+    assert observer.run(observer._id('run', e.run_id))['data']['acceptance']['value'] == 'passed'
+
+
+def test_target_met_does_not_skip_required_evidence(make_project, engine_for):
+    from opc.core.promote import promote
+    from opc.tests.test_research_loop import Sequence, stop, use_sequence
+
+    t = task(requirements=[{'id': 'REQUIRED', 'text': 'explain boundary', 'verification': 'review'}])
+    t['acceptance']['target']['value'] = 17
+    e = use_sequence(engine_for(make_project(tsk=t)), Sequence([stop]))
+    e.run()
+    rep = promote(e)
+    assert rep['target_met'] is True and rep['complete'] is False
+    assert rep['requirements'][0]['status'] == 'not_covered'
+
+
+def test_legacy_target_requires_explicit_semantic_revision_without_rewriting_history(make_project, engine_for):
+    from opc.core.engine import Engine
+    from opc.core.promote import promote
+    from opc.tests.test_research_loop import Sequence, stop, use_sequence
+
+    root = make_project(tsk=task(requirements=[]))
+    e = use_sequence(engine_for(root), Sequence([stop]))
+    e.run()
+    # Simulate a historical frozen Run written before hard target semantics.
+    snapshot = e.artifact_dir() / 'frozen/baseline.json'
+    legacy = json.loads(snapshot.read_text())
+    del legacy['target_policy']
+    snapshot.write_text(json.dumps(legacy))
+    first = promote(e)
+    assert first['complete'] is True and first['target_met'] is False
+    assert first['target_policy'] == 'advisory'
+    original_report = Path(first['report_dir']) / 'report.json'
+    original_bytes = original_report.read_bytes()
+    original_snapshot = snapshot.read_bytes()
+    revised = task(revision='r0002', requirements=[])
+    write(root / '.opc/tasks/t-toy/revisions/r0002/task.json', json.dumps(revised))
+    confirmation = dict(confirmed_by='user', source_run=e.run_id, from_revision='r0001', to_revision='r0002',
+                        changes={'target_policy': {'old': 'advisory', 'new': 'required'}})
+    receipt = root / '.opc/standards-confirmation.json'
+    receipt.write_text(json.dumps(confirmation))
+    second = promote(Engine(root, 't-toy', 'r0002'), source_run=e.run_id, standards_confirmation=receipt)
+    assert second['complete'] is False and second['target_policy'] == 'required'
+    assert second['execution_revision'] == 'r0001' and second['acceptance_revision'] == 'r0002'
+    assert original_report.read_bytes() == original_bytes and snapshot.read_bytes() == original_snapshot
+    assert len(e.ledger.runs()) == 1
+    repeated = use_sequence(Engine(root, 't-toy', 'r0001'), Sequence([stop]))
+    repeated.run(new_run=True)
+    assert promote(repeated, source_run=repeated.run_id)['target_policy'] == 'advisory'

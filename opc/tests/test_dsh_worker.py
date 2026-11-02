@@ -96,7 +96,7 @@ else:
     (cwd / "params.json").write_text(json.dumps({"x": x + 1}))
     if mode == "cheat":
         (cwd / ".opc/eval/evaluate.py").write_text("raise SystemExit(0)" + chr(10))
-    text = "set x to %d" % (x + 1)
+    text = json.dumps({"summary": "structured observation", "adopted_claims": [], "evidence_files": []}) if mode == "structured" else "set x to %d" % (x + 1)
 
 emit(type="status", phase="step_end", turn=1, step=1,
      usage={"inputTokens": 1000, "outputTokens": 200, "cacheReadTokens": 100})
@@ -117,8 +117,8 @@ def fake_dsh(tmp_path):
 
 def dsh_task(binary: str, **budget) -> dict:
     t = task()
-    t["workers"] = {"expert": {"kind": "dsh", "binary": binary},
-                    "designer": {"kind": "dsh", "binary": binary}}
+    t["workers"] = {"expert": {"kind": "dsh", "binary": binary, "provider": "fixture", "model": "fixture"},
+                    "designer": {"kind": "dsh", "binary": binary, "provider": "fixture", "model": "fixture"}}
     t["budget"].update({"max_tokens": 100000, **budget})
     return t
 
@@ -151,7 +151,14 @@ def test_dsh_account_failure_blocks_without_spending_search(make_project, engine
     e = engine_for(make_project(tsk=dsh_task(fake_dsh)))
     s = e.run()
     assert s["state"] == "blocked"
-    assert [a["outcome"] for a in e.ledger.attempts(e.run_id)] == [Outcome.INFRA.value]
+    assert e.ledger.attempts(e.run_id) == []  # Expert failed before selecting work.
+    call = next(c for c in e.ledger.calls(e.run_id) if c["role"] == "expert")
+    assert call["attempt_no"] is None and call["result"]["ok"] is False
+    assert call["result"]["extra"]["infra"] is True
+    assert call["result"]["extra"]["code"] == {"credential": "MISSING_CREDENTIAL", "quota": "QUOTA"}[mode]
+    assert call["result"]["error"] in s["stop_reason"]
+    assert call["result"]["cost"]["tokens"] == 0 and call["result"]["usage_complete"] is False
+    assert s["unresolved_accounting"]  # Missing receipt is not proof of zero usage.
     assert s["spent"]["search_attempts"] == 0, "INFRA must not consume the search budget"
 
 
@@ -166,16 +173,26 @@ def test_dsh_prose_reply_is_not_accepted_as_a_plan(make_project, engine_for, fak
                                                    monkeypatch):
     monkeypatch.setenv("FAKE_DSH_MODE", "not_json")
     e = engine_for(make_project(tsk=dsh_task(fake_dsh, max_attempts=1)))
-    e.run()
-    attempts = e.ledger.attempts(e.run_id)
-    assert attempts[0]["outcome"] != Outcome.IMPROVEMENT.value
+    result = e.run()
+    assert result["state"] == "blocked" and e.ledger.attempts(e.run_id) == []
+    call = next(c for c in e.ledger.calls(e.run_id) if c["role"] == "expert")
+    assert call["attempt_no"] is None and call["result"]["ok"] is False
+    assert "no JSON object" in call["result"]["error"]
+    assert call["result"]["cost"]["tokens"] == result["spent"]["tokens"] == 1300
+    assert result["spent"]["search_attempts"] == 0
 
 
 def test_dsh_missing_binary_is_infra(make_project, engine_for):
     e = engine_for(make_project(tsk=dsh_task("/nonexistent/dsh")))
     s = e.run()
-    assert s["state"] == "blocked"
-    assert [a["outcome"] for a in e.ledger.attempts(e.run_id)] == [Outcome.INFRA.value]
+    assert s["state"] == "blocked" and e.ledger.attempts(e.run_id) == []
+    call = next(c for c in e.ledger.calls(e.run_id) if c["role"] == "expert")
+    assert call["attempt_no"] is None and call["result"]["ok"] is False
+    assert call["result"]["extra"]["infra"] is True
+    assert "dsh could not start" in call["result"]["error"]
+    assert "/nonexistent/dsh" in call["result"]["error"]
+    assert call["result"]["cost"]["tokens"] == 0
+    assert s["spent"]["search_attempts"] == 0
 
 
 def test_token_budget_stops_before_overspending(make_project, engine_for, fake_dsh):
@@ -358,3 +375,12 @@ def test_dsh_request_rejection_blocks_with_session(make_project, engine_for, fak
     s = e.run()
     assert s['state'] == 'blocked' and len(e.ledger.events(e.run_id, 'worker_call')) == 1
     assert s['spent']['search_attempts'] == 0
+
+
+def test_dsh_designer_preserves_structured_observation(make_project, engine_for, fake_dsh, monkeypatch):
+    monkeypatch.setenv('FAKE_DSH_MODE', 'structured')
+    e = engine_for(make_project(tsk=dsh_task(fake_dsh, max_attempts=1)))
+    e.run()
+    actual = e.attempt_records()[0]['execution']
+    assert actual['summary'] == 'structured observation'
+    assert actual['adopted_claims'] == [] and actual['evidence_files'] == []

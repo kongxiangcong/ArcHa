@@ -7,7 +7,8 @@
 | [design/](design/) | 框架设计、接入与目录规范；原根目录两份设计文档迁入这里 |
 | [research/](research/) | 固定版本论文、源码与复用方案核查 |
 | [discussions/](discussions/) | 用户确认的方案、纠偏与后续讨论入口 |
-| [下一阶段方向](plans/archa-next-stage-goals.md) | 先建测试平台与真实案例，再逐项验证阅读接口、研究闭环、共享经验与只读 dashboard；待验证路线，不是全面实施规格 |
+| [任务策略驱动改造的阶段规划](architecture-and-task-policies/ArcHa_Phased_Development_Plan.md) | 当前七个大方向与讨论入口；测试方法前置，框架改造完成后开展 DeepStack 建模探索 |
+| [前序方向（2026-10-29）](plans/archa-next-stage-goals.md) | 保留当时的实践与改进思路；推进顺序已由当前阶段规划更新 |
 | [reviews/](reviews/) | 独立审核和复核记录；原 docs/review-*.md 迁入这里 |
 | [reports/](reports/) | 可提交的验证摘要、条件、结果与证据路径 |
 | [evidence/](evidence/) | 已保留的审核探针与原始证据 |
@@ -20,6 +21,6 @@
 
 任务成果统一：[实施 tickets 与字段归属](design/task-results/tickets.md)、[使用与升级](design/task-results/usage.md)。支持跨 run 实验关联、当前累计成果消费、审核版本和只读成果入口；验证状态以 tickets 为准。
 
-旧 benchmark 工具及 FP32 包已退役，历史报告在 benchmarks/reports 保留。运行工程、账本、候选、原始 worker 日志留在本地 benchmarks/experiments 或配置的外置 artifact_root；依赖在 benchmarks/cache；临时脚本和测试夹具归 .tmp。根目录的 pip-* 是可再生成的安装临时目录，已清理并忽略。不要将本地依赖、独立 Git 工程或原始会话批量加入主仓库。
+测试项目统一放在 [benchmarks/](../benchmarks/README.md)：DMA 背压用于闭环冒烟；DeepStack 主线固定版本已登记，最终方向为底层建模探索，执行合同待讨论，正式测试在框架改造完成后开展。各项目的 reports 保存可提交摘要，runs 保存不提交的独立工程、账本、工作树和完整日志。旧 benchmark 工具及 FP32 包已退役，历史准备记录迁至 [reports/benchmark-preparation-20261024/](reports/benchmark-preparation-20261024/preparation-20261024.md)。已有未跟踪运行原件和缓存不随本次整理删除。
 
 新报告注明日期、代码/合同版本、验证范围与证据来源。报告中的旧根目录文件名、绝对路径和当时的未提交状态属于历史事实；目录调整只修正文档链接，不改写历史结果。

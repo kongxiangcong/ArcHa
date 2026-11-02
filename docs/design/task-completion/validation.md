@@ -18,15 +18,15 @@
 
 任务：给串行描述符执行器增加有限深度 DMA 队列、背压及计算重叠；交付代码、测试和使用说明。它没有需要优化的数值 objective，周期值是正确性输出。
 
-素材目录：[tools/tests/fixtures/dma_backpressure](../../../tools/tests/fixtures/dma_backpressure/)。这些是测试输入，不加入 ArcHa 运行时，不引入另一个 benchmark 平台。
+素材目录：[benchmarks/dma-backpressure](../../../benchmarks/dma-backpressure/)。这些是测试输入，不加入 ArcHa 运行时，不引入另一个 benchmark 平台。
 
 | 文件 | 用途 | 开发 agent 可见 |
 | --- | --- | --- |
-| [TASK.md](../../../tools/tests/fixtures/dma_backpressure/TASK.md) | 完整需求、接口、边界与手算时序 | 是，两组相同 |
-| [starter/dma_model.py](../../../tools/tests/fixtures/dma_backpressure/starter/dma_model.py) | 能运行的串行起始实现 | 是，两组相同 |
-| [starter/public_checks.py](../../../tools/tests/fixtures/dma_backpressure/starter/public_checks.py) | 四个公开需求检查 | 是，冻结原件；允许另加开发测试 |
-| [starter/example.json](../../../tools/tests/fixtures/dma_backpressure/starter/example.json) | 可以直接执行的 JSON 输入 | 是，两组相同 |
-| [acceptance.py](../../../tools/tests/fixtures/dma_backpressure/acceptance.py) | 固定种子数据生成、逐周期参考计算、外置检查 | 否，终验操作者持有 |
+| [TASK.md](../../../benchmarks/dma-backpressure/TASK.md) | 完整需求、接口、边界与手算时序 | 是，两组相同 |
+| [starter/dma_model.py](../../../benchmarks/dma-backpressure/starter/dma_model.py) | 能运行的串行起始实现 | 是，两组相同 |
+| [starter/public_checks.py](../../../benchmarks/dma-backpressure/starter/public_checks.py) | 四个公开需求检查 | 是，冻结原件；允许另加开发测试 |
+| [starter/example.json](../../../benchmarks/dma-backpressure/starter/example.json) | 可以直接执行的 JSON 输入 | 是，两组相同 |
+| [acceptance.py](../../../benchmarks/dma-backpressure/examiner/acceptance.py) | 固定种子数据生成、逐周期参考计算、外置检查 | 否，终验操作者持有 |
 | [test_dma_task_materials.py](../../../tools/tests/test_dma_task_materials.py) | 素材正向控制、手算锚点、错误实现探针 | 否，终验操作者持有 |
 
 只把 starter 内文件和 TASK.md 复制到两个独立任务仓库。不要将整个 ArcHa 源码、acceptance.py、素材自检、以前的解答或另一组候选复制给开发 agents。ArcHa 组另安装当前待验证 runtime。两组都可调用同一个冻结公开检查，终验参考实现和额外输入在两组产物锁定后才使用。
@@ -46,8 +46,8 @@
 
 ```bash
 python -m unittest discover -s tools/tests -p test_dma_task_materials.py -v
-python tools/tests/fixtures/dma_backpressure/acceptance.py generate .tmp/dma-validation/inputs.json
-python tools/tests/fixtures/dma_backpressure/acceptance.py evaluate --candidate tools/tests/fixtures/dma_backpressure/starter/dma_model.py --data .tmp/dma-validation/inputs.json --output .tmp/dma-validation/baseline-acceptance.json
+python benchmarks/dma-backpressure/examiner/acceptance.py generate .tmp/dma-validation/inputs.json
+python benchmarks/dma-backpressure/examiner/acceptance.py evaluate --candidate benchmarks/dma-backpressure/starter/dma_model.py --data .tmp/dma-validation/inputs.json --output .tmp/dma-validation/baseline-acceptance.json
 ```
 
 第三条对起始版本**应该返回 1**，因为它没有实现目标功能；不能为让 preflight 通过而改评价器或将功能失败改成环境错误。`generate` 产生输入原件；固定源码版本与种子即可重建。运行后记录该输入文件与验收器的 SHA-256，两个候选使用同一份，运行中不改种子或参考答案。

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "project": "deepstack",
+  "status": "materials_prepared",
+  "repository": "https://github.com/tile-ai/DeepStack.git",
+  "branch": "main",
+  "commit": "17e21bf54115e11b9e7c6edc0b2d1723d25d022b",
+  "registration_date": "2026-10-30",
+  "provenance": "Local /root/DeepStack Git HEAD and committed README; uncommitted worktree changes excluded.",
+  "executed": true,
+  "execution_scope": "environment selfchecks only; formal benchmark not run"
+}

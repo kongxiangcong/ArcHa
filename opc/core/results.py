@@ -15,13 +15,51 @@ from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 import os
 
-from .model import OPCError, write_text
-from .platform import is_link, lock_writer, unlock_writer
+# The scoped query tool also runs directly under the Worker filesystem boundary.
+if __package__:
+    from .model import OPCError, write_text
+    from .platform import is_link, lock_writer, unlock_writer
 
 START = '<!-- archa-results:start -->'
 END = '<!-- archa-results:end -->'
 DATA = re.compile(r'<!-- archa-results:data (.*?) -->', re.S)
 LINK = re.compile(r'\[[^\]]*\]\((?:<([^>]+)>|([^\s)]+))(?:\s+[^)]*)?\)')
+
+
+def delivery_status(events: list[dict], task_digest: str, candidate: dict) -> dict | None:
+    """Read the latest registered report applicable to this exact candidate and standard."""
+    for event in reversed(events):
+        body = event['body']
+        if body.get('selected_commit') != candidate['commit']:
+            continue
+        path = body['report_path']
+        report = json.loads(Path(path).read_text(encoding='utf-8'))
+        if report.get('acceptance_task_digest') != task_digest:
+            continue
+        if report.get('candidate', candidate) != candidate:
+            continue
+        return {key: report.get(key) for key in ('promotion_id', 'complete', 'acceptance_revision',
+                'selected_version', 'candidate', 'next_step', 'findings', 'requirements')} | {'report_path': path}
+    return None
+
+
+def acceptance_history(revisions: dict[str, str], reports: list[tuple[dict, str]]) -> list[dict]:
+    """Project the latest recorded acceptance per revision; never execute old work."""
+    latest = {}
+    for report, path in reports:
+        revision = report['acceptance_revision']
+        current = revisions.get(revision)
+        recorded = report.get('acceptance_source_digest', report.get('acceptance_task_digest'))
+        applicable = current is None or current == recorded
+        latest[revision] = dict(revision=revision, run_id=report['run_id'],
+            execution_revision=report.get('execution_revision'), selected_version=report['selected_version'],
+            candidate=report.get('candidate', dict(commit=report['selected_version'])),
+            status=('passed' if report['complete'] else 'failed') if applicable else 'not_evaluated',
+            reason=None if applicable else 'current contract differs from recorded acceptance revision',
+            report_path=path)
+    return [latest.get(revision, dict(revision=revision, run_id=None, execution_revision=None,
+                selected_version=None, candidate=None, status='not_evaluated', reason=None, report_path=None))
+            for revision in sorted(set(revisions) | set(latest))]
 
 
 @contextmanager
@@ -160,6 +198,19 @@ def relative(path: Path, entry: Path) -> str:
         return Path(os.path.relpath(path, entry.parent)).as_posix()
     except ValueError:  # Windows different volumes: use explicit absolute local path.
         return path.as_posix()
+
+
+def apply_summary(root: Path, value: str, summary: Path) -> Path:
+    """Host applies an explicit summary without replacing live registration rows."""
+    entry = entry_path(root, value)
+    original = entry.read_bytes().decode('utf-8')
+    split(original)  # Validate the existing registration boundary.
+    body = summary.read_text(encoding='utf-8')
+    if START in body or END in body:
+        raise OPCError('summary must not contain generated registration markers')
+    suffix = original[original.index(START):] if START in original else ''
+    write_text(entry, body.rstrip() + '\n\n' + suffix)
+    return entry
 
 
 def external_batch(root: Path, artifact_root: Path, value: str, batch: str,
@@ -335,3 +386,126 @@ def sync_engine(engine) -> None:
                          refs=refs, issues=[k + ': 未提供' for k in ('plan', 'evidence', 'analysis', 'review') if k not in refs]
                          + (['run 级终验引用；逐条科学主张是否覆盖须查原报告'] if review else [])))
     register(engine.root, value, rows, engine.task.goal)
+
+
+def claim_sources(claims: list[dict], artifact_root: Path, project_id: str, *,
+                  check_availability: bool = True) -> list[dict]:
+    """Attach source locators; inspect availability only for selected material."""
+    for claim in claims:
+        for ref in claim.get('evidence', []) + claim.get('counterevidence', []):
+            storage = artifact_root / project_id / claim['task_id'] / ref['run_id'] / 'attempts' / ('a%06d' % ref['attempt'])
+            path = storage / ref['artifact']
+            ref.update(storage=str(storage), source=str(path))
+            if not check_availability:
+                ref['availability'] = 'not_expanded'
+                continue
+            try:
+                if not path.resolve().is_relative_to(storage.resolve()):
+                    ref.update(availability='access_denied', issue='source escaped authorized storage')
+                else:
+                    ref['availability'] = 'not_expanded' if path.is_file() else 'missing'
+            except OSError as exc:
+                ref.update(availability='access_failed', issue=str(exc))
+    return claims
+
+
+def delivery_material(engine, candidate: dict) -> dict:
+    """Expand only a delivery's named versions and their direct changed basis."""
+    claims, basis, updates = [], [], []
+    changes = engine.basis_changes(candidate.get('claims', []) + candidate.get('basis', []))
+    for name, target in (('claims', claims), ('basis', basis)):
+        for ref in candidate.get(name, []):
+            rows = engine.authorized_claims(ref['task_id'], ref['claim_id'], version=ref['version'])
+            target.extend(claim_sources(rows, engine.bindings.artifact_root, engine.project.project_id))
+    for change in changes:
+        updates.extend(claim_sources(engine.authorized_claims(change['task_id'], change['claim_id']),
+                                     engine.bindings.artifact_root, engine.project.project_id))
+    artifacts = claim_sources([dict(task_id=engine.task.task_id, evidence=[dict(ref) for ref in candidate.get('artifacts', [])])],
+                              engine.bindings.artifact_root, engine.project.project_id)[0]['evidence']
+    material = dict(candidate=candidate, claims=claims, basis=basis, claim_updates=updates,
+                    basis_changes=changes, artifacts=artifacts, sources=[], issues=[])
+    remaining = 24000
+    seen = set()
+    for row in [*claims, *basis, *updates, dict(task_id=engine.task.task_id, evidence=artifacts)]:
+        refs = row.get('evidence', []) + row.get('counterevidence', [])
+        context = dict(knowledge=dict(task_ids=[row['task_id']]), claims=[row])
+        for index, ref in enumerate(refs):
+            if ref['source'] in seen:
+                continue
+            seen.add(ref['source'])
+            expanded = query_claims(context, source=index, budget=min(8000, remaining))['source']
+            remaining -= len(expanded.get('content', ''))
+            material['sources'].append(expanded)
+            if expanded.get('availability') != 'read' or expanded.get('omitted'):
+                material['issues'].append(expanded.get('issue') or 'delivery source truncated: ' + ref['source'])
+    return material
+
+
+def query_claims(context: dict, *, task_id: str | None = None, claim_id: str | None = None,
+                 status: str | None = None, text: str = '', version: int | None = None,
+                 source: int | None = None, budget: int = 12000) -> dict:
+    """Query the fixed, authorized material delivered to one Call; never adopt it."""
+    material = context['knowledge']
+    if task_id is not None and task_id not in material['task_ids']:
+        raise ValueError('task is outside authorized claim material')
+    if status is not None and status not in ('unresolved', 'supported', 'refuted'):
+        raise ValueError('claim status must be unresolved, supported or refuted')
+    rows = context['claims'] + (context.get('claim_history', []) if version is not None else [])
+    selected = [c for c in rows if (task_id is None or c['task_id'] == task_id)
+                and (claim_id is None or c['claim_id'] == claim_id)
+                and (status is None or c['status'] == status)
+                and (version is None or c['version'] == version)
+                and (not text or text.casefold() in json.dumps(c, ensure_ascii=False).casefold())]
+    result = dict(scope=dict(task_ids=material['task_ids'], claim_id=claim_id,
+                             status=status, text=text, version=version),
+                  as_of='fixed_call_input', claims=selected, omitted=len(rows) - len(selected),
+                  history_versions=[{k: c[k] for k in ('task_id', 'claim_id', 'version')}
+                                    for c in context.get('claim_history', [])],
+                  bodies='not_expanded; use --claim-id and --source INDEX to read a registered source')
+    if source is not None:
+        if len(selected) != 1:
+            raise ValueError('source expansion requires exactly one authorized claim')
+        refs = selected[0].get('evidence', []) + selected[0].get('counterevidence', [])
+        if source < 0 or source >= len(refs):
+            raise ValueError('source index is outside the registered references')
+        ref = dict(refs[source])
+        result['source'] = ref
+        if not ref.get('source') or ref.get('availability') == 'access_denied':
+            ref.update(availability='access_denied', issue='source is outside authorized storage')
+            return result
+        path = Path(ref['source'])
+        if not path.resolve().is_relative_to(Path(ref['storage']).resolve()):
+            ref.update(availability='access_denied', issue='source escaped authorized storage')
+            return result
+        try:
+            with path.open('rb') as stream:
+                data = stream.read(budget + 1)
+            ref.update(availability='read', content=data[:budget].decode('utf-8'),
+                       omitted=len(data) > budget, content_format='utf-8')
+        except FileNotFoundError:
+            ref.update(availability='missing', issue='source missing: ' + str(path))
+        except UnicodeDecodeError:
+            ref.update(availability='not_expanded', issue='binary source; read original with authorized file tools')
+        except OSError as exc:
+            ref.update(availability='access_failed', issue=str(exc))
+    return result
+
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='Read fixed Call claim material without adopting it')
+    parser.add_argument('context', type=Path)
+    parser.add_argument('--task-id')
+    parser.add_argument('--claim-id')
+    parser.add_argument('--status', choices=['unresolved', 'supported', 'refuted'])
+    parser.add_argument('--text', default='')
+    parser.add_argument('--version', type=int)
+    parser.add_argument('--source', type=int)
+    args = parser.parse_args()
+    try:
+        context = json.loads(args.context.read_text(encoding='utf-8'))
+        print(json.dumps(query_claims(context, task_id=args.task_id, claim_id=args.claim_id,
+                                     status=args.status, text=args.text, version=args.version,
+                                     source=args.source), ensure_ascii=False))
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))

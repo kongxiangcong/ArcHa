@@ -69,7 +69,7 @@ $archa-loop /absolute/project/.opc/research/topics/dma-scheduling/tasks/r01-base
 
 1. 第一阶段先初始化当前项目 `.opc/`，保存 `.opc/runtime/` 和本地入口 `.opc/archa.py`，再共同形成研究地图。地图正文自由组织，末尾包含 task to-do、每个方向的占位目录以及第二阶段提示词。此时只部署框架，不生成任务合同和评价器；已有项目合同和执行状态保留。
 2. 第二阶段读取用户指定的具体任务目录，核对依赖证据，派 sub-agent 调查源码或外部原始来源，证据保存在任务 `evidence/`。主 agent 调研后记录 brief 大纲，覆盖用途、一句话目标与完成状态、范围、交付物、验收条件、有无数值指标和留给 onboard 的未决项，依据用户任务与证据直接生成简报，记录合理假设，无需停下来等待额外确认。
-3. 形成大纲后直接生成 `task-brief.md`，结构检查通过才勾选该 task；勾选仅表示简报就绪。技能随后自动调用 onboard，核对合同并处理未决项，在 `.opc/context/DECISIONS.md` 记录简报路径、摘要与对应 task/revision。起草阶段保持执行关闭；token/时间默认无上限；必要评价器由 agent 自主准备。底层调用：
+3. 形成大纲后直接生成 `task-brief.md`，结构检查通过才勾选该 task；勾选仅表示简报就绪。技能随后自动调用 onboard，核对合同并处理未决项，在 `.opc/context/DECISIONS.md` 记录简报路径、摘要与对应 task/revision。起草阶段保持执行关闭；默认 token 无上限、Task 时间额度两小时；必要评价器由 agent 自主准备。底层调用：
 
 ```bash
 python3 /absolute/project/.opc/archa.py brief-check -p /absolute/project --brief .opc/research/topics/<topic>/tasks/<task>/task-brief.md
@@ -133,12 +133,13 @@ docs/
   reviews/               历史独立审核记录
   reports/               已完成验证的可提交报告
   evidence/              审核与验证的原始证据
-tools/tests/fixtures/dma_backpressure/  工程验收素材（独立于框架回归）
-  cases/ adapters/ profiles/   固定任务、冻结评价器、实验配置
-  scripts/               历史实验的执行与报告辅助脚本
-  tests/                 评测工具测试（不进入默认引擎测试）
-  reports/               已审阅的历史准备与验证摘要
-  cache/ projects/ experiments/  本地依赖、独立 Git 工程与原件（不提交）
+benchmarks/              ArcHa 测试项目集合，入口见 benchmarks/README.md
+  dma-backpressure/      无数值优化目标的闭环冒烟任务
+    TASK.md starter/     worker 可见需求与初始工程
+    examiner/            外置验收与材料自检
+    reports/             已发生实验的可提交摘要与证据
+    runs/                独立工程、工作树、验收和日志（不提交）
+  deepstack/             主线固定版本登记，任务待定
 .tmp/                    本地临时脚本、测试夹具和可丢弃产物（不提交）
 pyproject.toml           包元数据（archa-opc 0.3.0，无运行时依赖）
 ```
@@ -163,7 +164,7 @@ pyproject.toml           包元数据（archa-opc 0.3.0，无运行时依赖）
 
 - **合同只有一份、严格校验**：`project.json → components/<id>.json → tasks/<task>/revisions/rNNNN/task.json`。未知字段直接报错，拼错的字段不会悄悄失效；`.opc/**` 永远冻结。改合同要开新 revision 和新 run，旧修订不原地改。
 - **评价器冻结**：`evaluator_files` 的摘要决定「是否同一个评分器」；工具链版本进入每次测量。摘要不同就不比较新旧数字，工具链变了会当场重测 champion。
-- **干净树 + 最小补丁**：评测只接受 `editable` 范围内的 diff，并把它套到从专家选定 parent 生成的候选快照切出的全新树上；忽略文件、缓存、软链和构建产物都不会进入评测。
+- **干净树 + 最小补丁**：评测只接受 `editable` 范围内的 diff，并把它套到从专家选定 parent 生成的候选快照切出的全新树上。合同明确授权的成果会被收集，即使位于 Git 忽略目录；未授权的忽略文件、scratch 缓存和软链不进入候选。
 - **接纳失败关闭**：规则点名的指标缺失即拒绝（不是「没变坏」）；约束必须满足；收益要超过 `max(min_rel_gain, noise_k × 重复测量极差)`。自定义 `acceptance.rule` 必须是冻结评价器文件。
 - **单一权威与可恢复**：SQLite 账本是唯一权威，git ref、`STATE.md`、`report.json` 都只是投影；先写 intent 再 CAS 移动 ref，崩溃后按 intent 对账，第二个控制器会被拒绝。
 - **接缝可替换**：worker 三选一（`codex` / `dsh` / `scripted`），领域适配器默认是「命令门 + metrics.json」，也可在冻结文件里写 `"adapter": "path.py:Class"`；核心只经两个工厂拿到它们。
@@ -227,7 +228,7 @@ base_attempt 同样适用于停止回复；run 停止、预算用尽、数值 ta
 
 ```json
 {
-  "budget": {"max_tokens": null, "max_wall_seconds": null},
+  "budget": {"max_tokens": null, "max_wall_seconds": 7200},
   "expert": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
   "designer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
   "reviewer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
@@ -235,25 +236,25 @@ base_attempt 同样适用于停止回复；run 停止、预算用尽、数值 ta
 }
 ```
 
-`null` 表示无上限。只有用户明确指定相应上限时写入数值，可分别设置；技能不会主动索要预算或等待大纲确认。角色设置与 budget 独立；本地 budget 显式字段覆盖旧合同同名限制，缺失则兼容旧合同，二者都缺失时无上限。预算变更纳入运行冻结摘要，需新 run，累计用量保留。模型单次调用默认也无超时；既有显式 worker 超时、评价器工具超时、轮数限制与用户 pause/stop 继续生效。
+预算按 Task 累计，包含准备及所有 revision、Run；默认 token 无上限、活动时间额度 7200 秒，无隐含轮数上限。显式限制继续生效，null 不撤销已有明确上限。通过 onboard 的预算参数追加授权时提高总额度，已用量保留；暂停和重启不清零。仅启用的约束要求相应可靠计量。模型单次调用默认无超时，评价器工具超时与用户 pause/stop 独立保留。配置来源与冻结规则见 [接入说明](opc/scaffold/ONBOARDING.md#独立的-worker-环境配置)。
 
 ## 自主准备
 
 授权范围确定后，缺失评价器/负控/证据与用量工具属于 agent 的准备待办：
 
 ```bash
-opc onboard -p . --brief <brief> --prepare --task <task-id>
+opc onboard -p . --brief <brief> --prepare --task <task-id> --revision <revision>
 ```
 
-该命令仅做准备和只读审阅，不启动正式设备实验。pending 由 agent 继续，ready 仍需提交冻结文件和 check/preflight，external_blocked 必须带真实观测证据与外部下一步。无上限时缺失用量记录为 unknown 并继续；input 包含 cached input，主流程与外部嵌套用量由调用者累计报告，命令内 worker/reviewer 自动记账。正式 run 沿用同一账本与授权总额，不能以 new-run 重置准备消耗。onboard 默认采用同一准备路径；显式 token 上限要求可靠累计 token，显式时间上限要求可靠累计耗时。
+该命令仅做准备和合同启用的只读审阅，不启动正式设备实验。pending 由 agent 继续；ready 后提交准备文件并通过 check/preflight，首次绑定执行 Run 时冻结候选。external_blocked 必须带真实观测证据与外部下一步。input 包含 cached input，主流程与外部嵌套用量由调用者累计报告，命令内 worker/reviewer 自动记账。正式 run 沿用同一账本与授权总额，不能以 new-run 重置准备消耗。计量仅在对应预算约束启用时阻止派发；细节见上述接入说明。
 
 已部署的 runtime 和全局技能不会自动升级；使用前核对项目入口 --help 与已安装技能内容。本仓库修改只影响后续明确部署的副本。
 
-每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用已有冻结回执。无法取得可靠累计量时停止后续模型派发。
+每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，保留对应候选的检查回执。
 
-## 只读观察工作台（可选）
+## 工作台（可选，默认只读）
 
-观察工作台显示研究地图、任务合同、历史运行/轮次、已有产物、终验和 agent 调用内容。它没有执行控制或消息发送能力，不启动研究任务，也不生成缺失报告。准备、执行、验收分别展示；账单或实时活动缺失时明确显示未知。
+工作台聚焦工作阶段与 Worker 具体活动；可选择历史调用，读取当时必要交接和已登记的任务材料，再返回原现场。所有入口均不展示内部审计或检验材料。默认只读，显式控制模式支持暂停、继续同一运行和停止；请求收到与实际结果分别反馈。暂停允许在途调用收尾，停止单独确认后取消当前调用并阻止后续派发，均保留已保存结果。
 
 从干净 checkout 构建并安装（Node 20.19+ 或 22.12+；Python 3.10+）：
 
@@ -272,18 +273,20 @@ python -m opc.observer --demo
 
 ```bash
 python -m opc.observer --project /absolute/path/to/project
+# 显式启用本机运行控制（支持暂停、继续同一运行及停止）
+python -m opc.observer --project /absolute/path/to/project --control
 # 端口可通过 --port 8766 指定
 ```
 
-观察器不创建缺失项目或数据库。默认且仅允许绑定 loopback；远程使用既有 SSH 隧道。项目配置明确指定的外置 `artifact_root` 也可读取，其他路径和越界符号链接会被拒绝。Markdown 不执行原始 HTML，外部图片不自动加载，HTML/SVG 原件仅显示源码或下载。页面 URL 保存任务、合同、run、阶段、轮次和所选产物/调用；刷新保留阅读位置。
+观察器不创建缺失项目或数据库。默认且仅允许绑定 loopback；远程使用既有 SSH 隧道。项目配置明确指定的外置 `artifact_root` 也可读取，其他路径和越界符号链接会被拒绝。Markdown 不执行原始 HTML，外部图片不自动加载，HTML/SVG 原件仅显示源码或下载。页面 URL 保存任务、run、工作、筛选与所选调用；局部刷新保留阅读位置。控制接口只接受同源 JSON 和固定项目目标；重试先查询原请求，不自动补发。继续使用独立本地执行进程，保留原运行、冻结配置、成功回执与累计用量，不依赖页面或 HTTP 连接存活；恢复失败或执行未确认时保留现场，不自动重启。已暂停运行停止时直接由运行端关闭，不先恢复工作；无法确认执行结束时明确提示，停止不代表任务交付成功。演示、只读和缺少执行来源的历史不能控制。
 
 前端开发可运行 `npm --prefix web run dev`，Vite 会将 API 转发至本地 Python 服务。生产构建输出到 `opc/observer/static/`，该目录不提交，但构建后打包的 wheel 包含它；安装这种 wheel 后运行观察器不需要 Node。没有安装 observer extra 时原有 `opc` CLI 继续独立工作。只安装源包而未构建前端时，观察服务会明确提示构建命令。
 
-后端可选依赖锁定在 `pyproject.toml`，前端与传递依赖锁定在 `web/package-lock.json`。升级 ArcHa 时，在 `opc/observer/adapter.py` 核对变化的路径、账本列、冻结合同和 provider 日志映射；前端只消费 `/api/observer/v1` DTO。实体及接口模型见 `opc/observer/models.py`，服务的 `/openapi.json` 可读取生成的合同。升级后运行以下离线检查，不要求模型密钥：
+后端可选依赖锁定在 `pyproject.toml`，前端与传递依赖锁定在 `web/package-lock.json`。升级 ArcHa 时，在 `opc/observer/adapter.py` 核对变化的路径、账本列、冻结合同和 provider 日志映射；前端消费 `/api/observer/v1` DTO，控制模式另使用 `/api/control/v1` 的请求与查询。实体及接口模型见 `opc/observer/models.py`，服务的 `/openapi.json` 可读取生成的合同。升级后运行以下离线检查，不要求模型密钥：
 
 ```bash
 python -m pip install -e '.[observer]' pytest httpx
-python -m pytest opc/tests/test_observer.py opc/tests/test_results.py -q
+python -m pytest opc/tests/test_observer.py opc/tests/test_observer_control.py opc/tests/test_results.py -q
 npm --prefix web run typecheck
 npm --prefix web run build
 # 浏览器验收另需 Playwright 与本机 Chromium
@@ -294,13 +297,4 @@ python tools/observer_browser_smoke.py
 未安装 FastAPI 或 HTTPX 时只跳过依赖它们的 HTTP 测试，观察器文件适配器测试仍运行。
 CI 在基础安装和安装 observer 测试依赖后分别运行完整回归，并显式检查 HTTP 测试依赖可导入。
 
-实施/验收记录及已知边界见 [观察工作台 tickets](docs/design/observer-workbench/tickets.md)。当前格式的离线夹具验证不代表用户实际部署已验证；未识别来源以 partial/unsupported 和具体诊断降级，不迁移源数据。
-
-当前来源适配只采纳可核对的明确关联。例如 `.opc/context/DECISIONS.md` 中一条 `task=<执行任务ID> revision=r0001 brief=<项目内简报路径> sha256=<完整SHA256>` 可绑定合同和简报；同一绑定出现多个不同 SHA 会标记歧义，不按标题或时间猜测。现有材料不满足该约定时仍可作为未关联对象浏览，观察器不会补写关联。
-
-
-### 准备、终验与标准重审
-
-准备默认执行必要接入检查；任务可声明 `preparation_review: true` 保留独立准备审核。正常 loop 使用 `opc run -p PROJECT --task TASK --deliver`，完成结论来自 `delivery.complete`，不会自动 apply。失败后的范围内修复使用 `--repair-promotion <promotion/report.json> --deliver`；仅 reviewer 不可用时重试 `opc promote --source-run RUN --review codex`。
-
-用户明确修订标准后，以新 revision 调用 `opc promote -p PROJECT --task TASK --revision NEW --source-run OLD_RUN --standards-confirmation confirmation.json`。旧合同和失败报告保留；仅允许纯验收变化，预算和执行语义不可通过该入口修改。格式、测试和边界见 [实施方案与说明](docs/design/task-delivery/spec.md)。
+当前规格与逐票验收见 [S5 规格和事项](.scratch/s5-debugging-workbench/spec.md)，旧版只读实现记录见 [观察工作台 tickets](docs/design/observer-workbench/tickets.md)。受控执行验证框架行为，不代表真实模型或用户部署已验证；未识别来源明确提示，不迁移源数据。

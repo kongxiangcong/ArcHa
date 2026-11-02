@@ -1,6 +1,10 @@
+# Full run originals are local, including nested repositories and worktrees.
+/*/runs/
+# Previously generated data stays ignored until its owner archives it.
 /cache/
 /projects/
-/experiments/*/
-!/experiments/README.md
-/experiments/comparison.csv
+/experiments/
 __pycache__/
+/.runtime/
+/*/materials/
+/*/examiner/private/

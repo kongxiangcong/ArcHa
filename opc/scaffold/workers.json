@@ -1,7 +1,7 @@
 {
   "budget": {
     "max_tokens": null,
-    "max_wall_seconds": null
+    "max_wall_seconds": 7200
   },
   "expert": {
     "model": "gpt-6.1-sol",

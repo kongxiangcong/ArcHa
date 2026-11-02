@@ -41,6 +41,14 @@ CREATE TABLE IF NOT EXISTS charges (
   id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, attempt_no INTEGER,
   role TEXT NOT NULL, wall_seconds REAL NOT NULL, tokens INTEGER NOT NULL, usd REAL,
   usd_known INTEGER NOT NULL, at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS calls (
+  call_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, attempt_no INTEGER, role TEXT NOT NULL,
+  state TEXT NOT NULL, input TEXT NOT NULL, receipt_path TEXT NOT NULL,
+  session_id TEXT, result TEXT, created_at TEXT NOT NULL, finished_at TEXT);
+CREATE TABLE IF NOT EXISTS control_requests (
+  request_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, action TEXT NOT NULL,
+  status TEXT NOT NULL, reason TEXT NOT NULL, accepted_seq INTEGER NOT NULL,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS control (
   run_id TEXT PRIMARY KEY, command TEXT NOT NULL, at TEXT NOT NULL);
 """
@@ -52,11 +60,34 @@ def now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def current_claims(bodies) -> list[dict]:
+    """Project current revisions from ordered claim registration bodies."""
+    current = {}
+    for claim in bodies:
+        current[claim["claim_id"]] = claim
+    return list(current.values())
+
+
+def pending_feedback(attempts, events) -> list[dict]:
+    """The existing conclusion event processes feedback, including across Runs."""
+    analyzed = {(e['run_id'], e['attempt_no']) for e in events if e['kind'] == 'conclusion'}
+    return [dict(run_id=a['run_id'], attempt=a['attempt_no'],
+                 title=json.loads(a['plan'])['title'], outcome=a['outcome'])
+            for a in attempts if a.get('plan') and a.get('outcome')
+            and (a['run_id'], a['attempt_no']) not in analyzed]
+
+
+class ClaimConflict(OPCError):
+    def __init__(self, conflicts):
+        super().__init__('claim revision conflicts: ' + json.dumps(conflicts))
+        self.conflicts = conflicts
+
+
 class Ledger:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, timeout: float = 30):
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(str(path), isolation_level=None, timeout=30)
+        self.db = sqlite3.connect(str(path), isolation_level=None, timeout=timeout)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA foreign_keys=ON")
@@ -105,7 +136,7 @@ class Ledger:
     # -------------------------------------------------------------------- runs
     def create_run(self, *, task_id: str, revision: str, task_digest: str, component: str,
                    base_commit: str, evaluator_digest: str, toolchain_digest: str,
-                   champion_ref: str, direction: str) -> str:
+                   champion_ref: str, direction: str, repair: dict | None = None) -> str:
         run_id = "run-" + uuid.uuid4().hex[:12]
         with self.tx() as db:
             db.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -116,6 +147,8 @@ class Ledger:
                         {"task": task_id, "revision": revision, "base": base_commit,
                          "evaluator_digest": evaluator_digest,
                          "toolchain_digest": toolchain_digest})
+            if repair is not None:
+                self._event(db, run_id, "delivery_repair", None, repair)
         return run_id
 
     def run(self, run_id: str) -> sqlite3.Row:
@@ -124,9 +157,39 @@ class Ledger:
             raise OPCError("unknown run %s" % run_id)
         return row
 
+    def preparation_scope(self, task_id: str, create: bool = True) -> str | None:
+        """Preparation owns ledger events/charges, never an execution Run.
+
+        Reuse an existing legacy preparation row without rewriting its history.
+        """
+        legacy = self.db.execute("SELECT run_id FROM runs WHERE task_id=? AND revision='preparation' "
+                                 "ORDER BY rowid DESC LIMIT 1", (task_id,)).fetchone()
+        if legacy:
+            return legacy["run_id"]
+        scope = "preparation:" + task_id
+        return scope if create or self.events(scope) else None
+
     def latest_run(self, task_id: str) -> sqlite3.Row | None:
         return self.db.execute("SELECT * FROM runs WHERE task_id=? AND revision != 'preparation' ORDER BY created_at DESC, "
                                "rowid DESC LIMIT 1", (task_id,)).fetchone()
+
+    def select_run(self, task_id: str, revision: str | None = None,
+                   run_id: str | None = None) -> sqlite3.Row | None:
+        """Resolve an execution identity; recency never breaks an ambiguity."""
+        if run_id is not None:
+            row = self.run(run_id)
+            if row["task_id"] != task_id or row["revision"] == "preparation" or (
+                    revision is not None and row["revision"] != revision):
+                raise OPCError("run %s does not match selected Task/revision" % run_id)
+            return row
+        rows = [r for r in self.runs() if r["task_id"] == task_id and r["revision"] != "preparation"
+                and (revision is None or r["revision"] == revision)]
+        resumable = [r for r in rows if r["state"] != "closed"]
+        candidates = resumable or rows
+        if len(candidates) > 1:
+            raise OPCError("multiple Runs require an explicit --run-id: " +
+                           ", ".join(r["run_id"] for r in candidates))
+        return candidates[0] if candidates else None
 
     def runs(self) -> list[sqlite3.Row]:
         return self.db.execute("SELECT * FROM runs ORDER BY created_at, rowid").fetchall()
@@ -136,11 +199,23 @@ class Ledger:
             db.execute("UPDATE runs SET state=?, stop_reason=?, closed_at=? WHERE run_id=?",
                        (state, stop_reason, now() if state == "closed" else None, run_id))
             self._event(db, run_id, "run_" + state, None, {"stop_reason": stop_reason})
+            command = db.execute("SELECT command FROM control WHERE run_id=?", (run_id,)).fetchone()
+            if state == "paused" and command and command["command"] == "pause":
+                unknown = db.execute("SELECT 1 FROM calls WHERE run_id=? AND (state='unknown' OR result IS NULL) LIMIT 1", (run_id,)).fetchone()
+                self._finish_control(db, run_id, "pause", "unknown" if unknown else "applied",
+                                     "运行已暂停，但仍有执行结果待确认" if unknown else "已暂停；当前调用已收尾")
+
+            if state in ("closed", "blocked") and command and command["command"] == "stop":
+                unknown = db.execute("SELECT 1 FROM calls WHERE run_id=? AND (state='unknown' OR result IS NULL) LIMIT 1", (run_id,)).fetchone()
+                self._finish_control(db, run_id, "stop", "unknown" if unknown else "applied" if state == "closed" else "failed",
+                                     "停止后仍有执行结果待确认，已有工作与结果保留" if unknown else
+                                     "运行已停止，已有结果保留；停止不代表任务已完成" if state == "closed" else "停止未完成，已有工作与结果保留")
 
     def update_toolchain(self, run_id: str, digest: str) -> None:
+        previous = self.run(run_id)["toolchain_digest"]
         with self.tx() as db:
             db.execute("UPDATE runs SET toolchain_digest=? WHERE run_id=?", (digest, run_id))
-            self._event(db, run_id, "toolchain_changed", None, {"toolchain_digest": digest})
+            self._event(db, run_id, "toolchain_changed", None, {"previous_toolchain_digest": previous, "toolchain_digest": digest})
 
     # ------------------------------------------------------------------ events
     def _event(self, db: sqlite3.Connection, run_id: str, kind: str, attempt: int | None,
@@ -174,8 +249,6 @@ class Ledger:
         import math
         if self._lock_fd is None:
             raise OPCError("accounting reconciliation requires the project writer lock")
-        if self.run(run_id)["revision"] != "preparation":
-            raise OPCError("accounting reconciliation requires a preparation run")
         unknown = {e["seq"] for e in self.events(run_id, "accounting_unknown")}
         resolved = {e["body"]["event_seq"]: e["body"]
                     for e in self.events(run_id, "accounting_reconciled")}
@@ -188,7 +261,7 @@ class Ledger:
             seq = entry.get("event_seq")
             tokens, wall = entry.get("additional_tokens"), entry.get("additional_wall_seconds")
             if type(seq) is not int or seq not in unknown or seq in seen:
-                raise OPCError("reconciliation event_seq must name a unique unknown event in this preparation")
+                raise OPCError("reconciliation event_seq must name a unique unknown event in this scope")
             seen.add(seq)
             if (type(tokens) is not int or tokens < 0 or type(wall) not in (int, float)
                     or not math.isfinite(wall) or wall < 0):
@@ -219,6 +292,142 @@ class Ledger:
                            "VALUES (?,?,?,?,NULL,0,?)", (run_id, "accounting reconciliation",
                            body["additional_wall_seconds"], body["additional_tokens"], now()))
                 self._event(db, run_id, "accounting_reconciled", None, body)
+
+    # ------------------------------------------------------------------- calls
+    def begin_call(self, run_id: str, attempt: int | None, role: str,
+                   inputs: dict[str, Any], receipt_path: str, activity_log: dict | None = None) -> str:
+        call_id = "call-" + uuid.uuid4().hex
+        with self.tx() as db:
+            db.execute("INSERT INTO calls (call_id, run_id, attempt_no, role, state, input, "
+                       "receipt_path, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                       (call_id, run_id, attempt, role, "dispatched",
+                        json.dumps(inputs, default=str), receipt_path, now()))
+            self._event(db, run_id, "call_dispatched", attempt,
+                        dict(call_id=call_id, role=role, inputs=inputs, receipt_path=receipt_path, activity_log=activity_log))
+        return call_id
+
+    def calls(self, run_id: str) -> list[dict[str, Any]]:
+        rows = self.db.execute("SELECT * FROM calls WHERE run_id=? ORDER BY rowid", (run_id,))
+        return [{**dict(row), "input": json.loads(row["input"]),
+                 "result": json.loads(row["result"]) if row["result"] else None} for row in rows]
+
+    def finish_call(self, call_id: str, result: dict[str, Any]) -> None:
+        """One receipt, charge and completion in the same ledger transaction."""
+        with self.tx() as db:
+            row = db.execute("SELECT * FROM calls WHERE call_id=?", (call_id,)).fetchone()
+            if row is None:
+                raise OPCError("unknown Call " + call_id)
+            if row["result"] is not None:
+                if json.loads(row["result"]) != result:
+                    raise OPCError("Call already completed with a different receipt: " + call_id)
+                return
+            state = result.get("state", "completed")
+            cost = result["cost"]
+            db.execute("UPDATE calls SET state=?, session_id=?, result=?, finished_at=? WHERE call_id=?",
+                       (state, result.get("session_id"), json.dumps(result, default=str), now(), call_id))
+            db.execute("INSERT INTO charges (run_id, attempt_no, role, wall_seconds, tokens, usd, "
+                       "usd_known, at) VALUES (?,?,?,?,?,?,?,?)",
+                       (row["run_id"], row["attempt_no"], row["role"], cost["wall_seconds"],
+                        cost["tokens"], cost["usd"], int(cost["usd"] is not None), now()))
+            self._event(db, row["run_id"], "worker_call" if row["role"] != "evaluator" else "evaluation_call",
+                        row["attempt_no"], dict(role=row["role"], call_id=call_id,
+                        session_id=result.get("session_id"), state=state, ok=result.get("ok"),
+                        usage_complete=result.get("usage_complete", True),
+                        tokens=cost["tokens"], seconds=cost["wall_seconds"],
+                        error=result.get("error", ""), log_dir=result.get("log_dir", "")))
+            if not result.get("usage_complete", True):
+                self._event(db, row["run_id"], "accounting_unknown", row["attempt_no"],
+                            dict(call_id=call_id, reason="usage unavailable", charged=cost,
+                                 log_dir=result.get("log_dir", ""), error=result.get("error", "")))
+
+    def claims(self, task_id: str, claim_id: str | None = None, *,
+               version: int | None = None, history: bool = False) -> list[dict]:
+        """Current or historical revisions from the authoritative event journal."""
+        rows = self.db.execute(
+            "SELECT e.body FROM events e JOIN runs r ON r.run_id=e.run_id "
+            "WHERE r.task_id=? AND e.kind='claim_registered' ORDER BY e.seq", (task_id,))
+        bodies = [json.loads(row[0]) for row in rows]
+        selected = bodies if history or version is not None else current_claims(bodies)
+        return [c for c in selected if (claim_id is None or c["claim_id"] == claim_id)
+                and (version is None or c["version"] == version)]
+
+    def pending_feedback(self, task_id: str) -> list[dict]:
+        attempts = [dict(r) for r in self.db.execute(
+            'SELECT a.* FROM attempts a JOIN runs r ON r.run_id=a.run_id WHERE r.task_id=?', (task_id,))]
+        events = [dict(r) for r in self.db.execute(
+            "SELECT e.* FROM events e JOIN runs r ON r.run_id=e.run_id WHERE r.task_id=? AND e.kind='conclusion'", (task_id,))]
+        return pending_feedback(attempts, events)
+
+    def record_decision(self, run_id: str, call_id: str, output: dict) -> None:
+        """A decision and its feedback acknowledgments are one durable handoff."""
+        with self.tx() as db:
+            if any(e["body"]["call_id"] == call_id for e in self.events(run_id, "expert_decision")):
+                return
+            task_id = self.run(run_id)["task_id"]
+            current = {c["claim_id"]: c for c in self.claims(task_id)} if output.get("claims") else {}
+            conflicts = [dict(claim_id=row["claim_id"], base_version=row.get("base_version"),
+                              current_version=current.get(row["claim_id"], {}).get("version"))
+                         for row in output.get("claims", [])
+                         if row.get("base_version") != current.get(row["claim_id"], {}).get("version")]
+            if conflicts:
+                raise ClaimConflict(conflicts)
+            review = output.get("basis_review")
+            if review:
+                for change in review["changes"]:
+                    latest = self.claims(change["task_id"], change["claim_id"])[0]
+                    if latest["version"] != change["current_version"]:
+                        raise ClaimConflict([dict(change, current_version=latest["version"])])
+            self._event(db, run_id, "expert_decision", None, dict(call_id=call_id, output=output))
+            if review and review["action"] in ("continue", "adjust"):
+                self._event(db, run_id, "work_reconsidered", review["attempt"],
+                            dict(review, reviewed_by_call=call_id))
+            for row in output.get("claims", []):
+                self._event(db, run_id, "claim_registered", None,
+                            dict(row, task_id=task_id, run_id=run_id,
+                                 version=(row.get("base_version") or 0) + 1,
+                                 registered_by_call=call_id))
+            for row in output.get("conclusions", []):
+                self._event(db, row.get('run_id') or run_id, "conclusion", row["attempt"],
+                            dict(text=row["conclusion"], reviewed_by_call=call_id))
+
+    def finish_decision(self, run_id: str, call_id: str, candidate: dict, closure: dict) -> None:
+        """Persist selected candidate and terminal intent in one replayable handoff."""
+        with self.tx() as db:
+            if self.events(run_id, "expert_stop"):
+                return
+            self._event(db, run_id, "selected_version", None, candidate)
+            self._event(db, run_id, "expert_stop", None, dict(closure, call_id=call_id))
+            self._event(db, run_id, "decision_applied", None, dict(call_id=call_id))
+
+    def begin_selected_attempt(self, run_id: str, decision_call: str, plan: dict,
+                               parent: str, champion: str, focus: str | None) -> int:
+        return self.begin_selected_works(run_id, decision_call, [(plan, parent)], champion, focus)[0]
+
+    def begin_selected_works(self, run_id: str, decision_call: str, works: list,
+                             champion: str, focus: str | None) -> list[int]:
+        """Materialize one decision's selected nodes atomically and idempotently."""
+        selected = [e["attempt"] for e in self.events(run_id, "work_selected")
+                    if e["body"]["decision_call"] == decision_call]
+        if selected:
+            return selected
+        numbers = []
+        with self.tx() as db:
+            first = (db.execute("SELECT MAX(attempt_no) FROM attempts WHERE run_id=?",
+                                (run_id,)).fetchone()[0] or 0) + 1
+            for offset, (plan, parent) in enumerate(works):
+                n = first + offset
+                plan = {**plan, "work_id": plan.get("work_id") or "a%d" % n}
+                db.execute("INSERT INTO attempts (run_id, attempt_no, state, champion_before, focus, plan, "
+                           "started_at) VALUES (?,?,?,?,?,?,?)",
+                           (run_id, n, "planned", champion, focus, json.dumps(plan), now()))
+                self._event(db, run_id, "attempt_started", n, dict(champion=champion, focus=focus))
+                self._event(db, run_id, "work_selected", n,
+                            dict(decision_call=decision_call, parent=parent, work_id=plan["work_id"], batch_size=len(works),
+                                 dependencies=plan.get("dependencies") or [], directions=plan.get("directions") or []))
+                self._event(db, run_id, "development_parent", n,
+                            dict(commit=parent, base_attempt=plan.get("base_attempt")))
+                numbers.append(n)
+        return numbers
 
     # ---------------------------------------------------------------- attempts
     def next_attempt_no(self, run_id: str) -> int:
@@ -313,6 +522,7 @@ class Ledger:
 
     def task_totals(self, task_id: str) -> dict[str, Any]:
         records = [self.totals(r["run_id"]) for r in self.runs() if r["task_id"] == task_id]
+        records.append(self.totals("preparation:" + task_id))
         return {"wall_seconds": sum(r["wall_seconds"] for r in records),
                 "tokens": sum(r["tokens"] for r in records),
                 "usd": sum(r["usd"] for r in records),
@@ -326,6 +536,93 @@ class Ledger:
             db.execute("INSERT INTO control VALUES (?,?,?) ON CONFLICT(run_id) DO UPDATE SET "
                        "command=excluded.command, at=excluded.at", (run_id, command, now()))
             self._event(db, run_id, "control_" + command, None, {})
+            self._supersede_control(db, run_id, command)
+
+    def _supersede_control(self, db, run_id, command):
+        action = {"run": "resume", "pause": "pause", "stop": "stop"}[command]
+        db.execute("UPDATE control_requests SET status='superseded', reason=?, updated_at=? "
+                   "WHERE run_id=? AND action<>? AND status IN ('accepted','processing')",
+                   ("请求已被后续运行指令替代", now(), run_id, action))
+
+    def _finish_control(self, db, run_id, action, status, reason):
+        pending = db.execute("SELECT request_id FROM control_requests WHERE run_id=? AND action=? "
+                             "AND status IN ('accepted','processing')", (run_id, action)).fetchall()
+        for request in pending:
+            db.execute("UPDATE control_requests SET status=?, reason=?, updated_at=? WHERE request_id=?",
+                       (status, reason, now(), request['request_id']))
+            self._event(db, run_id, "control_request_result", None,
+                        dict(request_id=request['request_id'], action=action, status=status, reason=reason))
+
+    def accept_control_request(self, run_id, request_id, action, *, already_running=False):
+        """Idempotency and the effective instruction are committed together."""
+        with self.tx() as db:
+            previous = db.execute("SELECT * FROM control_requests WHERE request_id=?", (request_id,)).fetchone()
+            if previous:
+                if previous['run_id'] != run_id or previous['action'] != action:
+                    raise ValueError("request_conflict")
+                return dict(previous), False
+            run = db.execute("SELECT state FROM runs WHERE run_id=?", (run_id,)).fetchone()
+            if run is None:
+                raise ValueError("run_not_found")
+            if run['state'] == 'closed' and action != 'stop':
+                raise ValueError("state_conflict")
+            if action == 'resume':
+                pending = db.execute("SELECT status FROM control_requests WHERE run_id=? ORDER BY accepted_seq DESC LIMIT 1", (run_id,)).fetchone()
+                unknown = db.execute("SELECT 1 FROM calls WHERE run_id=? AND (state='unknown' OR result IS NULL) LIMIT 1", (run_id,)).fetchone()
+                if pending and pending['status'] in ('accepted', 'processing', 'unknown'):
+                    raise ValueError('execution_unconfirmed')
+                if run['state'] not in ('paused', 'blocked') and not already_running:
+                    raise ValueError('state_conflict')
+                if unknown and not already_running:
+                    raise ValueError('execution_unconfirmed')
+            command = {"pause": "pause", "resume": "run", "stop": "stop"}[action]
+            self._event(db, run_id, "control_" + command, None, dict(request_id=request_id))
+            seq = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+            stamp = now()
+            db.execute("INSERT INTO control_requests VALUES (?,?,?,?,?,?,?,?)",
+                       (request_id, run_id, action, 'accepted', '请求已收到，等待运行端处理', seq, stamp, stamp))
+            db.execute("INSERT INTO control VALUES (?,?,?) ON CONFLICT(run_id) DO UPDATE SET "
+                       "command=excluded.command, at=excluded.at", (run_id, command, stamp))
+            self._supersede_control(db, run_id, command)
+            if action == 'resume' and already_running:
+                self._finish_control(db, run_id, action, 'applied', '原运行已在执行，未重复启动')
+            if action == 'stop' and run['state'] == 'closed':
+                unknown = db.execute("SELECT 1 FROM calls WHERE run_id=? AND (state='unknown' OR result IS NULL) LIMIT 1", (run_id,)).fetchone()
+                self._finish_control(db, run_id, action, 'unknown' if unknown else 'applied',
+                                     '运行已结束，但仍有执行结果待确认' if unknown else '运行已经结束，未启动任何工作')
+            if action == 'pause' and run['state'] == 'paused':
+                unknown = db.execute("SELECT 1 FROM calls WHERE run_id=? AND (state='unknown' OR result IS NULL) LIMIT 1", (run_id,)).fetchone()
+                self._finish_control(db, run_id, action, 'unknown' if unknown else 'applied',
+                                     '运行已暂停，但仍有执行结果待确认' if unknown else '运行已经暂停')
+            return dict(db.execute("SELECT * FROM control_requests WHERE request_id=?", (request_id,)).fetchone()), True
+
+    def finish_control_request(self, request_id, status, reason):
+        with self.tx() as db:
+            record = db.execute("SELECT * FROM control_requests WHERE request_id=?", (request_id,)).fetchone()
+            if record and record['status'] in ('accepted', 'processing'):
+                db.execute("UPDATE control_requests SET status=?, reason=?, updated_at=? WHERE request_id=?",
+                           (status, reason, now(), request_id))
+                self._event(db, record['run_id'], "control_request_result", None,
+                            dict(request_id=request_id, action=record['action'], status=status, reason=reason))
+
+    def mark_control_processing(self, run_id, action):
+        with self.tx() as db:
+            db.execute("UPDATE control_requests SET status='processing', reason=?, updated_at=? "
+                       "WHERE run_id=? AND action=? AND status='accepted'",
+                       ('正在等待已派发调用收尾', now(), run_id, action))
+
+    def claim_control_execution(self, run_id, request_id):
+        """Claim the received execution intent without clearing a later instruction."""
+        with self.tx() as db:
+            record = db.execute("SELECT * FROM control_requests WHERE request_id=?", (request_id,)).fetchone()
+            latest = db.execute("SELECT seq FROM events WHERE run_id=? AND kind IN ('control_run','control_pause','control_stop') ORDER BY seq DESC LIMIT 1", (run_id,)).fetchone()
+            if (not record or record['run_id'] != run_id or record['action'] not in ('resume', 'stop')
+                    or record['status'] != 'accepted' or not latest or latest['seq'] != record['accepted_seq']):
+                return False
+            db.execute("UPDATE control_requests SET status='processing',reason=?,updated_at=? WHERE request_id=?",
+                       ('正在处理停止请求，尚未确认停止生效' if record['action'] == 'stop' else '正在恢复原运行，尚未确认恢复生效', now(), request_id))
+            self._event(db, run_id, 'control_execution_started', None, dict(request_id=request_id, owner_pid=os.getpid()))
+            return True
 
     def control(self, run_id: str) -> str:
         row = self.db.execute("SELECT command FROM control WHERE run_id=?", (run_id,)).fetchone()

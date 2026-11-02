@@ -72,6 +72,7 @@ class UsageView(DTO):
 
 class Requirement(DTO):
     id: str
+    required: bool = True
     text: str
     verification: str | None = None
     result: str
@@ -155,6 +156,7 @@ class Run(Entity):
     preparation: ObservedState
     execution: ObservedState
     acceptance: ObservedState
+    acceptance_history: list[dict[str, Any]] = Field(default_factory=list)
     stop_reason: str | None = None
     phase: str
     last_activity_at: str | None = None
@@ -166,6 +168,9 @@ class Run(Entity):
     calls: list[Ref] = Field(default_factory=list)
     artifacts: list[Ref] = Field(default_factory=list)
     report_refs: list[Ref] = Field(default_factory=list)
+    pending_feedback: list[int] = Field(default_factory=list)
+    decisions: list[dict[str, Any]] = Field(default_factory=list)
+    max_concurrency: int | None = None
 
 
 class Attempt(Entity):
@@ -183,6 +188,14 @@ class Attempt(Entity):
     next_step: TextFact | None = None
     parent_commit: str | None = None
     candidate_commit: str | None = None
+    work_id: str | None = None
+    directions: list[str] = Field(default_factory=list)
+    dependencies: list[dict[str, str]] = Field(default_factory=list)
+    blocked_by: list[str] = Field(default_factory=list)
+    resource_wait: str | None = None
+    feedback_state: str = "pending"
+    selected_by_call: str | None = None
+    reviewed_by_call: str | None = None
     calls: list[Ref] = Field(default_factory=list)
     artifacts: list[Ref] = Field(default_factory=list)
     usage: UsageView | None = None
@@ -277,6 +290,117 @@ class RevisionDetail(DTO):
     revision: TaskRevision
     runs: list[Ref]
     artifacts: list[Artifact]
+
+
+class ControlCapability(DTO):
+    enabled: bool
+    reason: str
+
+
+class WorkerSummary(DTO):
+    id: str
+    attempt_no: int | None
+    role: str
+    state: str
+    started_at: str | None = None
+    ended_at: str | None = None
+    error: str | None = None
+    activity_available: bool
+    activity_note: str
+
+
+class WorkItem(DTO):
+    id: str
+    attempt_no: int
+    work_id: str
+    title: str
+    goal: str | None = None
+    stage: str
+    reason: str | None = None
+    dependencies: list[dict]
+    blocked_by: list[str]
+    calls: list[str]
+    summary: str | None = None
+    outcome: str | None = None
+    needs_attention: bool
+    availability: str
+
+
+class WorkItems(DTO):
+    items: list[WorkItem]
+    total: int
+    scope: str
+
+
+class ControlRequestView(DTO):
+    request_id: str
+    run_id: str
+    action: str
+    status: str
+    sequence: int
+    reason: str
+    created_at: str
+    updated_at: str
+    run: dict
+
+
+class Workbench(DTO):
+    id: str
+    display_label: str
+    source_run_id: str
+    execution: str
+    goal: str | None = None
+    stop_reason: str | None = None
+    result: dict
+    control: dict[str, ControlCapability]
+    control_request: ControlRequestView | None = None
+    workers: list[WorkerSummary]
+    workers_truncated: bool
+    work_count: int
+    availability: str
+    observation_note: str
+
+
+class ToolAction(DTO):
+    id: str
+    category: str
+    name: str | None = None
+    object: str | None = None
+    state: str
+    started_at: str | None = None
+    ended_at: str | None = None
+    summary: str | None = None
+    exit_code: int | None = None
+
+
+class CallActivity(DTO):
+    call_id: str
+    actions: list[ToolAction]
+    availability: str
+    note: str | None = None
+    reset: bool
+    truncated: bool
+    has_more: bool
+
+
+class TaskMaterial(DTO):
+    id: str
+    name: str
+    purpose: str
+    availability: str
+    note: str | None = None
+
+
+class Inspection(DTO):
+    attempt_no: int
+    calls: list[WorkerSummary]
+    call_id: str | None
+    error: str | None
+    input: dict | None
+    output: dict | None
+    input_note: str
+    materials: list[TaskMaterial]
+    material_note: str | None = None
 
 
 T = TypeVar('T')

@@ -1,0 +1,30 @@
+         522359 function calls in 0.725 seconds
+
+   Ordered by: cumulative time
+   List reduced from 160 to 22 due to restriction <22>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    0.734    0.734 measure.py:105(<lambda>)
+        1    0.000    0.000    0.734    0.734 gemm.py:1563(search_gemm_layouts)
+        1    0.000    0.000    0.732    0.732 parallel.py:50(map_jobs)
+       14    0.000    0.000    0.732    0.052 parallel.py:73(<genexpr>)
+       13    0.001    0.000    0.732    0.056 gemm.py:1500(_evaluate_gemm_model_job)
+       13    0.007    0.001    0.731    0.056 gemm.py:1236(model_gemm_bank)
+     3744    0.005    0.000    0.306    0.000 gemm.py:824(_sectors)
+     3744    0.017    0.000    0.301    0.000 gemm.py:784(_raw_sectors)
+      208    0.006    0.000    0.299    0.001 engine.py:548(service_request_groups)
+     1456    0.072    0.000    0.279    0.000 layout.py:330(touched_sectors)
+      208    0.021    0.000    0.239    0.001 gemm.py:850(load_requests)
+      468    0.041    0.000    0.171    0.000 engine.py:112(build_bank_histogram)
+      260    0.011    0.000    0.170    0.001 engine.py:450(service_histogram)
+     1456    0.007    0.000    0.135    0.000 layout.py:311(byte_intervals)
+     5720    0.014    0.000    0.123    0.000 _arraysetops_impl.py:145(unique)
+      520    0.058    0.000    0.115    0.000 engine.py:254(fixed_job_parallel_lower_bound_cycles)
+     5720    0.038    0.000    0.103    0.000 _arraysetops_impl.py:350(_unique1d)
+       52    0.005    0.000    0.101    0.002 gemm.py:908(store_requests)
+      784    0.067    0.000    0.095    0.000 layout.py:258(_tile_intervals)
+       52    0.000    0.000    0.065    0.001 gemm.py:1210(_profile_service)
+       52    0.000    0.000    0.064    0.001 engine.py:530(service_requests)
+      468    0.016    0.000    0.041    0.000 engine.py:86(decode_sector_ids)
+
+

@@ -1,0 +1,30 @@
+         996 function calls in 0.847 seconds
+
+   Ordered by: cumulative time
+   List reduced from 80 to 22 due to restriction <22>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000    0.847    0.847 measure.py:109(<lambda>)
+        1    0.001    0.001    0.847    0.847 engine.py:593(service_sectors)
+        1    0.000    0.000    0.847    0.847 engine.py:530(service_requests)
+        1    0.055    0.055    0.842    0.842 engine.py:112(build_bank_histogram)
+        3    0.000    0.000    0.720    0.240 _arraysetops_impl.py:145(unique)
+        3    0.000    0.000    0.720    0.240 _arraysetops_impl.py:350(_unique1d)
+        1    0.690    0.690    0.690    0.690 {built-in method numpy._core._multiarray_umath._unique_hash}
+        1    0.034    0.034    0.062    0.062 engine.py:86(decode_sector_ids)
+        3    0.029    0.010    0.029    0.010 {method 'sort' of 'numpy.ndarray' objects}
+        1    0.019    0.019    0.019    0.019 layout.py:81(map_bank)
+        9    0.011    0.001    0.011    0.001 {method 'astype' of 'numpy.ndarray' objects}
+        1    0.000    0.000    0.004    0.004 engine.py:450(service_histogram)
+        2    0.001    0.001    0.002    0.001 engine.py:254(fixed_job_parallel_lower_bound_cycles)
+        3    0.002    0.001    0.002    0.001 {method 'flatten' of 'numpy.ndarray' objects}
+        1    0.001    0.001    0.001    0.001 engine.py:23(_popcount_masks)
+        1    0.001    0.001    0.001    0.001 numeric.py:323(full)
+        1    0.001    0.001    0.001    0.001 {method 'reduceat' of 'numpy.ufunc' objects}
+       15    0.001    0.000    0.001    0.000 {method 'reduce' of 'numpy.ufunc' objects}
+        5    0.000    0.000    0.001    0.000 {method 'sum' of 'numpy.ndarray' objects}
+        5    0.000    0.000    0.001    0.000 _methods.py:47(_sum)
+        1    0.000    0.000    0.000    0.000 numeric.py:679(flatnonzero)
+        3    0.000    0.000    0.000    0.000 fromnumeric.py:1993(nonzero)
+
+

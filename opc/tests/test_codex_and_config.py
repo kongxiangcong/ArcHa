@@ -1,6 +1,7 @@
 import json
 import os
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -31,12 +32,15 @@ if mode in ("input_expert", "input_designer") and ((cwd / "research.json").exist
     print(json.dumps({"type": "turn.failed", "error": {"message": "context_length_exceeded: input too long"}}))
     sys.exit(1)
 if mode.startswith("onboard"):
-    assert "workspace-write" in args and "onboarding" in prompt
+    assert any(a.startswith('default_permissions=') for a in args) and "PREPARATION" in prompt
     (cwd / ".opc/README.md").write_text("Open items: none\n")
     if mode == "onboard_stray":
         with open(cwd / "params.json", "a") as f:
             f.write("\n")
-    last.write_text("drafted"); sys.exit(0)
+    (cwd / ".opc/check.txt").write_text("focused integration evidence")
+    last.write_text(json.dumps({"state": "ready", "evidence": [".opc/check.txt"]}))
+    print(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}}))
+    sys.exit(0)
 if (cwd / "research.json").exists():
     ctx = json.loads((cwd / "research.json").read_text())
     assert not (cwd / "params.json").exists() and not (cwd / ".git").exists()
@@ -46,7 +50,7 @@ if (cwd / "research.json").exists():
 else:
     x = json.loads((cwd / "params.json").read_text())["x"]
 if "--output-schema" in args:
-    assert "read-only" in args and "EXPERT" in prompt
+    assert any(a.startswith('default_permissions=') for a in args) and "EXPERT" in prompt
     schema = json.loads(Path(args[args.index("--output-schema") + 1]).read_text())
     if set(schema["required"]) != set(schema["properties"]):
         print(json.dumps({"type": "turn.failed", "error": {"message":
@@ -66,7 +70,7 @@ if "--output-schema" in args:
                       "base_attempt": None, "stop_reason": "", "changes": "set x to %d" % (x + 1),
                       "expected": "lower loss", "falsifier": "loss rises", "exhausted": False, "conclusions": reviews})
 else:
-    assert "workspace-write" in args and "DESIGNER" in prompt
+    assert any(a.startswith('default_permissions=') for a in args) and "DESIGNER" in prompt
     if mode == "scratch":
         assert 'Generated scratch paths:' in prompt
         scratch = json.loads(prompt.split('Generated scratch paths: ', 1)[1].split('].', 1)[0] + ']')
@@ -75,7 +79,7 @@ else:
     (cwd / "params.json").write_text(json.dumps({"x": x + 1}))
     if mode == "cheat":
         (cwd / ".opc/eval/evaluate.py").write_text("raise SystemExit(0)\n")
-    msg = "set x"
+    msg = json.dumps({"summary": "structured observation", "adopted_claims": [], "evidence_files": []}) if mode == "structured" else "set x"
 print(json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": msg}}))
 print(json.dumps({"type": "turn.completed",
                   "usage": {"input_tokens": 1000, "cached_input_tokens": 0, "output_tokens": 200}}))
@@ -98,6 +102,59 @@ def codex_task(binary: str, **budget) -> dict:
                     "designer": {"kind": "codex", "binary": binary}}
     t["budget"].update({"max_tokens": 100000, **budget})
     return t
+
+
+def test_resume_recovers_terminal_codex_stream_without_redispatch(make_project, engine_for, fake_codex):
+    first = engine_for(make_project(tsk=codex_task(fake_codex)))
+    execute = first.execute_call
+    def lose_controller(request):
+        if request.role == 'expert':
+            request.invoke()
+            raise KeyboardInterrupt()
+        return execute(request)
+    first.execute_call = lose_controller
+    assert first.run(max_attempts_now=1)['state'] == 'paused'
+    call = next(c for c in first.ledger.calls(first.run_id) if c['role'] == 'expert')
+    stream = Path(call['receipt_path']).parent / 'expert-events.jsonl'
+    original = stream.read_bytes()
+    assert not Path(call['receipt_path']).exists()
+    resumed = engine_for(first.root)
+    resumed.run(max_attempts_now=1)
+    assert stream.read_bytes() == original
+    assert len([c for c in resumed.ledger.calls(resumed.run_id) if c['role'] == 'expert']) == 1
+    assert resumed.summary()['spent']['tokens'] == 2400
+    assert resumed.attempt_records()[0]['candidate']
+
+
+@pytest.mark.skipif(sys.platform != 'linux', reason='Linux native file-write root adaptation')
+def test_native_file_alias_restores_bytes_and_rejects_outside_symlink(tmp_path):
+    from opc.adapters.codex import file_write_aliases, restore_file_writes
+    from opc.core.tool_boundary import tool_policy, runner_argv
+    tree, logs = tmp_path / 'tree', tmp_path / 'logs'
+    tree.mkdir(); logs.mkdir()
+    target = tree / 'editable.py'
+    target.write_text('before')
+    target.chmod(0o755)
+    policy = tool_policy(tree, editable=['editable.py'])
+    policy = file_write_aliases(policy, logs)
+    assert target.is_symlink()
+    assert all(Path(path).is_dir() for path in policy['write'])
+    policy_path = logs / 'policy.json'
+    policy_path.write_text(json.dumps(policy))
+    result = subprocess.run(runner_argv(policy_path, [str(Path(sys.executable).resolve()), '-c',
+        'from pathlib import Path; Path("editable.py").write_text("after")']), cwd=tree, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    restore_file_writes(logs)
+    assert not target.is_symlink() and target.read_text() == 'after'
+    assert target.stat().st_mode & 0o111
+    policy = file_write_aliases(tool_policy(tree, editable=['editable.py']), logs)
+    staged = target.resolve()
+    outside = tmp_path / 'private'
+    outside.write_text('private')
+    staged.unlink(); staged.symlink_to(outside)
+    with pytest.raises(OSError):
+        restore_file_writes(logs)
+    assert outside.read_text() == 'private'
 
 
 def test_codex_worker_loop_records_identity_and_tokens(make_project, engine_for, fake_codex):
@@ -135,7 +192,9 @@ def test_codex_usage_limit_blocks_the_run_at_once(make_project, engine_for, fake
     e = engine_for(make_project(tsk=codex_task(fake_codex)))
     s = e.run()
     assert s["state"] == "blocked" and "usage limit" in s["stop_reason"]
-    assert [a["outcome"] for a in e.ledger.attempts(e.run_id)] == [Outcome.INFRA.value]
+    assert e.ledger.attempts(e.run_id) == []  # no work was selected by the rejected Expert
+    calls = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'expert']
+    assert len(calls) == 1 and not calls[0]['result']['ok']
     assert s["spent"]["search_attempts"] == 0
 
 
@@ -157,15 +216,16 @@ def test_token_budget_stops_before_overspending(make_project, engine_for, fake_c
 
 @pytest.mark.parametrize("mode,ok", [("onboard", True), ("onboard_stray", False)])
 def test_onboard_writes_only_under_opc(make_project, fake_codex, monkeypatch, mode, ok):
-    from opc.scaffold.onboard import _draft as onboard
+    from opc.scaffold.onboard import onboard
     root = make_project()
     with open(root / "params.json", "a") as f:
         f.write(" ")  # already dirty before the agent runs
     monkeypatch.setenv("OPC_CODEX_BIN", fake_codex)
     monkeypatch.setenv("FAKE_CODEX_MODE", mode)
-    r = onboard(root, "codex")
+    r = onboard(root, "codex", task_id="t-toy")
     assert r["ok"] is ok
-    assert r["changed_outside_opc"] == ([] if ok else ["params.json"])
+    if not ok:
+        assert "scope violation" in r["reason"]
 
 
 def test_parse_real_codex_failure_stream():
@@ -287,14 +347,12 @@ def test_codex_expert_can_declare_exhaustion(make_project, engine_for, fake_code
     assert s["state"] == "closed" and s["stop_reason"].startswith("expert_exhausted:")
 
 
-def test_onboard_accepts_dsh_and_rejects_unknown(tmp_path):
-    from opc.scaffold.onboard import _draft as onboard
-    with pytest.raises(OPCError, match="init --apply"):
-        onboard(tmp_path, "dsh")
-    (tmp_path / ".opc").mkdir()
-    (tmp_path / ".opc" / "project.json").write_text("{}", encoding="utf-8")
+def test_onboard_accepts_dsh_and_rejects_unknown(make_project):
+    from opc.scaffold.onboard import onboard
+    root = make_project()
+    assert onboard(root, "dsh", task_id="t-toy", record_usage_only=True)["preparation"] == "pending"
     with pytest.raises(OPCError, match="must be codex or dsh"):
-        onboard(tmp_path, "claude")
+        onboard(root, "claude", task_id="t-toy")
 
 
 @pytest.mark.parametrize("role", ["expert", "designer"])
@@ -321,3 +379,134 @@ def test_nested_usage_is_not_assumed_to_be_in_parent_total():
     info = parse_events(events)
     assert info['tokens'] == 120  # cached input is already part of input_tokens
     assert not info['usage_complete']
+
+
+def test_codex_reliable_completion_survives_cancel_race(tmp_path):
+    from opc.adapters.codex import CodexWorker
+    from opc.core.platform import execution_control
+    marker = tmp_path / 'terminal-saved'
+    script = tmp_path / 'race.py'
+    script.write_text('import json,sys,time\nfrom pathlib import Path\n'
+        'sys.stdin.read()\n'
+        'plan={"title":"saved plan","changes":"one step"}\n'
+        'print(json.dumps({"type":"thread.started","thread_id":"race-session"}),flush=True)\n'
+        'print(json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(plan)}}),flush=True)\n'
+        'print(json.dumps({"type":"turn.completed","usage":{"input_tokens":2,"output_tokens":3}}),flush=True)\n'
+        'Path(' + repr(str(marker)) + ').touch()\ntime.sleep(30)\n')
+    worker = CodexWorker({'binary': str(script)})
+    with execution_control(lambda: 'stopped by user' if marker.exists() else None, tmp_path / 'logs'):
+        call = worker.propose({}, tmp_path, tmp_path / 'logs')
+    assert call.ok and call.output['title'] == 'saved plan'
+    assert call.extra['terminal_completed'] and call.cost.tokens == 5
+
+
+def test_codex_resumes_only_explicit_expert_session(tmp_path):
+    from opc.adapters.codex import CodexWorker
+    script = tmp_path / "worker.py"
+    script.write_text("import json,sys\nfrom pathlib import Path\na=sys.argv\n"
+                      "assert 'resume' in a and 'known-session' in a and '--last' not in a\n"
+                      "Path(a[a.index('-o')+1]).write_text('{}')\n"
+                      "print(json.dumps({'type':'thread.started','thread_id':'known-session'}))\n"
+                      "print(json.dumps({'type':'turn.completed','usage':{'input_tokens':4,'output_tokens':2}}))\n")
+    worker = CodexWorker({'binary': str(script)})
+    worker.session_id = 'known-session'
+    call, _ = worker._run('expert', 'continue', tmp_path, tmp_path / 'log', 'read-only', None)
+    assert call.ok and call.call_id == 'known-session' and call.cost.tokens == 6
+
+
+def test_codex_exit_without_terminal_is_not_success(tmp_path):
+    from opc.adapters.codex import CodexWorker
+    script = tmp_path / "worker.py"
+    script.write_text("print('{\"type\":\"thread.started\",\"thread_id\":\"session\"}')\n")
+    call, _ = CodexWorker({'binary': str(script)})._run('expert', 'test', tmp_path,
+                            tmp_path / 'log', 'read-only', None)
+    assert not call.ok and not call.extra['terminal_completed']
+
+
+def test_codex_designer_preserves_structured_observation(make_project, engine_for, fake_codex, monkeypatch):
+    monkeypatch.setenv('FAKE_CODEX_MODE', 'structured')
+    e = engine_for(make_project(tsk=codex_task(fake_codex, max_attempts=1)))
+    e.run()
+    actual = e.attempt_records()[0]['execution']
+    assert actual['summary'] == 'structured observation'
+    assert actual['adopted_claims'] == [] and actual['evidence_files'] == []
+
+
+def test_http_activity_is_readable_while_real_engine_fake_cli_is_inflight(make_project, fake_codex, tmp_path, monkeypatch):
+    """Only the external CLI is controlled; Engine/ledger/process/HTTP are real."""
+    import socket
+    import threading
+    import time
+    from urllib.parse import quote
+    from urllib.request import urlopen
+    import uvicorn
+    from opc.core.engine import Engine
+    from opc.observer.api import create_app
+
+    release = tmp_path / 'release-worker'
+    monkeypatch.setenv('ACTIVITY_RELEASE', str(release))
+    binary = Path(fake_codex)
+    binary.write_text(binary.read_text().replace('if mode == "limit":', '''if os.environ.get("ACTIVITY_RELEASE"):
+    import time
+    print(json.dumps({"type":"item.started","item":{"id":"read-task","type":"command_execution","command":"cat params.json"}}), flush=True)
+    deadline = time.monotonic() + 20
+    while not Path(os.environ["ACTIVITY_RELEASE"]).exists():
+        if time.monotonic() > deadline: raise RuntimeError("test release deadline")
+        time.sleep(.02)
+    print(json.dumps({"type":"item.completed","item":{"id":"read-task","type":"command_execution","command":"cat params.json","exit_code":0}}), flush=True)
+if mode == "limit":'''))
+    root = make_project(tsk=codex_task(fake_codex, max_attempts=1))
+    results = []
+    errors = []
+    def execute():
+        try:
+            engine = Engine(root, 't-toy', log=lambda _: None)
+            results.append(engine.run(max_attempts_now=1))
+            engine.ledger.close()
+        except BaseException as exc:
+            errors.append(exc)
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0)); port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(create_app(root), host='127.0.0.1', port=port, log_level='warning'))
+    http = threading.Thread(target=server.run, daemon=True)
+    execution = threading.Thread(target=execute, daemon=True)
+    http.start(); execution.start()
+    def get(path):
+        with urlopen(f'http://127.0.0.1:{port}/api/observer/v1' + path, timeout=3) as response:
+            return json.load(response)
+    try:
+        deadline = time.monotonic() + 15
+        call = None
+        while time.monotonic() < deadline:
+            if errors: raise errors[0]
+            if server.started:
+                refs = get('/overview')['data']['unlinked_runs']
+                if refs:
+                    scene = get('/runs/' + quote(refs[0]['id'], safe='') + '/workbench')['data']
+                    pending = [w for w in scene['workers'] if w['state'] == 'pending' and w['activity_available']]
+                    if pending:
+                        call = pending[0]
+                        activity = get('/calls/' + quote(call['id'], safe='') + '/activity')['data']
+                        if activity['actions']: break
+            time.sleep(.03)
+        else:
+            raise AssertionError('inflight tool did not reach real HTTP')
+        assert execution.is_alive()
+        native = get('/calls/' + quote(call['id'], safe=''))['data']['provider_call_id']
+        assert native and not native.startswith('call-')
+        assert call['state'] == 'pending' and call['attempt_no'] is None
+        assert activity['actions'][0]['object'] == 'cat params.json'
+        assert activity['actions'][0]['state'] == 'pending'
+        assert activity['actions'][0]['started_at'] is None
+        release.touch()
+        execution.join(timeout=20)
+        assert not execution.is_alive() and not errors
+        done = get('/calls/' + quote(call['id'], safe='') + '/activity')['data']
+        assert done['actions'][0]['state'] == 'completed'
+        assert results and results[0]['run_id']
+    finally:
+        release.touch()
+        execution.join(timeout=20)
+        server.should_exit = True
+        http.join(timeout=10)
+        assert not http.is_alive() and not execution.is_alive()

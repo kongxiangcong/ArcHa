@@ -78,7 +78,7 @@
 - 调参任务里，被调参的模型/模拟器代码本身就是评价器的一部分，要列进 `evaluator_files`：候选能改模型，就等于能改评分。
 - `evaluator_files` 决定 evaluator digest：任何一个文件变了，就是新的评价器，必须开新 run。
 - `scratch` 声明命令生成的文件（如评测报告）：允许生成，但不进入候选补丁；冻结评价器和 `.opc/**` 仍受保护。只列实际生成物，与可改源码分开，不扩大 `editable`。
-- `toolchain` 列出会影响数字的工具版本命令。工具链变了，champion 会被重测，不同工具链的数字不比较（openTPU 上 Yosys 0.69/0.70 让 fmax 差 14.8%）。
+- `toolchain` 列出会影响数字的工具版本命令。工具链变了，原基线及当前成果会用新环境重测；旧测量保留，不同工具链的数字不比较（openTPU 上 Yosys 0.69/0.70 让 fmax 差 14.8%）。
 - 门按顺序执行，首个失败即停。占位符：`{worktree}` 候选树、`{out}` 该门输出目录、`{python}` 当前解释器。
 - 不要用 `sh -c`：把命令写成评价器里的脚本。
 - `deterministic: true`：同一源码 + 评价器 + 工具链必然得到同一数字时才打开，打开后评测结果按这三者缓存。综合/布局布线/有随机性的仿真不要打开。
@@ -88,6 +88,10 @@
 ## 4. 任务合同 `tasks/<task>/revisions/r0001/task.json`
 
 研究任务需要跨 run 累计成果时，在 task 顶层设置可选 `results_path`，值为项目相对 Markdown 路径（例如 `research/results/task-a/README.md`）。已有成果优先复用原位置；跨 revision 沿用同一稳定入口，目录名不表示合同 revision。旧任务无此字段保持原行为。对已冻结合同启用入口时建新 revision，不回写旧合同或重置预算。通过 `results --initialize` 建最小入口，在人工区域链接现有 specs、批次计划和 evidence-index。没有 specs 时在 README 直接写结论与适用条件。
+
+合同要求的结论正文必须有明确的写入与集成责任：由 Designer 交付时将其文件纳入 editable；入口由主流程维护时，保存独立的拟发布正文，主流程通过 `results --summary <正文文件>` 应用，保留实时自动登记及其后内容。入口仍为占位时不能以登记成功代替交付完成。需要把集成结果带回候选验收时，用包含该结果的明确基线开启新 Run，沿用 Task 累计预算；不原地改写已有候选或冻结合同。
+
+同 Task 的新 Run 需要继续核对旧原件时，用 `run --new-run --base <集成提交> --source-run <已关闭Run>` 明确交接。Expert、Designer 和独立 Reviewer 只读访问这条交接及其修复来源链，不自动继承旧反馈或采用旧主张。原生 delivery repair 同样提供来源原件；旧材料仍须按实际身份、版本和作用域审阅，不能视作本轮新执行。
 
 成果 README 由主流程维护，运行登记自动更新。只将确需 designer 修改的规格路径纳入 editable；不要把整个 research 或 .opc 放开。成果管理不要求数值 objective；实验有效性和推断质量可以作为验收条件，不能要求机制研究必须得到预期数字。
 
@@ -100,8 +104,6 @@
   "direction": "用户给出的探索方向，可以在 opc run --direction 覆盖",
   "requirements": [
     {"id": "REQ-001", "text": "结果与 golden 一致", "verification": "automated"},
-    {"id": "REQ-002", "text": "延迟 ≤ 80000 周期", "verification": "automated",
-     "check": {"metric": "latency_cycles", "op": "<=", "value": 80000}},
     {"id": "REQ-003", "text": "参数选择有可解释依据", "verification": "independent_review"}
   ],
   "acceptance": {
@@ -115,18 +117,18 @@
     "repeats": 1,
     "noise_k": 2.0
   },
-  "budget": {"max_attempts": 30, "max_wall_seconds": null, "max_tokens": null,
+  "budget": {"max_attempts": null, "max_wall_seconds": 7200, "max_tokens": null,
              "max_stagnation": 8, "max_consecutive_infra": 3},
   "workers": {
-    "expert": {"kind": "codex", "timeout_s": null},
-    "designer": {"kind": "codex", "timeout_s": null}
+    "expert": {"timeout_s": null},
+    "designer": {"timeout_s": null}
   },
   "base_ref": "HEAD"
 }
 ```
 
 - `requirements[].check` 可选：`promote` 时据此判定该需求 met / not_met；没有 `check` 的需求须以 `gates: [门ID]` 声明覆盖或以独立 review 验证；缺覆盖不能自动通过。
-- 指标缺失 = 拒绝（不是通过）。`target` 达到是专家进展信号，不强制停止；报告单列 `target_met`，完成仍由终验判断。
+- 指标缺失 = 拒绝（不是通过）。新契约填写的 `target` 是硬性交付门槛，只维护这一处，无需复制到 requirements；中间冠军可尚未达标。`target_met` 是进展信号，不强制停止，也不能替代其他必需项的终验。无数值门槛时省略 target；可选需求使用 required=false。旧冻结 Run 保留原 target 语义，升级须用户授权及新 revision，standards confirmation 的 changes 加入 `"target_policy": {"old": "advisory", "new": "required"}`。
 - 数字有噪声时设 `repeats>1`：收益必须超过 `noise_k × 重复测量的极差`。
 - 自定义规则：`"rule": ".opc/eval/accept.py:accept"`（函数 `accept(old, new, **rule_params) -> (bool, str)`，必须在 `evaluator_files` 里）。
 - worker 三选一：
@@ -143,14 +145,23 @@
   - `scripted`：固定搜索策略，不调用模型。参数类任务直接用
     `{"kind": "scripted", "strategy": "builtin:param_search", "options": {"file": "configs/emulator.json", "space": {"banks": [4, 8, 16]}}}`。
 
+### Profile 与来源冻结
+
+Task 可选择 `"profile": {"name": "development", "version": 1}`；`tuning` 和 `exploration` 同样提供 v1 默认策略。内置策略默认 token 无上限、时间 7200 秒，不授予执行、可改范围或验收权限。
+项目可在 `.opc/profiles/<name>/v<N>.json` 保存指定版本的普通默认值，格式为 `{"name": "development", "version": 2, "budget": {...}, "workers": {...}}`。只允许 budget/workers 默认字段；Task 显式字段覆盖 Profile，允许的本机角色字段再覆盖 Task。缺少指定版本会明确报错。
+
+项目与 Task 可设置 `hard_limits`（max_tokens/max_wall_seconds）；共同上限取较小值，null 不撤销明确上限，追加预算授权也不能超过硬限制。本机 bindings 只允许 artifact_root/workspace_root，不能更改目标、验收或权限。凭据从进程环境或后端凭据路径接入，不在合同 env/worker 选项中内联秘密值。
+
+Run 将实际解析配置及逐项来源保存在既有 `frozen/baseline.json` 的 execution 中，恢复读取冻结值，不重新套用后来 Profile/本机默认值。开发允许功能门未通过但通道须真实运行；调优要求 objective 和可比基线；探索要求可读 context 材料、评价/证据保存通道与 requirements 验收声明，准备不要求提前生成研究结论。
+
 ### 独立的 worker 环境配置
 
 `opc init --apply` 自动生成 `.opc/local/workers.json`，该目录已由 `.opc/.gitignore`
-排除。模型与 token/时间上限统一在此配置；只在用户明确指定相应上限时修改 budget，默认 null 为无上限：
+排除。模型与 token/时间上限统一在此配置；只在用户明确指定相应上限时修改 budget，默认 token 无上限、Task 时间额度 7200 秒：
 
 ```json
 {
-  "budget": {"max_tokens": null, "max_wall_seconds": null},
+  "budget": {"max_tokens": null, "max_wall_seconds": 7200},
   "expert": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
   "designer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
   "reviewer": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
@@ -159,13 +170,14 @@
 ```
 
 以上是新项目生成的 Codex 默认配置；已有本机配置不会被自动覆盖。
+每个角色还可指定 `kind`（codex/dsh）、`binary`（可执行文件或显式 argv 数组）、`profile`、`codex_home` 或 `dsh_home`。合同省略 kind 时环境可在同一 revision 的新 Run 选择后端；合同显式 kind 是限制，与环境冲突会报错。换后端不继承原后端的模型/provider/额外参数。Run 冻结实际角色配置、安装定位和来源；恢复不用新环境默认值，缺工具如实失败。Reviewer 默认共用安装定位，模型及推理参数独立配置。Codex 将所选原生 profile 的模型/推理设置和受支持的 provider 路由展开冻结，调用使用 `--ignore-user-config` 防止原生配置改动影响模型或工具边界。认证继续通过已选 CODEX_HOME 和环境凭据接入，不复制认证；内联凭据、特殊 provider 设置或无法确定的原生模型会明确阻止派发。DSH 需显式设置各调用角色的 provider/model，未解析的原生默认值不能当作已冻结。冻结的绝对可执行文件路径修复后可重试，恢复不会重新搜索 PATH。
 模型需当前账号和后端支持；推理强度也是后端和模型决定的，ArcHa 不把它固定成某个枚举。
-角色字段的 null 表示继承；budget 的 null 表示无上限。budget 只支持 max_tokens（正整数/null）、max_wall_seconds（正有限数/null），允许单独设置。优先级为本地 budget 显式字段（包括 null）覆盖旧合同同名字段；二者都缺失时无上限。旧合同显式限制保留。有效 budget 纳入任务摘要，正式运行后的修改需要新 run；不重置累计用量。默认模型调用 timeout_s=null；评价器 gate 的工具超时仍独立保留。
+角色字段的 null 表示继承。预算默认 max_tokens=null、max_wall_seconds=7200，max_attempts 缺失或 null 表示无轮数限制；已有明确上限保留，null 不能撤销。预算按 Task 汇总准备及所有 revision、Run 的原始 charges；准备使用 ledger 内的 Task scope，不创建执行 Run。onboard 的显式预算参数记录授权变更，追加总额度不清零消耗。历史 Run 的执行配置保持冻结。仅启用 token 或金额上限时要求相应用量完整；缺省 token 无上限时保留 unknown，不阻塞。默认模型调用 timeout_s=null，评价器 gate 工具超时独立保留。
 文件缺失时保持兼容，JSON 格式、角色或字段拼写错误会报错，不会静默忽略。
 旧项目可从 ArcHa 源码的 `opc/scaffold/workers.json` 复制到项目的 `.opc/local/workers.json`。
 只有 runtime 的项目也可先创建该文件，再执行 onboard；初始化会保留已有配置。
 
-优先级为：本机角色配置的非 null 值 > 该角色的合同字段 > 后端默认配置。
+优先级为：本机角色配置的非 null 值 > 该角色的 Task 字段 > Profile 默认值 > 后端默认配置。
 expert、designer 的 `kind`、超时、binary、profile 等仍由任务合同决定，
 合同里的 `reasoning_effort` 也可直接使用。Codex 通过 `-m` 和
 `-c model_reasoning_effort=...` 接收设置；显式的模型与强度优先于旧 `extra_args` 中对应参数。
@@ -174,7 +186,7 @@ expert、designer 的 `kind`、超时、binary、profile 等仍由任务合同�
 reviewer 仅在 `promote --review codex` 或 `--review dsh` 时运行，配置文件不会自动开启审核；
 它使用独立的 reviewer 配置和后端默认值，**不再复用 expert 的任何选项**。
 自定义 reviewer 程序入口请使用 `OPC_CODEX_BIN` / `OPC_DSH_BIN`；DSH 还支持 `OPC_DSH_HOME`。
-onboard 的后端仍由 `--agent codex|dsh` 选择，模型与强度读取 onboard 项。
+onboard 的 `--agent codex|dsh` 提供默认后端，环境配置的 onboard.kind 可显式选择；模型与强度只读取 onboard 项。
 环境配置在执行 worker 的命令开始时读取，运行中的进程不热更新；修改后可在下一次命令（含恢复运行）生效，
 不改变任务摘要，也不要求为模型切换创建新 revision。每次实际调用的 `*-request.json`
 保留启动 argv；未显式配置时后端采用的默认模型和强度仍需查后端日志。
@@ -255,9 +267,9 @@ base_attempt 同样用于停止时的交付选版。run 停止不代表完成，
 
 ## 授权范围内的准备
 
-onboard --prepare 在同一预算内完成必要的 .opc 评价器接入和与改动相应的关键检查，保留必要有界探针回执；仅合同 preparation_review=true 时独立审核，当前任务相关摘要冻结在原 ledger。它永不启动正式实验。pending 由 agent 继续；external_blocked 须有实际失败证据；ready 仍需提交冻结文件和 check/preflight。正式执行继承准备消耗，不重置额度。prior-tokens 是已可靠计量的主流程/外部嵌套累计量（包含 cached input），不含命令已记录的 worker/reviewer；无上限时未知用量记录为 unknown 并继续，显式 token 限额下未知用量才停止新增派发。已运行的合同只能新 revision/run，不原地改变验收。
+onboard --prepare 在同一预算内完成必要的 .opc 评价器接入和与改动相应的关键检查，保留必要有界探针回执；仅合同 preparation_review=true 时独立审核，当前 Task/revision 的内容摘要及资源身份记入原 ledger。它永不启动正式实验。pending 由 agent 继续；external_blocked 须有实际失败证据；ready 仍需提交已检查文件和 check/preflight。正式执行继承准备消耗，不重置额度。prior-tokens 是已可靠计量的主流程/外部嵌套累计量（包含 cached input），不含命令已记录的 worker/reviewer；无上限时未知用量记录为 unknown 并继续，显式 token 限额下未知用量才停止新增派发。已运行的合同只能新 revision/run，不原地改变验收。
 
-每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用已有冻结回执。无 token/时间上限时可省略累计主流程用量并保留 unknown；相应显式上限才要求可靠累计量。
+每次交给正式 run 或终验 reviewer 前，主流程用相同 onboard 参数加 `--record-usage` 更新最新累计主流程/外部嵌套 token 和耗时；此选项只记账、不调用 worker 或重复审阅，沿用对应 revision 的准备回执。无 token/时间上限时可省略累计主流程用量并保留 unknown；相应显式上限才要求可靠累计量。
 
 ### 8.1 Codex 状态目录只读与用量对账恢复
 
@@ -313,10 +325,18 @@ CLI 已启动但没有完整 usage 回执时保留 unknown 与原始 worker_erro
 Codex 状态目录语义参考：[OpenAI environment variables](https://learn.chatgpt.com/docs/config-file/environment-variables)。
 
 
-准备默认仅执行与本次接入改动对应的必要检查，不固定建设全套负控或通用监控工具。ready 表示必要接入完成，不代表研究结论成立。合同显式设置 `preparation_review: true` 时保留独立准备审核；旧 ready 回执继续有效。冻结仅覆盖当前 task、component 及 evaluator_files（显式共享依赖也在这些 glob 中登记）。
+准备默认仅执行与本次接入改动对应的必要检查，不固定建设全套负控或通用监控工具。ready 表示必要接入完成，不代表研究结论成立。合同显式设置 `preparation_review: true` 时保留独立准备审核；旧 ready 回执继续有效。准备回执仅覆盖指定 Task/revision、component 及 evaluator_files（显式共享依赖也在这些 glob 中登记）。
 
-默认按用户任务与证据自主形成简报及合同，不为大纲确认、缺省预算或缺省计量停下来提问。仅用户明确上限时修改本地 budget；onboard 的 --max-tokens / --max-wall-seconds 是显式上限入口并写回该文件，未传时读取现有配置。未知主流程用量记录为 host_usage_unknown，不假报已完整计量。
+默认按用户任务与证据自主形成简报及合同，不为大纲确认、缺省预算或缺省计量停下来提问。默认时间额度两小时，只有用户明确授权时修改总额度；onboard 的 --max-tokens / --max-wall-seconds 是显式上限入口并写回该文件，未传时读取现有配置。未知主流程用量记录为 host_usage_unknown，不假报已完整计量。
 
 ## 目录式技能交接
 
 archa-task/archa-loop 接受具体任务目录，内部 CLI 继续使用 --brief 文件参数。准备时显式传入按简报路径绑定的 --task；相同目录摘要变化保留 task ID，按已有 revision 规则处理。不同专题的 R01 不代表同一执行任务。worker 必须以提示中的 Target task ID 为目标，缺少时创建其合同，不修改其他任务。交接在 DECISIONS.md 追加 brief 项目相对路径、SHA-256、实际 task ID、revision 与合同路径；索引不参与路由。旧式交接核对后补记，不改旧 ID。
+
+准备使用 `onboard --task <ID> --revision rNNNN` 明确交接对象；省略 revision 时仅在入口解析一次。候选在首次执行前可原地完善，准备和审核不冻结合同。修改后旧回执失效，仅补查受影响输入；已执行合同保持不变。默认状态摘要展示对象、就绪或阻塞原因，`status --details` 展开回执及来源。
+
+### 恢复时的接入与测量
+
+`status` 分别显示记录可读、执行可恢复、测量可复用的结论；状态读取不运行工具，当前环境未检查时测量显示 unknown。继续原 Run 时检查冻结来源和工具可用性，缺失原件或旧记录的必要字段会说明 legacy/unknown 及实际阻塞。
+
+同语义的产物、工作区迁移通过 `.opc/local/bindings.json` 指向已有原件后，继续原 Run 会记录绑定修复，冻结快照保持原样。工具恢复后可重试同一 Run；版本变化会重测原基线及当前成果，包含无数值 objective 的任务。必要基线失败不能仅凭冠军成功放行。权限、输入或评价条件改变需要新 revision 和 Run；旧失败报告及测量原件保留。
