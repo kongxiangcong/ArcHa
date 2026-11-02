@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/archa-aha-orange.svg" width="160" alt="ArcHa 啊哈！橙色 Logo" />
+</p>
+
 <h1 align="center">ArcHa · Architecture Harness</h1>
 
 <p align="center"><strong>由人定义目标，以实验推进工作，用独立审核交付可信成果。</strong></p>
