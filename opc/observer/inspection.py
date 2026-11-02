@@ -19,7 +19,7 @@ def register(adapter, key, name, purpose, *, path=None, version=None, unavailabl
     ident = adapter._id('material', key)
     mime = mimetypes.guess_type(name)[0] or 'application/octet-stream'
     available = bool(path and adapter._allowed(path) and path.is_file()) if path else bool(version and git_size(adapter, version, name) is not None)
-    textual = mime.startswith('text/') or Path(name).suffix.lower() in ('.json', '.yaml', '.yml', '.toml', '.py', '.ts', '.tsx', '.js', '.c', '.cpp', '.h', '.sv', '.v', '.sh', '.svg')
+    textual = mime.startswith('text/') or Path(name).suffix.lower() in ('.md', '.txt', '.json', '.yaml', '.yml', '.toml', '.py', '.ts', '.tsx', '.js', '.c', '.cpp', '.h', '.sv', '.v', '.sh', '.svg')
     available = available and not unavailable and textual
     stat = path.stat() if available and path else None
     dto = dict(id=ident, kind='task_material', title=name, display_path=name, content_origin='file',

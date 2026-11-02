@@ -1,3 +1,4 @@
+import sys
 """Offline loop contracts: no model service, onboard run or benchmark."""
 import json
 from pathlib import Path
@@ -76,9 +77,11 @@ def test_later_run_discovers_and_analyzes_historical_pending_feedback(make_proje
         write_json(policy, worker_policy('expert', Path(ctx['knowledge']['context']).parent,
                                         later.artifact_dir() / 'read-feedback', ctx))
         original_source = Path(pending[0]['evidence']) / 'eval/evaluation.json'
-        read = subprocess.run(runner_argv(policy, ['/bin/cat', str(original_source)]),
-                              check=True, capture_output=True, text=True)
-        assert json.loads(read.stdout)['metrics']['values'] == {'loss': 10, 'correct': 1}
+        # Only the permission probe needs Linux; keep the research lifecycle cross-platform.
+        if sys.platform == 'linux':
+            read = subprocess.run(runner_argv(policy, ['/bin/cat', str(original_source)]),
+                                  check=True, capture_output=True, text=True)
+            assert json.loads(read.stdout)['metrics']['values'] == {'loss': 10, 'correct': 1}
         return dict(select_work=False, conclusions=[dict(run_id=old_run, attempt=1,
                     conclusion='Historical comparable long field supports the limited scope; short fields unknown')])
     def finish(ctx):

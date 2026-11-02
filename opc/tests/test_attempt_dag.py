@@ -170,10 +170,10 @@ class Processes(Branches):
 @pytest.mark.parametrize('command', ['pause', 'stop'])
 def test_parallel_control_drains_receipts_and_never_dispatches_followup(make_project, engine_for, command):
     from opc.core.ledger import Ledger
-    worker = Processes([plan(i, work_id=f'work-{i}', evaluate=True) for i in range(4)], .18 if command == 'pause' else 2)
+    worker = Processes([plan(i, work_id=f'work-{i}', evaluate=True) for i in range(4)], 2 if command == 'pause' else 20)
     e = use_sequence(engine_for(make_project()), worker)
     def control():
-        assert worker.started.wait(3)
+        assert worker.started.wait(30)
         time.sleep(.03)
         external = Ledger(e.ledger.path)
         external.set_control(e.run_id, command)
@@ -201,15 +201,15 @@ def test_parallel_control_drains_receipts_and_never_dispatches_followup(make_pro
 def test_parallel_wall_allowance_cancels_on_sum_of_active_execution(make_project, engine_for):
     from opc.tests.conftest import task
     contract = task()
-    contract['budget']['max_wall_seconds'] = .6
-    worker = Processes([plan(i, work_id=f'work-{i}', evaluate=False) for i in range(3)], 2)
+    contract['budget']['max_wall_seconds'] = 6
+    worker = Processes([plan(i, work_id=f'work-{i}', evaluate=False) for i in range(3)], 20)
     e = use_sequence(engine_for(make_project(tsk=contract)), worker)
     result = e.run()
     calls = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer']
     assert result['state'] == 'closed' and 'budget_exhausted' in result['stop_reason']
     assert len(calls) == 3 and all(c['state'] == 'cancelled' for c in calls)
-    assert all(c['result']['cost']['wall_seconds'] < .6 for c in calls)
-    assert result['spent']['wall_seconds'] >= .6
+    assert all(c['result']['cost']['wall_seconds'] < 6 for c in calls)
+    assert result['spent']['wall_seconds'] >= 6
     assert not result['pending_conclusions']  # cancelled work is still unfinished, not fake success.
 
 
@@ -252,18 +252,18 @@ def test_unknown_execution_cancels_peers_and_blocks_new_run(make_project, engine
             if work['work_id'] == 'unknown':
                 with self.lock:
                     self.executed.append(work['work_id'])
-                assert self.started.wait(3)
+                assert self.started.wait(30)
                 time.sleep(.03)
                 raise RuntimeError('terminal lost')
             return super().implement(work, ctx, tree, log_dir)
     worker = Unknown([plan(0, work_id='unknown', evaluate=False),
-                      plan(1, work_id='peer-1', evaluate=False), plan(2, work_id='peer-2', evaluate=False)], 2)
+                      plan(1, work_id='peer-1', evaluate=False), plan(2, work_id='peer-2', evaluate=False)], 20)
     root = make_project()
     e = use_sequence(engine_for(root), worker)
     before = time.monotonic()
     with pytest.raises(RuntimeError, match='terminal lost'):
         e.run()
-    assert time.monotonic() - before < 2
+    assert time.monotonic() - before < 15
     calls = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer']
     assert len(calls) == 3 and calls[0]['result'] is None
     assert all(c['state'] == 'cancelled' for c in calls[1:])

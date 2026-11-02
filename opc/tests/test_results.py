@@ -1,3 +1,4 @@
+import sys
 """Task results acceptance: shared questions, independent executions and fixed review input."""
 import json
 from pathlib import Path
@@ -18,14 +19,14 @@ def test_host_summary_preserves_live_registration_and_suffix(tmp_path):
     register(tmp_path, ENTRY, [dict(key='existing/a1', status='failed',
                                   question='Preserve failed observation', refs={}, issues=['unresolved'])])
     entry = tmp_path / ENTRY
-    entry.write_text(entry.read_text() + '\nHost follow-up.\n', encoding='utf-8')
-    suffix = entry.read_text().split(START, 1)[1]
+    entry.write_text(entry.read_text(encoding='utf-8') + '\nHost follow-up.\n', encoding='utf-8')
+    suffix = entry.read_text(encoding='utf-8').split(START, 1)[1]
     summary = tmp_path / 'proposed.md'
     summary.write_text('# Supported result\n\n[original](../raw.json)\n', encoding='utf-8')
     apply_summary(tmp_path, ENTRY, summary)
-    assert entry.read_text().startswith('# Supported result\n')
-    assert entry.read_text().split(START, 1)[1] == suffix
-    assert split(entry.read_text())[1][0]['status'] == 'failed'
+    assert entry.read_text(encoding='utf-8').startswith('# Supported result\n')
+    assert entry.read_text(encoding='utf-8').split(START, 1)[1] == suffix
+    assert split(entry.read_text(encoding='utf-8'))[1][0]['status'] == 'failed'
     summary.write_text(START, encoding='utf-8')
     original = entry.read_bytes()
     with pytest.raises(OPCError, match='registration markers'):
@@ -114,7 +115,7 @@ def test_registration_failure_retries_without_running_experiment(make_project, e
     assert rows[0]['status'] == e.attempt_records()[0]['outcome']
     evidence = ((root / ENTRY).parent / rows[0]['refs']['evidence']).resolve()
     assert evidence == e.attempt_dir(1) / 'eval/evaluation.json'
-    assert json.loads(evidence.read_text())['commit'] == candidate
+    assert json.loads(evidence.read_text(encoding='utf-8'))['commit'] == candidate
     assert e.ledger.totals(e.run_id) == cost
     assert [c['call_id'] for c in e.ledger.calls(e.run_id)] == calls
     assert len(seq.contexts) == 2
@@ -303,6 +304,7 @@ def test_external_cli_respects_controller_lock(make_project):
     assert not (root / ENTRY).exists()
 
 
+@pytest.mark.skipif(sys.platform != 'linux', reason='executes real Linux Landlock permission probes; unsupported-platform refusal covered separately')
 def test_worker_claim_query_preserves_counterevidence_and_reads_scoped_sources(make_project, engine_for):
     import subprocess
     from opc.core.tool_boundary import worker_policy, runner_argv
@@ -451,11 +453,11 @@ def test_designer_discovered_originals_survive_cleanup_and_candidate_rejection(m
     result = e.run()
     assert result['state'] == 'closed'
     assert e.attempt_records()[0]['outcome'] == ('no_gain' if worker_ok and not invalid_adoption else 'worker_failed')
-    assert json.loads((root / 'params.json').read_text()) == {'x': 3}
+    assert json.loads((root / 'params.json').read_text(encoding='utf-8')) == {'x': 3}
     assert not trees[0].exists()
     original = e.attempt_dir(1) / 'outputs/measurements/long.json'
     trace = e.attempt_dir(1) / 'outputs/measurements/trace.bin'
-    assert original.read_text() == '{"field":"long","latency":17}'
+    assert original.read_text(encoding='utf-8') == '{"field":"long","latency":17}'
     assert trace.read_bytes() == b'\x00\xffnative-trace'
     assert sorted(p.name for p in original.parent.iterdir()) == ['long.json', 'trace.bin']
     old_stat = original.stat().st_mtime_ns

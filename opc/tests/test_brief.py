@@ -150,7 +150,7 @@ def test_editorial_brief_update_keeps_frozen_contract_and_run(make_project, engi
     handoff.record(root, str(directory), 't-toy', 'r0001')
     first = engine_for(root).run(max_attempts_now=1)
     brief = directory / 'task-brief.md'
-    brief.write_text(brief.read_text() + '\nNavigation: [task](task.md)\n')
+    brief.write_text(brief.read_text(encoding='utf-8') + '\nNavigation: [task](task.md)\n', encoding='utf-8')
     with pytest.raises(ValueError, match='classif|含义'):
         handoff.record(root, str(directory), 't-toy', 'r0001')
     handoff.record(root, str(directory), 't-toy', 'r0001', change='editorial')
@@ -177,13 +177,13 @@ def test_material_brief_change_requires_authorized_contract_handoff(make_project
     if frozen:
         engine_for(root).run(max_attempts_now=1)
     brief = directory / 'task-brief.md'
-    brief.write_text(brief.read_text().replace('报告完成', '报告完成并通过新增验收'))
+    brief.write_text(brief.read_text(encoding='utf-8').replace('报告完成', '报告完成并通过新增验收'), encoding='utf-8')
     assert not engine_for(root).static_check()['ok']
     with pytest.raises(ValueError, match='authorization'):
         handoff.record(root, str(directory), 't-toy', 'r0001', change='material')
     with pytest.raises(ValueError, match='updated contract'):
         handoff.record(root, str(directory), 't-toy', 'r0001', change='material', authorized=True)
-    values = json.loads((root / '.opc/tasks/t-toy/revisions/r0001/task.json').read_text())
+    values = json.loads((root / '.opc/tasks/t-toy/revisions/r0001/task.json').read_text(encoding='utf-8'))
     values['acceptance']['target']['value'] = 0.5
     values['requirements'][0]['check']['value'] = 0.5
     saved = TaskSpec.save_revision(root, 't-toy', 'r0001', values)
