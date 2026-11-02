@@ -682,3 +682,10 @@ def test_snapshot_reports_changed_sources_of_historical_review(tmp_path):
     current = snapshot(tmp_path, tmp_path / 'artifacts', ENTRY)
     assert any('older source versions' in issue for issue in current['issues'])
     assert 'Revised claim' in json.dumps(current)
+
+
+def test_atomic_text_writer_preserves_existing_crlf_bytes(tmp_path):
+    from opc.core.model import write_text
+    target = tmp_path / 'mixed-newlines.md'
+    write_text(target, 'new\nexisting\r\n')
+    assert target.read_bytes() == b'new\nexisting\r\n'

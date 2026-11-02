@@ -278,7 +278,7 @@ def test_resume_pins_native_model_provider_and_profile_defaults(make_project, en
 
 
 def test_resume_can_repair_same_frozen_executable_without_searching_new_path(make_project, engine_for, fake_codex, monkeypatch):
-    missing = Path(fake_codex).parent / "restored-codex"
+    missing = Path(fake_codex).parent / "restored-codex.py"
     t = task(workers={"expert": {"kind": "codex", "binary": str(missing)},
                       "designer": {"kind": "codex", "binary": str(missing)}})
     root = make_project(tsk=t)

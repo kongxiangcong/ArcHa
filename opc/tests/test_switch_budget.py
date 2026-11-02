@@ -184,15 +184,17 @@ def test_switched_expert_reads_prior_results_without_replaying_old_work(make_pro
             policy = worker_policy('expert', tree, log, ctx)
             assert str(result.parent.parent.parent) in policy['read']
             assert str(result.parent.parent.parent) not in policy['write']
-            probe = subprocess.run([sys.executable, '-c',
-                'import json,sys; from pathlib import Path; '
-                'from opc.core.tool_boundary import restrict,RUNTIME_READ; '
-                'p=json.loads(sys.argv[1]); restrict(p["read"],p["write"],RUNTIME_READ); '
-                'assert json.loads(Path(sys.argv[2]).read_text())["outcome"]; '
-                'assert json.loads(Path(sys.argv[3]).read_text())["role"]=="expert"; '
-                '\ntry: Path(sys.argv[2]).write_text("overwrite")\nexcept PermissionError: pass\nelse: raise AssertionError("prior result writable")',
-                json.dumps(policy), str(result), str(decision)], capture_output=True, text=True)
-            assert probe.returncode == 0, probe.stderr
+            # This probe exercises Linux Landlock; the surrounding backend switch remains cross-platform.
+            if sys.platform == 'linux':
+                probe = subprocess.run([sys.executable, '-c',
+                    'import json,sys; from pathlib import Path; '
+                    'from opc.core.tool_boundary import restrict,RUNTIME_READ; '
+                    'p=json.loads(sys.argv[1]); restrict(p["read"],p["write"],RUNTIME_READ); '
+                    'assert json.loads(Path(sys.argv[2]).read_text())["outcome"]; '
+                    'assert json.loads(Path(sys.argv[3]).read_text())["role"]=="expert"; '
+                    '\ntry: Path(sys.argv[2]).write_text("overwrite")\nexcept PermissionError: pass\nelse: raise AssertionError("prior result writable")',
+                    json.dumps(policy), str(result), str(decision)], capture_output=True, text=True)
+                assert probe.returncode == 0, probe.stderr
             return WorkerCall('expert', True, Cost(0, 1), call_id='fresh-backend-session',
                               output={'exhausted': True, 'stop_reason':'prior evidence read'}, exhausted=True)
     switched = Engine(root, 't-toy', log=lambda _: None)
