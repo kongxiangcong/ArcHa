@@ -439,7 +439,8 @@ def test_http_activity_is_readable_while_real_engine_fake_cli_is_inflight(make_p
     import time
     from urllib.parse import quote
     from urllib.request import urlopen
-    import uvicorn
+    uvicorn = pytest.importorskip('uvicorn')
+    pytest.importorskip('fastapi')
     from opc.core.engine import Engine
     from opc.observer.api import create_app
 
