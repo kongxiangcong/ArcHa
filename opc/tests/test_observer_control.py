@@ -719,7 +719,7 @@ def test_stop_unconfirmed_execution_retains_saved_workspace_and_feedback(make_pr
         ident = run_path(origin, rid)
         path = '/api/control/v1/runs/' + ident + '/requests'
         assert request(origin, path, {'request_id': 'stop-unconfirmed', 'action': 'stop'})[0] == 202
-        _, result = until(lambda: (lambda value: value if value[1]['data']['status'] == 'unknown' else None)(request(origin, path + '/stop-unconfirmed')))
+        _, result = until(lambda: (lambda value: value if value[1]['data']['status'] == 'unknown' and value[1]['data']['run']['execution_unknown'] else None)(request(origin, path + '/stop-unconfirmed')))
         assert result['data']['run'] == {'state': 'blocked', 'execution_unknown': True}
         assert '待确认' in result['data']['reason']
         assert (tree / 'work.txt').read_text() == 'saved task progress'
@@ -830,7 +830,7 @@ Engine(Path(sys.argv[1]),"t-toy",run_id=sys.argv[2],log=lambda _:None).run()
             ident = run_path(origin, rid)
             path = '/api/control/v1/runs/' + ident + '/requests'
             assert request(origin, path, {'request_id': 'unconfirmed-active-stop', 'action': 'stop'})[0] == 202
-            _, result = until(lambda: (lambda value: value if value[1]['data']['status'] == 'unknown' else None)(request(origin, path + '/unconfirmed-active-stop')), seconds=15)
+            _, result = until(lambda: (lambda value: value if value[1]['data']['status'] == 'unknown' and value[1]['data']['run']['execution_unknown'] else None)(request(origin, path + '/unconfirmed-active-stop')), seconds=15)
             assert result['data']['run'] == {'state': 'blocked', 'execution_unknown': True}
             designer = next(c for c in engine.ledger.calls(rid) if c['role'] == 'designer')
             assert designer['result'] is None and Path(designer['input']['tree']).is_dir()
