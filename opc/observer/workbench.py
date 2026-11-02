@@ -215,6 +215,9 @@ def workbench(adapter, ident):
                 workers=visible_calls, workers_truncated=len(visible_calls) < len(calls), work_count=len(work),
                 availability='partial' if row.get('_snapshot') or not goal else 'available',
                 observation_note='显示最后已知记录；派发记录不代表执行仍然存活')
+    from .canvas import project, run_brief
+    data['run_brief'] = run_brief(adapter, row, contract)
+    data['canvas'] = project(adapter, row, adapter._db(row['run_id'], tables_to_read=('attempts',))['attempts'] if not row.get('_snapshot') else adapter.snapshots[row['run_id']].get('attempts', []), events, calls, work)
     data['preparation_materials'] = []
     if row.get('_preparation'):
         data['result'] = dict(complete=None, reason=row['_preparation_state'].get('reason'), gaps=None)

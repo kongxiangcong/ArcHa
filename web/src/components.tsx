@@ -1,4 +1,10 @@
 export const labels: Record<string, string> = {
+  result_failed: "结果未通过",
+  result_recorded: "结果已记录",
+  recorded: "已记录",
+  context: "研究约定",
+  system: "工作结果",
+  reviewer: "独立审核",
   active: "运行记录中",
   paused: "已暂停",
   closed: "已结束",

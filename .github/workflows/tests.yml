@@ -49,13 +49,15 @@ jobs:
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
       - name: Test observer and topic discovery
-        run: python -m pytest opc/tests/test_observer.py opc/tests/test_observer_topics.py opc/tests/test_observer_preparation.py -q
+        run: python -m pytest opc/tests/test_observer.py opc/tests/test_observer_topics.py opc/tests/test_observer_preparation.py opc/tests/test_observer_canvas.py -q
       - name: Test existing browser paths
         run: python tools/observer_browser_smoke.py --out work/observer-ci
       - name: Test live topics and semantic motion
         run: python tools/observer_motion_smoke.py --out work/observer-motion-ci
       - name: Test preparation without an execution Run
         run: python tools/observer_preparation_smoke.py
+      - name: Test approved content canvas and real call timeline
+        run: python tools/observer_canvas_smoke.py --out work/observer-canvas-ci
       - name: Save workbench screenshots and checks
         if: always()
         uses: actions/upload-artifact@v4
@@ -64,3 +66,4 @@ jobs:
           path: |
             work/observer-ci/
             work/observer-motion-ci/
+            work/observer-canvas-ci/

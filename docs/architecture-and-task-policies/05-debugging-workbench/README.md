@@ -209,3 +209,18 @@ python3 -m http.server 8766 --bind 127.0.0.1 --directory web
 - 复用 thinking-orbs 0.3.2 与 Jakub 的三个 CSS 配方；成果卡使用测量高度展开，详情局部显露，材料导航短切换。保留上游许可、减少动态效果和离屏暂停；返回材料恢复位置、选择与焦点，专题之间保留各自阅读现场。
 
 验证使用隔离文件/SQLite 与 localhost 生产构建，没有真实模型调用，也没有修改用户研究材料或重启用户服务。整仓 pytest 为 678 passed、5 skipped、12 subtests passed；之后补充新 topics 内部材料过滤的回归，并重跑 observer/topics 专项。两套实际 Chromium 验收脚本 `tools/observer_browser_smoke.py` 与 `tools/observer_motion_smoke.py` 各通过 9 条路径，覆盖实际更新/交接、64 KiB 以上终态日志、材料刷新、断线与挂起恢复、显式跟随、专题切换、窄屏、键盘与 reduced-motion。前端 typecheck/build 通过。脚本可按 --out 保存实际页面截图和检查清单；尚未测量目标设备帧率，也不声明真实研究任务已端到端跑通。
+
+
+## 2026-11-02：已批准的内容画布集成
+
+基线 `c8df250a1bacbf566c0ab24f2800db10df9a94d1` 的 Cross-platform tests 已全部成功：push [41441415393](https://github.com/kongxiangcong/ArcHa/actions/runs/41441415393)、PR [41441425754](https://github.com/kongxiangcong/ArcHa/actions/runs/41441425754)，各含 Ubuntu/Windows Python 3.10/3.12/3.14 与 Workbench；本地 686 passed、5 skipped、12 subtests passed。
+
+用户批准原型 `47406d3f68e44038a80a55a4f26228ce5a01e238`：默认内容/成果画布，底部可展开 Agent 时间轴，稳定位置、卡片/详情/时间轴共用选择，手工浏览退出跟随，一键跟随最新。删除装饰性小字、副标题和宣传句；Logo 复用 `docs/assets/archa-aha-orange.svg`。此批准更新上文默认列表布局，原列表保留为兼容视图。
+
+复用现有 observer 读取、真实调用/材料和原型的 CSS/SVG 几何，不引入新持久化或模拟播放。协调轮次按已保存 `work_selected.decision_call` 关联，缺失时不猜测；连线只表示已保存的派发输入和成果交接。准备事件仍是独立只读范围，不伪造 Run、等待区间、模型认知或没有回执的返回。历史初次加载不重播 live 动效。
+
+原始仓库 `/root/ArcHa` 的未提交现场、真实研究账本、运行进程及已发布原型均保持不变。生产图仅接真实 API，不携带原型八条虚构事件。
+
+本次集成的本地最终验收：完整测试 692 passed、5 skipped、12 subtests passed；控制专项 23 passed。新版实际 Chromium 七组流程完成：冻结简报绑定及当前文件编辑后的拒绝、评价与 Expert 分析分源、两轮折叠和材料阅读、实时到达不抢手工视口、断网恢复与同名专题隔离、深链接/键盘/手机及 reduced-motion、零 Run 准备到正式 Run 的显式切换。旧列表三组浏览器兼容检查同样完成。画布脚本和截图已加入 Workbench Linux CI；新提交的远端完整矩阵结果另行核验，不用本地通过代替。
+
+历史简报只在字节与冻结合同 `_source.sha256` 匹配时提供只读材料投影；否则显示本次运行目标并标版本不可确认。评价回执与 `conclusion` 分成独立卡片，后者按 `reviewed_by_call` 关联 Expert，缺归属时不借用 Evaluator。没有起止记录的调用不补造持续区间。无新外部依赖，既有第三方 NOTICE 保留；新 CSS/SVG 基于用户批准的原创原型。实际截图使用隔离测试记录，不代表真实模型研究或实机性能测量。

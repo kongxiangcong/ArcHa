@@ -21,7 +21,7 @@ def main():
                 assert time.monotonic()<deadline;time.sleep(.05)
             with sync_playwright() as driver:
                 browser=driver.chromium.launch();page=browser.new_page(viewport=dict(width=1440,height=1000));errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
-                page.goto(f'http://127.0.0.1:{port}/?'+urlencode(dict(task=task['id'],run=ref['id'])))
+                page.add_init_script("sessionStorage.setItem('archa-layout','list')");page.goto(f'http://127.0.0.1:{port}/?'+urlencode(dict(task=task['id'],run=ref['id'])))
                 expect(page.get_by_label('选择运行',exact=True).locator('option:checked')).to_contain_text('准备记录')
                 expect(page.locator('.research-desk')).to_contain_text('此记录不是正式运行')
                 expect(page.locator('[data-module="onboard"]')).to_contain_text('结果待确认')

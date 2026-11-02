@@ -69,7 +69,7 @@ def main():
             origin=f'http://127.0.0.1:{port}'
             with sync_playwright() as playwright:
                 browser=playwright.chromium.launch();context=browser.new_context(viewport=dict(width=1440,height=1000));page=context.new_page();errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
-                page.goto(origin+'/?'+urlencode(dict(topic='decode-pim-mapping',task=task['id'],run=run)))
+                page.add_init_script("sessionStorage.setItem('archa-layout','list')");page.goto(origin+'/?'+urlencode(dict(topic='decode-pim-mapping',task=task['id'],run=run)))
                 expect(page.get_by_label('选择专题',exact=True)).to_have_value('decode-pim-mapping')
                 expect(page.get_by_label('选择专题',exact=True).locator('option')).to_have_count(1)
                 expect(page.locator('[data-module="designer"]')).to_contain_text('结果待确认')
@@ -118,7 +118,7 @@ def main():
                 page.get_by_role('checkbox',name='跟随此任务的当前运行').check()
                 expect(page.get_by_label('选择运行',exact=True)).to_have_value(adapter._id('run','fresh-run'),timeout=7000)
                 passed('new run hint does not hijack history / explicit follow selects unique active run')
-                page.goto(origin+'/?'+urlencode(dict(topic='decode-pim-mapping',task=task['id'],run=run)))
+                page.add_init_script("sessionStorage.setItem('archa-layout','list')");page.goto(origin+'/?'+urlencode(dict(topic='decode-pim-mapping',task=task['id'],run=run)))
                 page.wait_for_timeout(800); page.screenshot(path=str(args.out/'research-stage-desktop.png'),full_page=True)
                 page.emulate_media(reduced_motion='reduce');page.set_viewport_size(dict(width=390,height=844))
                 expect(page.get_by_label('议题研究桌')).to_be_visible()

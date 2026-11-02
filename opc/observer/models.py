@@ -361,6 +361,8 @@ class WorkHandoff(DTO):
 
 
 class Workbench(DTO):
+    canvas: dict = Field(default_factory=dict)
+    run_brief: dict | None = None
     kind: str = "execution"
     preparation: dict | None = None
     preparation_materials: list[dict] = Field(default_factory=list)

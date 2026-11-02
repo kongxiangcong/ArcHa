@@ -82,7 +82,7 @@ export function ResearchDesk({
                 ? "已保存准备状态；当前调用活动未确认"
                 : "当前没有待结果调用"}
           </p>
-          <h2>{scene?.goal ?? "从一个议题，走进正在发生的研究。"}</h2>
+          <h2>{scene?.goal ?? "尚未选择准备或运行"}</h2>
           <div
             className={`latest-change${arrived ? " arrived" : ""}`}
             aria-live="polite"
@@ -103,7 +103,7 @@ export function ResearchDesk({
                 )}
               </>
             ) : (
-              "选中运行后，真实进展会在这里出现。"
+              "暂无已记录的进展"
             )}
           </div>
           {scene?.result.reason && (
@@ -134,7 +134,6 @@ export function ResearchDesk({
                 <span className="module-mark" aria-hidden="true" />
                 <div>
                   <strong>{module.title}</strong>
-                  <small>{module.description}</small>
                 </div>
                 <span className="module-fact" key={state + ":" + calls.length}>
                   {waiting.length
@@ -167,9 +166,7 @@ export function ResearchDesk({
           </button>
         ))}
         {!handoffs.length && (
-          <span className="muted">
-            工作与成果各有位置。实际交接发生时，相关工作会在这里连起一次。
-          </span>
+          <span className="muted">暂无已记录的成果交接</span>
         )}
       </div>
       {scene?.preparation_materials?.length ? (

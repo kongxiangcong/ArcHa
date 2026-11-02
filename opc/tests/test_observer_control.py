@@ -267,6 +267,7 @@ def test_pause_browser_keeps_request_and_actual_state_separate(make_project, tmp
             errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(origin)
+            page.get_by_role("button", name="工作列表", exact=True).click()
             ident = run_path(origin, rid)
             from urllib.parse import unquote
             page.get_by_label('选择运行', exact=True).select_option(unquote(ident))
@@ -549,6 +550,7 @@ def test_resume_browser_preserves_scene_through_pause_continue_and_failure(make_
             browser = driver.chromium.launch(headless=True, args=['--no-sandbox'])
             page = browser.new_page(viewport=dict(width=1440, height=1000), reduced_motion='reduce')
             page.goto(origin)
+            page.get_by_role("button", name="工作列表", exact=True).click()
             ident = run_path(origin, rid)
             from urllib.parse import unquote
             page.get_by_label('选择运行', exact=True).select_option(unquote(ident))
@@ -754,6 +756,7 @@ def test_stop_browser_confirmation_focus_and_actual_or_unknown_result(make_proje
             page.set_default_timeout(5000)
             page.on('request', lambda req: posts.append(json.loads(req.post_data)) if req.method == 'POST' else None)
             page.goto(origin)
+            page.get_by_role("button", name="工作列表", exact=True).click()
             ident = run_path(origin, rid)
             from urllib.parse import unquote
             page.get_by_label('选择运行', exact=True).select_option(unquote(ident))

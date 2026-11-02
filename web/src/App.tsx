@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { enc, get, useResource } from "./api";
 import { useRunControl } from "./useRunControl";
 import { ResearchDesk } from "./ResearchDesk";
+import { ResearchCanvas } from "./ResearchCanvas";
+import logo from "../../docs/assets/archa-aha-orange.svg";
 import { poll } from "./poll";
 import { Activity } from "./Activity";
 import { Inspection, MaterialReader } from "./Inspection";
@@ -129,6 +131,14 @@ function useWorkItems(
 export default function App() {
   const [query, change] = useSelection();
   const [refresh, setRefresh] = useState(0);
+  const [layout, setLayout] = useState(
+    () => sessionStorage.getItem("archa-layout") ?? "canvas",
+  );
+  function chooseLayout(value: string) {
+    setLayout(value);
+    sessionStorage.setItem("archa-layout", value);
+  }
+
   const topicViews = useRef(
     new Map<
       string,
@@ -237,6 +247,10 @@ export default function App() {
   const worker = scene?.workers.find((w) => w.id === selectedCall);
   const located = useRef<string | null>(null);
   useEffect(() => {
+    if (layout !== "list") {
+      located.current = null;
+      return;
+    }
     const key = selectedNo ? runId + "/" + selectedNo : null;
     if (!key) {
       located.current = null;
@@ -250,7 +264,7 @@ export default function App() {
       target.scrollIntoView({ block: "nearest" });
       located.current = key;
     }
-  }, [runId, selectedNo, work.items]);
+  }, [runId, selectedNo, work.items, layout]);
   const runs: Ref[] =
     taskId === "history" ? (o?.unlinked_runs ?? []) : (t?.runs ?? []);
   const following = query.get("follow") === "1";
@@ -265,6 +279,17 @@ export default function App() {
       setDetail(false);
     }
   }, [following, followTarget?.id, runId, change]);
+  useEffect(() => {
+    if (layout !== "canvas" || runId) return;
+    const initial = followTarget ?? (runs.length === 1 ? runs[0] : null);
+    if (initial) change({ run: initial.id }, true);
+  }, [
+    layout,
+    runId,
+    followTarget?.id,
+    runs.map((item) => item.id).join("|"),
+    change,
+  ]);
   const title =
     t?.task.title ?? (taskId === "history" ? "运行历史" : "工作现场");
 
@@ -348,7 +373,7 @@ export default function App() {
     setMaterial(null);
   }
   return (
-    <div className="app">
+    <div className={`app${layout === "canvas" ? " canvas-mode" : ""}`}>
       <dialog
         ref={stopDialog}
         className="stop-dialog"
@@ -396,15 +421,26 @@ export default function App() {
       </dialog>
       <header className="topbar">
         <a className="brand" href="/" aria-label="ArcHa 工作现场">
-          <span className="brand-mark" aria-hidden="true">
-            A
-          </span>
-          ArcHa
+          <img className="brand-logo" src={logo} alt="ArcHa" />
         </a>
         <span className="breadcrumb">
           {o?.project.display_name ?? "项目"} / 工作现场
         </span>
         <div className="top-right">
+          <div className="layout-switch" aria-label="工作台视图">
+            <button
+              aria-pressed={layout === "canvas"}
+              onClick={() => chooseLayout("canvas")}
+            >
+              画布
+            </button>
+            <button
+              aria-pressed={layout === "list"}
+              onClick={() => chooseLayout("list")}
+            >
+              工作列表
+            </button>
+          </div>
           {o?.project.source_mode === "demo" && (
             <span className="mode">演示数据 · 只读</span>
           )}
@@ -522,7 +558,14 @@ export default function App() {
               刷新
             </button>
           </div>
-          <div className="follow-bar">
+          <div
+            className="follow-bar"
+            hidden={
+              layout === "canvas" &&
+              activeRuns.length <= 1 &&
+              (!followTarget || following || followTarget.id === runId)
+            }
+          >
             <label>
               <input
                 type="checkbox"
@@ -614,7 +657,6 @@ export default function App() {
           <Alert error={workbench.error} stale={!!scene} />
           <Alert error={work.error} stale={!!work.items.length} />
           <div className="heading">
-            <p className="eyebrow">WORKSPACE / 当前任务</p>
             <h1>{title}</h1>
             <p className="goal">
               {scene?.goal ??
@@ -646,29 +688,65 @@ export default function App() {
               </p>
             )}
           </div>
-          <ResearchDesk
-            key={runId}
-            scene={scene}
-            hidden={!!material}
-            onOpen={(item, opener) => {
-              materialPositions.current = [
-                ...document.querySelectorAll(
-                  ".main,.inspector-content,.work-scroll,.worker-scroll",
-                ),
-              ].map((element) => ({
-                element,
-                top: element.scrollTop,
-                left: element.scrollLeft,
-              }));
-              materialOpener.current = opener;
-              setMaterial(item);
-            }}
-            onChoose={(attempt) => {
-              change({ attempt: String(attempt), call: null });
-              setDetail(true);
-            }}
-          />
-          <div className="content" hidden={!!material}>
+          {layout === "canvas" ? (
+            <ResearchCanvas
+              key={runId}
+              scope={runId || taskId}
+              scene={scene}
+              task={t}
+              hidden={!!material}
+              selectedNo={selectedNo}
+              selectedCall={selectedCall}
+              onInspect={() => {
+                if (following) change({ follow: null });
+              }}
+              onFollow={() => change({ follow: "1" })}
+              onWork={(attempt, opener) => {
+                origin.current = opener;
+                change({ attempt: String(attempt), call: null });
+                setDetail(true);
+              }}
+              onFactOpen={() => setDetail(false)}
+              onWorker={chooseWorker}
+              onOpen={(item, opener) => {
+                materialPositions.current = [
+                  ...document.querySelectorAll(
+                    ".main,.inspector-content,.work-scroll,.worker-scroll",
+                  ),
+                ].map((element) => ({
+                  element,
+                  top: element.scrollTop,
+                  left: element.scrollLeft,
+                }));
+                materialOpener.current = opener;
+                setMaterial(item);
+              }}
+            />
+          ) : (
+            <ResearchDesk
+              key={runId}
+              scene={scene}
+              hidden={!!material}
+              onOpen={(item, opener) => {
+                materialPositions.current = [
+                  ...document.querySelectorAll(
+                    ".main,.inspector-content,.work-scroll,.worker-scroll",
+                  ),
+                ].map((element) => ({
+                  element,
+                  top: element.scrollTop,
+                  left: element.scrollLeft,
+                }));
+                materialOpener.current = opener;
+                setMaterial(item);
+              }}
+              onChoose={(attempt) => {
+                change({ attempt: String(attempt), call: null });
+                setDetail(true);
+              }}
+            />
+          )}
+          <div className="content" hidden={!!material || layout === "canvas"}>
             <section className="work-pane" aria-label="工作进展">
               <div className="panel-heading">
                 <h2>
@@ -935,7 +1013,7 @@ export default function App() {
           <footer>
             {scene
               ? `最后观察 ${time(workbench.value?.source_observed_at)} · 仅读取已有内容`
-              : "ArcHa · 工作现场"}
+              : "未选择准备或运行"}
           </footer>
         </main>
       </div>

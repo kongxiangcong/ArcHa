@@ -291,6 +291,31 @@ export interface WorkerSummary {
   activity_note: string;
 }
 export interface Workbench {
+  run_brief?: {
+    goal: string | null;
+    version: string;
+    material: Material | null;
+  } | null;
+  canvas?: {
+    cards: CanvasCard[];
+    edges: {
+      id: string;
+      source: string;
+      target: string;
+      at: string | null;
+      sequence: number;
+      label: string;
+      source_call_id?: string | null;
+      target_call_id?: string | null;
+    }[];
+    rounds: {
+      id: string;
+      title: string;
+      at: string | null;
+      attempts: number[];
+    }[];
+    note: string;
+  };
   preparation_materials?: Material[];
   kind?: "preparation" | "execution";
   timeline: {
@@ -388,4 +413,20 @@ export interface ControlRequestView {
   sequence: number;
   reason: string;
   run: { state: string; execution_unknown: boolean };
+}
+
+export interface CanvasCard {
+  id: string;
+  role: string;
+  kind: string;
+  title: string;
+  summary: string | null;
+  attempt_no: number | null;
+  round_id: string | null;
+  state: string;
+  call_id: string | null;
+  material: Material | null;
+  at: string | null;
+  sequence: number;
+  source: { kind: string; sequence: number } | null;
 }
