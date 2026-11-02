@@ -56,7 +56,7 @@ export function ResearchDesk({
       <div className="desk-heading">
         <span className="eyebrow">
           {scene?.kind === "preparation"
-            ? "研究准备现场 · 尚未启动正式运行"
+            ? "研究准备现场 · 此记录不是正式运行"
             : "研究现场"}
         </span>
         <button

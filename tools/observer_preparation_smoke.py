@@ -23,7 +23,7 @@ def main():
                 browser=driver.chromium.launch();page=browser.new_page(viewport=dict(width=1440,height=1000));errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
                 page.goto(f'http://127.0.0.1:{port}/?'+urlencode(dict(task=task['id'],run=ref['id'])))
                 expect(page.get_by_label('选择运行',exact=True).locator('option:checked')).to_contain_text('准备记录')
-                expect(page.locator('.research-desk')).to_contain_text('尚未启动正式运行')
+                expect(page.locator('.research-desk')).to_contain_text('此记录不是正式运行')
                 expect(page.locator('[data-module="onboard"]')).to_contain_text('结果待确认')
                 worker=page.locator('.worker').filter(has_text='cat task-input.py');expect(worker).to_be_visible();worker.click()
                 expect(page.get_by_label('工作详情',exact=True)).to_contain_text('cat task-input.py')
