@@ -6,7 +6,7 @@ import { poll } from "./poll";
 import { Activity } from "./Activity";
 import { Inspection, MaterialReader } from "./Inspection";
 import type { Material } from "./types";
-import { Alert, Badge, label, time } from "./components";
+import { Alert, Badge, label, time, preparationLabel } from "./components";
 import type {
   Envelope,
   Overview,
@@ -550,7 +550,9 @@ export default function App() {
               <span className={`status-dot ${scene?.execution ?? ""}`} />
               <strong>
                 {scene
-                  ? label(scene.execution)
+                  ? scene.kind === "preparation"
+                    ? preparationLabel(scene.execution)
+                    : label(scene.execution)
                   : runId
                     ? "读取运行中"
                     : "未选择运行"}
@@ -648,6 +650,19 @@ export default function App() {
             key={runId}
             scene={scene}
             hidden={!!material}
+            onOpen={(item, opener) => {
+              materialPositions.current = [
+                ...document.querySelectorAll(
+                  ".main,.inspector-content,.work-scroll,.worker-scroll",
+                ),
+              ].map((element) => ({
+                element,
+                top: element.scrollTop,
+                left: element.scrollLeft,
+              }));
+              materialOpener.current = opener;
+              setMaterial(item);
+            }}
             onChoose={(attempt) => {
               change({ attempt: String(attempt), call: null });
               setDetail(true);

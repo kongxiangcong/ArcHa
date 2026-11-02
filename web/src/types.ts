@@ -291,6 +291,8 @@ export interface WorkerSummary {
   activity_note: string;
 }
 export interface Workbench {
+  preparation_materials?: Material[];
+  kind?: "preparation" | "execution";
   timeline: {
     id: string;
     title: string;

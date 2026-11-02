@@ -333,10 +333,13 @@ class ObserverAdapter:
                 relative = ()
             task['topic'] = relative[3] if len(relative) > 3 and relative[2] == 'topics' else 'legacy'
         self._link_revisions()
+        from .preparation import discover
+        self.run_rows.extend(discover(self, db['events']))
+        self.run_numbers = {r['run_id']: n for n, r in enumerate(self.run_rows, 1)}
         if self.topics is not None:
             visible = {(r['execution_task_id'], r['revision']) for r in self.revisions.values()
                        if r.get('research_task_id') in self.tasks}
-            self.run_rows = [r for r in self.run_rows if (r['task_id'], r['revision']) in visible]
+            self.run_rows = [r for r in self.run_rows if (r['task_id'], r['revision']) in visible or bool(r.get('_owners', set()) & self.tasks.keys())]
         self.discovery_at = __import__('time').monotonic()
 
     def _brief(self, path):
@@ -525,7 +528,7 @@ class ObserverAdapter:
             self._discover()
             linked_revs = {r['id'] for t in self.tasks.values() for r in t['revision_refs']}
             revision_refs = [ref(r, r['execution_task_id'] + ' / ' + r['revision']) for r in self.revisions.values() if r['id'] not in linked_revs and self.topics is None]
-            unlinked = [self._run_ref(r) for r in self.run_rows if not any(rv['execution_task_id'] == r.get('task_id') and rv['revision'] == r.get('revision') and rv['id'] in linked_revs for rv in self.revisions.values())]
+            unlinked = [self._run_ref(r) for r in self.run_rows if not any(rv['execution_task_id'] == r.get('task_id') and rv['revision'] == r.get('revision') and rv['id'] in linked_revs for rv in self.revisions.values()) and not r.get('_owners')]
             return self.envelope(dict(project=self.project, maps=self.maps,
                                       tasks=[self._public(t) for t in self.tasks.values()],
                                       unlinked_revisions=revision_refs, unlinked_runs=unlinked,
@@ -554,7 +557,7 @@ class ObserverAdapter:
             if task is None:
                 raise ObserverError(404, 'not_found', '未知研究任务')
             revisions = [r for r in self.revisions.values() if any(x['id'] == r['id'] for x in task['revision_refs'])]
-            rows = [r for r in self.run_rows if any(rv['execution_task_id'] == r.get('task_id') and rv['revision'] == r.get('revision') for rv in revisions)]
+            rows = [r for r in self.run_rows if any(rv['execution_task_id'] == r.get('task_id') and rv['revision'] == r.get('revision') for rv in revisions) or ident in r.get('_owners', set())]
             return self.envelope(dict(task=self._public(task), briefs=[self.briefs[b['id']] for b in task['briefs']],
                                       revisions=[self._public(r) for r in revisions], runs=[self._run_ref(r) for r in rows],
                                       artifacts=[self.artifact_registry[a]['dto'] for a in dict.fromkeys(
@@ -577,6 +580,8 @@ class ObserverAdapter:
             rows = self._db(tables_to_read=('runs',))['runs']
         except ObserverError:
             rows = []
+        self._discover()
+        rows = rows + [r for r in self.run_rows if r.get('_preparation')]
         rows = rows or self.run_rows
         for row in rows:
             if self._id('run', row['run_id']) == ident:
@@ -584,6 +589,8 @@ class ObserverAdapter:
         raise ObserverError(404, 'not_found', '未知运行记录')
 
     def _run_dir(self, row):
+        if row.get('_preparation'):
+            return None
         project_id = self.project.get('source_project_id')
         if not project_id:
             return None

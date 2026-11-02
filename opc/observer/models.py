@@ -361,6 +361,9 @@ class WorkHandoff(DTO):
 
 
 class Workbench(DTO):
+    kind: str = "execution"
+    preparation: dict | None = None
+    preparation_materials: list[dict] = Field(default_factory=list)
     timeline: list[ProgressEvent] = Field(default_factory=list)
     handoffs: list[WorkHandoff] = Field(default_factory=list)
     id: str

@@ -352,6 +352,8 @@ python -m opc.observer --project /absolute/path/to/project --control
 
 研究现场同步展示工作推进、模块调用状态、真实工具活动和已保存输入交接。未知执行不显示为思考；关系只在新交接时短暂激活。回看演进只读已有记录。默认不自动切换历史运行；勾选“跟随此任务的当前运行”后，只跟随唯一的执行中运行，多候选时需明确选择。专题切换保留各自阅读位置与选择。
 
+准备过程也会作为“准备记录”显示在对应专题任务下，即使尚无正式 Run 或合同。它来自 preparation 事件范围，准备就绪不等于研究完成；新 onboard/reviewer 调用登记自己的日志归属，旧 runtime 未登记的活动不按最近日志猜测。准备入口仅供观察，不提供正式 Run 控制。部署已有项目需核对其 `.opc/runtime` 版本；重新构建前端不会补回旧运行未保存的调用归属。
+
 前端开发可运行 `npm --prefix web run dev`，Vite 会将 API 转发至本地 Python 服务。生产构建输出到 `opc/observer/static/`，该目录不提交，但构建后打包的 wheel 包含它；安装这种 wheel 后运行观察器不需要 Node。没有安装 observer extra 时原有 `opc` CLI 继续独立工作。只安装源包而未构建前端时，观察服务会明确提示构建命令。
 
 后端可选依赖锁定在 `pyproject.toml`，前端与传递依赖锁定在 `web/package-lock.json`。升级 ArcHa 时，在 `opc/observer/adapter.py` 核对变化的路径、账本列、冻结合同和 provider 日志映射；前端消费 `/api/observer/v1` DTO，控制模式另使用 `/api/control/v1` 的请求与查询。实体及接口模型见 `opc/observer/models.py`，服务的 `/openapi.json` 可读取生成的合同。升级后运行以下离线检查，不要求模型密钥：

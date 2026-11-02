@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import type { Workbench } from "./types";
-import { label, time } from "./components";
+import type { Workbench, Material } from "./types";
+import { label, time, preparationLabel } from "./components";
 
 const modules = [
+  { role: "onboard", title: "研究准备", description: "接入评价与准备研究条件" },
   { role: "expert", title: "研究协调", description: "提出方向与解释反馈" },
   { role: "designer", title: "实施", description: "形成工作与研究产出" },
   { role: "evaluator", title: "评价", description: "检查实际结果" },
@@ -14,10 +15,12 @@ export function ResearchDesk({
   scene,
   hidden,
   onChoose,
+  onOpen,
 }: {
   scene?: Workbench;
   hidden: boolean;
   onChoose: (attempt: number) => void;
+  onOpen: (material: Material, opener: HTMLElement) => void;
 }) {
   const seen = useRef<Set<string> | null>(null);
   const [pulses, setPulses] = useState<string[]>([]);
@@ -51,7 +54,11 @@ export function ResearchDesk({
   return (
     <section className="research-desk" hidden={hidden} aria-label="议题研究桌">
       <div className="desk-heading">
-        <span className="eyebrow">研究现场</span>
+        <span className="eyebrow">
+          {scene?.kind === "preparation"
+            ? "研究准备现场 · 尚未启动正式运行"
+            : "研究现场"}
+        </span>
         <button
           className="link-button"
           aria-expanded={history}
@@ -63,10 +70,17 @@ export function ResearchDesk({
       <div className="research-stage">
         <div className="stage-focus">
           <p className="stage-kicker">
-            {scene ? label(scene.execution) : "等待选择运行"} ·{" "}
+            {scene
+              ? scene.kind === "preparation"
+                ? preparationLabel(scene.execution)
+                : label(scene.execution)
+              : "等待选择运行"}{" "}
+            ·{" "}
             {pending.length
               ? `${pending.length} 次调用尚待结果`
-              : "当前没有待结果调用"}
+              : scene?.kind === "preparation"
+                ? "已保存准备状态；当前调用活动未确认"
+                : "当前没有待结果调用"}
           </p>
           <h2>{scene?.goal ?? "从一个议题，走进正在发生的研究。"}</h2>
           <div
@@ -127,7 +141,10 @@ export function ResearchDesk({
                     ? `${waiting.length} 次已派发 · 结果待确认`
                     : latestCall
                       ? label(latestCall.state)
-                      : "暂无调用"}
+                      : scene?.kind === "preparation" &&
+                          module.role === "onboard"
+                        ? "调用活动归属未登记"
+                        : "暂无调用"}
                 </span>
               </div>
             );
@@ -155,6 +172,20 @@ export function ResearchDesk({
           </span>
         )}
       </div>
+      {scene?.preparation_materials?.length ? (
+        <div className="prepared-materials">
+          <strong>准备材料</strong>
+          {scene.preparation_materials.map((material) => (
+            <button
+              key={material.id}
+              className="link-button"
+              onClick={(event) => onOpen(material, event.currentTarget)}
+            >
+              {material.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {history && (
         <ol className="evolution t-panel-reveal" aria-label="研究演进记录">
           {scene?.timeline.map((item) => (

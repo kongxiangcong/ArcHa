@@ -168,12 +168,16 @@ def workbench(adapter, ident):
     run_dir = adapter._run_dir(row)
     contract = adapter._read(run_dir / 'frozen/task.json', json_file=True, default={}) if run_dir else {}
     goal = text(mapping(contract).get('goal'))
+    if row.get('_preparation'):
+        owner = next((t for t in adapter.tasks.values() if t['id'] in row.get('_owners', set())), None)
+        goal = owner['title'] if owner else '研究准备'
+
     from .control import capability
     unfinished = [c for c in calls if c['state'] in ('pending', 'unknown')]
     recent = [c for c in calls if c['state'] not in ('pending', 'unknown')][-200:]
     visible_calls = sorted(unfinished + recent, key=lambda c: calls.index(c))
     timeline = []
-    names = {'expert_decision': '研究方向已更新', 'work_reconsidered': '工作安排已修订',
+    names = {'preparation': '研究准备状态已更新', 'preparation_candidate': '准备产物已保存', 'expert_decision': '研究方向已更新', 'work_reconsidered': '工作安排已修订',
              'candidate_saved': '候选成果已保存', 'deliverables_saved': '任务产出已保存',
              'conclusion': '反馈分析已记录', 'expert_stop': '研究推进已收束',
              'promotion_report': '交付检查已返回'}
@@ -181,7 +185,7 @@ def workbench(adapter, ident):
         body = event['body']
         title = names.get(event['kind'])
         if event['kind'] == 'call_dispatched':
-            title = {'expert': '研究协调已派发', 'designer': '实施工作已派发',
+            title = {'onboard': '研究准备已派发', 'expert': '研究协调已派发', 'designer': '实施工作已派发',
                      'evaluator': '评价已派发', 'reviewer': '独立审核已派发'}.get(body.get('role'), '工作调用已派发')
         elif event['kind'] in ('worker_call', 'evaluation_call'):
             title = '调用结果未知' if (body.get('state') == 'unknown' or body.get('ok') is None) else '调用已返回' if body.get('ok') else '调用未成功'
@@ -204,14 +208,29 @@ def workbench(adapter, ident):
                 key = str(event['seq']) + ':' + str(source['attempt_no']) + ':' + str(dependency['artifact'])
                 handoffs[key] = dict(id=key, source=source['title'], target=item['title'],
                                      attempt_no=item['attempt_no'], at=event.get('at'))
-    data = dict(timeline=timeline[-100:], handoffs=list(handoffs.values())[-100:], id=ident, source_run_id=row['run_id'], display_label=adapter._run_ref(row)['display_label'], execution=row.get('state') or 'unknown',
+    data = dict(kind='preparation' if row.get('_preparation') else 'execution', preparation=row.get('_preparation_state'), timeline=timeline[-100:], handoffs=list(handoffs.values())[-100:], id=ident, source_run_id=row['run_id'], display_label=adapter._run_ref(row)['display_label'], execution=row.get('state') or 'unknown',
                 goal=goal, stop_reason=stop_description(row), result=user_result(adapter, row, events, closure),
                 control=capability(adapter, row),
                 control_request=None,
                 workers=visible_calls, workers_truncated=len(visible_calls) < len(calls), work_count=len(work),
                 availability='partial' if row.get('_snapshot') or not goal else 'available',
                 observation_note='显示最后已知记录；派发记录不代表执行仍然存活')
-    if adapter.control_enabled:
+    data['preparation_materials'] = []
+    if row.get('_preparation'):
+        data['result'] = dict(complete=None, reason=row['_preparation_state'].get('reason'), gaps=None)
+        data['observation_note'] = '研究准备事件范围；尚非正式 Run。旧记录未登记调用归属时，执行情况未知；无需重跑准备。'
+        paths = []
+        for task in adapter.tasks.values():
+            if task['id'] in row.get('_owners', set()):
+                paths.extend([task['_path'], task['_path'].parent / 'task-brief.md'])
+        paths.extend(adapter.artifact_registry[rv['contract_artifact_id']]['path'] for rv in adapter.revisions.values()
+                     if rv.get('research_task_id') in row.get('_owners', set()))
+        for path in dict.fromkeys(paths):
+            if adapter._allowed(path) and path.is_file():
+                artifact = adapter._register(path, phase='task')
+                data['preparation_materials'].append(dict(id=artifact['id'], name=adapter._display(path),
+                    purpose='研究准备材料', availability=artifact['availability'], note=None))
+    if adapter.control_enabled and not row.get('_preparation'):
         from .control import read_requests, view
         latest = read_requests(adapter, row['run_id'])
         data['control_request'] = adapter.control_service.observe(row, latest) if latest and hasattr(adapter, 'control_service') else view(adapter, row, latest) if latest else None

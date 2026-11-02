@@ -85,6 +85,16 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
     ledger = Ledger(root / ".opc/local/ledger.sqlite3")
     with ledger.writer():
         rid = ledger.preparation_scope(task_id)
+        def observed_call(worker, role, prompt, log, mode, provider):
+            ident = 'preparation-call-' + role + '-' + log.parent.name + '-' + log.name
+            ledger.event(rid, 'call_dispatched', None, call_id=ident, role=role,
+                         inputs=dict(brief_input=brief_identity, task_id=task_id, revision=revision),
+                         activity_log=dict(provider=provider, path=str(log / (role + '-events.jsonl'))))
+            call, text = worker._run(role, prompt, root, log, mode, None)
+            ledger.event(rid, 'worker_call', None, call_id=ident, role=role,
+                         ok=call.ok, state=call.extra.get('state'), error=call.error,
+                         session_id=call.extra.get('session_id') or getattr(call, 'call_id', None), log_dir=str(log))
+            return call, text
         def finish(state, reason, **fields):
             owner = "external prerequisite owner" if state == "external_blocked" else "agent"
             if state in ("accounting_unknown", "budget_exhausted"):
@@ -240,7 +250,7 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                 prompt += ("\nChanged preparation inputs: " + json.dumps(changed_inputs) +
                            "\nRetain unaffected checks and evidence; rerun only checks affected by these changes. "
                            "Prior evidence: " + json.dumps(candidate["evidence"]))
-            call, text = worker._run("onboard", prompt, root, log, "workspace-write", None)
+            call, text = observed_call(worker, "onboard", prompt, log, "workspace-write", worker_spec.kind)
             ledger.charge(rid, None, "onboard", call.cost)
             ledger.charge(rid, None, "preparation overhead", Cost(max(0, time.monotonic()-started-call.cost.wall_seconds), 0, 0))
             if not call.extra.get("usage_complete", False):
@@ -311,12 +321,12 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
         ledger.event(rid, "worker_configuration", role="reviewer", backend=review_spec.kind,
                      options=review_spec.options, source=CONFIG_PATH)
         files = preparation_files(root, task_id, revision)
-        rc, reply = review._run("reviewer", "Review the task-required preparation checks and probe receipts. "
+        rc, reply = observed_call(review, "reviewer", "Review the task-required preparation checks and probe receipts. "
             "Verify against the confirmed brief without executing formal device experiments. "
             "Software checks prove tooling only. Accept only when independent acceptance is preserved. "
             "Return JSON {verdict: accept|reject, reason: text}. Evidence: " + json.dumps(evidence) +
             "\nBrief: " + (load_brief_text(root, brief) if brief else "read task contracts"),
-            root, log / "reviewer", "read-only", None)
+            log / "reviewer", "read-only", review_spec.kind)
         ledger.charge(rid, None, "reviewer", rc.cost)
         if not rc.extra.get("usage_complete", False):
             ledger.event(rid, "accounting_unknown", None, reason="review usage missing",

@@ -14,6 +14,9 @@ export const labels: Record<string, string> = {
   completed: "已完成",
   pending: "已派发，结果待确认",
   finished: "调用已结束",
+  onboard: "研究准备",
+  ready: "准备就绪",
+  external_blocked: "准备受外部条件阻塞",
   designer: "Designer",
   expert: "Expert",
   evaluator: "Evaluator",
@@ -36,4 +39,19 @@ export function Alert({ error, stale }: { error?: string; stale?: boolean }) {
       {error}
     </div>
   ) : null;
+}
+
+export function preparationLabel(value: string) {
+  return (
+    (
+      {
+        pending: "准备尚未就绪",
+        ready: "准备就绪",
+        unknown: "准备状态待确认",
+        external_blocked: "准备受外部条件阻塞",
+        accounting_unknown: "准备计量待确认",
+        budget_exhausted: "准备额度已用尽",
+      } as Record<string, string>
+    )[value] ?? label(value)
+  );
 }
