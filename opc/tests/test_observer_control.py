@@ -56,14 +56,39 @@ def request(origin, path, body=None, headers=None):
         return response.status, json.load(response)
 
 
-def until(predicate, seconds=10):
-    end = time.monotonic() + seconds
-    while time.monotonic() < end:
+def until(predicate, seconds=10, *, progress=None, max_seconds=None):
+    started = time.monotonic()
+    end = started + (max_seconds if max_seconds is not None else seconds)
+    idle_end = started + seconds
+    previous = None
+    while time.monotonic() < min(end, idle_end):
         value = predicate()
         if value:
             return value
+        if progress is not None:
+            current = progress()
+            if current != previous:
+                previous = current
+                idle_end = time.monotonic() + seconds
         time.sleep(.02)
-    raise AssertionError('bounded wait expired')
+    raise AssertionError('bounded wait expired; last execution progress: %r' % (previous,))
+
+
+@pytest.mark.parametrize('mode', ['progress', 'stalled', 'never_ready'])
+def test_bounded_wait_tracks_progress_but_still_limits_idle_and_total_time(monkeypatch, mode):
+    from types import SimpleNamespace
+    clock = [0.0]
+    monkeypatch.setattr(sys.modules[__name__], 'time', SimpleNamespace(
+        monotonic=lambda: clock[0], sleep=lambda interval: clock.__setitem__(0, clock[0] + interval)))
+    # Real milestones can take more than one idle window in total. A stalled
+    # milestone still fails after one window; even endless progress is bounded.
+    progress = lambda: min(int(clock[0] / .6), 1) if mode == 'stalled' else int(clock[0] / .6)
+    if mode == 'progress':
+        assert until(lambda: clock[0] >= 2, seconds=1, progress=progress, max_seconds=3)
+    else:
+        with pytest.raises(AssertionError, match='last execution progress'):
+            until(lambda: False, seconds=1, progress=progress, max_seconds=3)
+        assert 1.6 <= clock[0] < 1.7 if mode == 'stalled' else 3 <= clock[0] < 3.1
 
 
 def run_path(origin, rid):
@@ -469,7 +494,22 @@ def test_resume_concurrent_services_and_already_running_do_not_duplicate_executi
             with ThreadPoolExecutor(max_workers=2) as pool:
                 replies = list(pool.map(lambda origin: request(origin, path, {'request_id': 'shared-resume', 'action': 'resume'}), [first, second]))
             assert sorted(code for code, _ in replies) == [200, 202]
-            until(ready.exists)
+
+            def execution_progress():
+                record = dict(engine.ledger.db.execute(
+                    'SELECT status,reason FROM control_requests WHERE request_id=?', ('shared-resume',)).fetchone())
+                run = dict(engine.ledger.run(rid))
+                events = [(event['seq'], event['kind']) for event in engine.ledger.events(rid)[-5:]]
+                calls = [(call['call_id'], call['role'], call['state']) for call in engine.ledger.calls(rid)]
+                state = dict(request=record, run=run['state'], reason=run['stop_reason'], events=events, calls=calls)
+                assert record['status'] not in ('failed', 'superseded'), state
+                assert run['state'] not in ('blocked', 'closed'), state
+                return state
+
+            # This handshake is after restoration, Git workspaces, design and
+            # evaluator startup, not just HTTP acceptance. Keep the original
+            # ten-second no-progress limit, with a sixty-second absolute cap.
+            until(ready.exists, progress=execution_progress, max_seconds=60)
             code, already = request(second, path, {'request_id': 'already-running', 'action': 'resume'})
             assert code == 202 and already['data']['status'] == 'applied'
             assert '未重复启动' in already['data']['reason']
