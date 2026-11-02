@@ -1,6 +1,8 @@
+import { ResizeCard } from "./ResizeCard";
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { poll } from "./poll";
 import { enc, get, useResource } from "./api";
 import { Alert, label } from "./components";
 import type { Material, InspectionData, Content, Envelope } from "./types";
@@ -22,7 +24,7 @@ export function Inspection({
 }) {
   const resource = useResource<InspectionData>(
     `/runs/${enc(run)}/attempts/${attempt}/inspection${call ? "?call=" + enc(call) : ""}`,
-    0,
+    1500,
     revision,
   );
   const data = resource.value?.data;
@@ -58,10 +60,9 @@ export function Inspection({
             </div>
           )}
           {data.output?.summary && (
-            <div className="handoff-output">
-              <h4>记录的输出</h4>
+            <ResizeCard title="记录的输出">
               <p>{data.output.summary}</p>
-            </div>
+            </ResizeCard>
           )}
           <h4>任务文件与产出</h4>
           {!data.materials.length && (
@@ -100,12 +101,27 @@ export function MaterialReader({
     pending: boolean;
   }>({ id: material.id, pages: [], pending: true });
   const heading = useRef<HTMLHeadingElement>(null);
+  const pagesRef = useRef<Content[]>([]);
+  const busy = useRef(false);
+  const alive = useRef(true);
   async function read(offset = 0) {
+    if (busy.current) return;
+    busy.current = true;
     setState((old) => ({ ...old, pending: true, error: undefined }));
     try {
       const value: Envelope<Content> = await get(
         `/artifacts/${enc(material.id)}/content?offset=${offset}&limit=65536`,
       );
+      if (!alive.current) return;
+      if (
+        offset &&
+        pagesRef.current[0]?.content_version !== value.data.content_version
+      ) {
+        throw new Error("内容已更新，正在重新读取当前版本");
+      }
+      pagesRef.current = offset
+        ? [...pagesRef.current, value.data]
+        : [value.data];
       setState((old) =>
         old.id === material.id
           ? {
@@ -116,21 +132,64 @@ export function MaterialReader({
           : old,
       );
     } catch (error) {
+      if (!alive.current) return;
       setState((old) => ({
         ...old,
         error: (error as Error).message,
         pending: false,
       }));
+    } finally {
+      busy.current = false;
     }
   }
   useEffect(() => {
-    void read();
+    alive.current = true;
+    const stop = poll(async () => {
+      // Re-read only the already opened extent, never mix pages from different versions.
+      const count = Math.max(1, pagesRef.current.length);
+      if (busy.current) return;
+      busy.current = true;
+      try {
+        const pages: Content[] = [];
+        let offset = 0;
+        for (let i = 0; i < count; i++) {
+          const value = await get<Content>(
+            `/artifacts/${enc(material.id)}/content?offset=${offset}&limit=65536`,
+          );
+          if (
+            pages.length &&
+            pages[0].content_version !== value.data.content_version
+          )
+            return;
+          pages.push(value.data);
+          if (value.data.eof) break;
+          offset = value.data.next_offset ?? 0;
+        }
+        if (alive.current) {
+          pagesRef.current = pages;
+          setState({ id: material.id, pages, pending: false });
+        }
+      } catch (error) {
+        if (alive.current)
+          setState((old) => ({
+            ...old,
+            error: (error as Error).message,
+            pending: false,
+          }));
+      } finally {
+        busy.current = false;
+      }
+    }, 1500);
     heading.current?.focus();
+    return () => {
+      alive.current = false;
+      stop();
+    };
   }, [material.id]);
   const current = state.pages.at(-1),
     content = state.pages.map((page) => page.content).join("");
   return (
-    <section className="material-reader" aria-label="任务文件阅读">
+    <section className="material-reader t-page-slide" aria-label="任务文件阅读">
       <div className="reader-heading">
         <button className="btn" onClick={onClose}>
           返回工作现场

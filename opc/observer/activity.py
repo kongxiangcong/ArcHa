@@ -137,7 +137,7 @@ def activity(adapter, ident, cursor=None, limit=100):
             obj = action['object'].replace('\\', '/') if action and action['object'] else ''
             if obj and (any(internal.replace('\\', '/') in obj for internal in
                     (str(adapter.root / '.opc/local'), '.opc/local/', str(path.parent))) or
-                    re.search(r"\.opc/research/tasks/(?:[^\s\"';|]+/)?evidence(?:/|$)", obj)):
+                    re.search(r"\.opc/research/(?:topics/[^/]+/)?tasks/(?:[^\s\"';|]+/)?evidence(?:/|$)", obj)):
                 continue
             if action:
                 previous = state['actions'].get(action['id'])
@@ -169,4 +169,4 @@ def activity(adapter, ident, cursor=None, limit=100):
     selected = pending + completed[-max(0, limit - len(pending)):] if len(pending) < limit else pending[:limit]
     next_cursor = base64.urlsafe_b64encode(json.dumps(dict(call=ident, identity=identity, offset=state['offset'], prefix=base64.b64encode(prefix).decode())).encode()).decode()
     return adapter.envelope(dict(call_id=ident, actions=selected, availability='available', note='动作已开始，结果待确认；日志不代表执行仍然存活' if pending else '显示已记录的具体活动',
-                                 reset=reset, truncated=state['truncated'] or len(actions) > limit, has_more=state['offset'] < stat.st_size and end == len(chunk)), next_cursor=next_cursor)
+                                 reset=reset, truncated=state['truncated'] or len(actions) > limit, has_more=state['offset'] < stat.st_size and (end > 0 or len(chunk) == READ_BYTES)), next_cursor=next_cursor)

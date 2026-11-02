@@ -78,6 +78,7 @@ export interface Metric {
   source_refs: SourceRef[];
 }
 export interface Task extends Ref {
+  topic: string;
   title: string;
   research_task_id: string | null;
   map_artifact_id: string | null;
@@ -290,6 +291,19 @@ export interface WorkerSummary {
   activity_note: string;
 }
 export interface Workbench {
+  timeline: {
+    id: string;
+    title: string;
+    at: string | null;
+    attempt_no: number | null;
+  }[];
+  handoffs: {
+    id: string;
+    source: string;
+    target: string;
+    attempt_no: number;
+    at: string | null;
+  }[];
   id: string;
   display_label: string;
   source_run_id: string;

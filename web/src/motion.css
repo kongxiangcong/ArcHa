@@ -1,0 +1,356 @@
+/* Adapted from transitions.dev e3aefb5: card-resize, panel-reveal, page-side-by-side.
+   See third-party/transitions.dev.LICENSE. No graph position transforms are owned here. */
+:root {
+  --resize-dur: 250ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+.t-resize {
+  transition:
+    width var(--resize-dur) var(--motion-ease),
+    height var(--resize-dur) var(--motion-ease),
+    background-color 160ms;
+}
+.t-panel-reveal {
+  animation: panel-reveal 260ms var(--motion-ease) both;
+}
+.t-page-slide {
+  animation: page-slide 250ms var(--motion-ease) both;
+}
+@keyframes panel-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes page-slide {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.follow-bar,
+.desk-heading {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.follow-bar {
+  font-size: 12px;
+  padding: 4px 0 10px;
+}
+.research-desk {
+  border: 1px solid var(--line, #ccd1d8);
+  border-radius: 12px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+}
+.desk-heading {
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.handoff-strip {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.handoff-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line, #ccd1d8);
+  border-radius: 8px;
+  padding: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.handoff-card small {
+  opacity: 0.7;
+}
+.handoff-path {
+  opacity: 0.45;
+}
+.handoff-card.activated .handoff-path {
+  animation: handoff-activate 600ms var(--motion-ease) 1;
+}
+@keyframes handoff-activate {
+  0% {
+    opacity: 0.2;
+    transform: translateX(-4px);
+  }
+  45% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.45;
+    transform: translateX(0);
+  }
+}
+.evolution {
+  max-height: 180px;
+  overflow: auto;
+  font-size: 12px;
+  padding-left: 20px;
+}
+.evolution li {
+  padding: 5px 0;
+}
+.evolution time {
+  opacity: 0.65;
+}
+.activity canvas {
+  flex-shrink: 0;
+}
+@media (max-width: 680px) {
+  .research-desk {
+    padding: 10px;
+  }
+  .handoff-card {
+    flex-wrap: wrap;
+  }
+  .selectors {
+    flex-wrap: wrap;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .t-resize,
+  .t-panel-reveal,
+  .t-page-slide,
+  .handoff-card.activated .handoff-path {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.research-desk {
+  background: linear-gradient(
+    125deg,
+    rgba(142, 153, 143, 0.08),
+    transparent 65%
+  );
+  border-color: var(--line);
+}
+.research-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 1fr);
+  gap: 32px;
+  padding: 10px 0 20px;
+}
+.stage-focus {
+  align-self: center;
+  min-width: 0;
+}
+.stage-focus h2 {
+  font-size: clamp(20px, 2vw, 30px);
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  line-height: 1.45;
+  margin: 8px 0 18px;
+  max-width: 40ch;
+}
+.stage-kicker {
+  font-size: 11px;
+  opacity: 0.65;
+  margin: 0;
+}
+.latest-change {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  min-height: 28px;
+}
+.latest-change time {
+  opacity: 0.6;
+  font-size: 11px;
+}
+.change-mark,
+.module-mark {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+  flex-shrink: 0;
+}
+.latest-change.arrived .change-mark {
+  animation: change-arrival 600ms ease-out 1;
+}
+@keyframes change-arrival {
+  from {
+    box-shadow: 0 0 0 0 currentColor;
+    opacity: 1;
+  }
+  to {
+    box-shadow: 0 0 0 9px transparent;
+    opacity: 0.35;
+  }
+}
+.module-presence {
+  display: grid;
+  gap: 4px;
+  border-left: 1px solid var(--line);
+  padding-left: 22px;
+}
+.module-state {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border-radius: 8px;
+}
+.module-state.pending {
+  background: rgba(120, 144, 130, 0.12);
+}
+.module-state.failed,
+.module-state.unknown {
+  border: 1px solid rgba(170, 110, 70, 0.4);
+}
+.module-state strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.module-state small {
+  display: block;
+  font-size: 10px;
+  opacity: 0.6;
+  margin-top: 3px;
+}
+.module-fact {
+  margin-left: auto;
+  font-size: 10px;
+  max-width: 15ch;
+}
+.module-state.pending .module-mark {
+  opacity: 0.85;
+}
+.module-fact {
+  animation: panel-reveal 220ms var(--motion-ease) both;
+}
+.stage-result {
+  font-size: 12px;
+  line-height: 1.6;
+  opacity: 0.8;
+}
+.work-row {
+  animation: panel-reveal 220ms var(--motion-ease) both;
+}
+.work-copy {
+  min-width: 0;
+}
+.work-meta {
+  white-space: normal;
+}
+@media (min-width: 1100px) {
+  .content {
+    min-height: 240px;
+  }
+}
+@media (max-width: 900px) {
+  .research-stage {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .module-presence {
+    border-left: 0;
+    padding-left: 0;
+    grid-template-columns: 1fr 1fr;
+  }
+  .module-state {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 500px) {
+  .module-presence {
+    grid-template-columns: 1fr;
+  }
+  .stage-focus h2 {
+    font-size: 21px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .latest-change.arrived .change-mark,
+  .module-fact,
+  .work-row {
+    animation: none !important;
+  }
+}
+
+/* Give the research stage and task/worker panes real room at every viewport height. */
+.main {
+  overflow: auto;
+}
+.heading {
+  padding: 8px 36px 10px;
+  flex-shrink: 0;
+}
+.heading .eyebrow {
+  display: none;
+}
+.heading h1 {
+  font-size: 18px;
+  margin: 0;
+}
+.heading .goal {
+  display: none;
+}
+.research-desk {
+  margin: 0 36px 14px;
+  flex-shrink: 0;
+}
+.research-stage {
+  padding: 4px 0 10px;
+  gap: 20px;
+}
+.module-state {
+  padding: 6px 8px;
+}
+.stage-focus h2 {
+  font-size: 22px;
+  line-height: 1.4;
+  margin: 6px 0 12px;
+}
+.content {
+  min-height: 440px;
+  flex-shrink: 0;
+}
+.follow-bar {
+  padding: 8px 36px 0;
+  flex-shrink: 0;
+}
+.selectors,
+.runbar {
+  flex-shrink: 0;
+}
+@media (min-width: 761px) {
+  .inspector {
+    top: var(--inspector-top, 240px);
+    position: fixed;
+    right: 0;
+    bottom: 30px;
+  }
+}
+@media (max-width: 760px) {
+  .research-desk {
+    margin: 0 18px 14px;
+  }
+  .follow-bar {
+    padding: 8px 18px;
+  }
+  .heading {
+    padding: 8px 18px;
+  }
+}

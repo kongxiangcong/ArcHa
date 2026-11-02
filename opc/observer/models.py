@@ -106,6 +106,7 @@ class Project(Entity):
 
 
 class ResearchTask(Entity):
+    topic: str = 'legacy'
     title: str
     research_task_id: str | None = None
     map_artifact_id: str | None = None
@@ -344,7 +345,24 @@ class ControlRequestView(DTO):
     run: dict
 
 
+class ProgressEvent(DTO):
+    id: str
+    title: str
+    at: str | None = None
+    attempt_no: int | None = None
+
+
+class WorkHandoff(DTO):
+    id: str
+    source: str
+    target: str
+    attempt_no: int
+    at: str | None = None
+
+
 class Workbench(DTO):
+    timeline: list[ProgressEvent] = Field(default_factory=list)
+    handoffs: list[WorkHandoff] = Field(default_factory=list)
     id: str
     display_label: str
     source_run_id: str

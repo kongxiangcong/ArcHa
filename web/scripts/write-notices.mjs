@@ -26,6 +26,10 @@ for (const [path, entry] of Object.entries(lock.packages)) {
       `License metadata: ${entry.license ?? "see upstream package metadata"}\n`,
     );
 }
+sections.push(
+  "\n--- Adapted CSS recipes: transitions.dev e3aefb5 ---\n",
+  await readFile(new URL("third-party/transitions.dev.LICENSE", root), "utf8"),
+);
 await writeFile(
   new URL("../opc/observer/static/THIRD_PARTY_NOTICES.txt", root),
   sections.join("\n"),

@@ -335,6 +335,11 @@ python -m opc.observer --demo
 访问 <http://127.0.0.1:8765>。演示模式在独立临时目录生成合成的当前源格式材料，仍由同一读取适配器处理；页面始终标注演示。退出清理临时材料，不访问用户项目。查看真实项目：
 
 ```bash
+# 在目标工程目录内，直接指定单个专题（也接受 --topics / --topic）
+python -m opc.observer .opc/research/topics/decode-pim-mapping
+# 或观察整个 topics 集合；会持续发现新增专题、任务和运行
+python -m opc.observer --topics .opc/research/topics
+# 旧工程入口仍兼容，相对路径也可用
 python -m opc.observer --project /absolute/path/to/project
 # 显式启用本机运行控制（支持暂停、继续同一运行及停止）
 python -m opc.observer --project /absolute/path/to/project --control
@@ -342,6 +347,10 @@ python -m opc.observer --project /absolute/path/to/project --control
 ```
 
 观察器不创建缺失项目或数据库。默认且仅允许绑定 loopback；远程使用既有 SSH 隧道。项目配置明确指定的外置 `artifact_root` 也可读取，其他路径和越界符号链接会被拒绝。Markdown 不执行原始 HTML，外部图片不自动加载，HTML/SVG 原件仅显示源码或下载。页面 URL 保存任务、run、工作、筛选与所选调用；局部刷新保留阅读位置。控制接口只接受同源 JSON 和固定项目目标；重试先查询原请求，不自动补发。继续使用独立本地执行进程，保留原运行、冻结配置、成功回执与累计用量，不依赖页面或 HTTP 连接存活；恢复失败或执行未确认时保留现场，不自动重启。已暂停运行停止时直接由运行端关闭，不先恢复工作；无法确认执行结束时明确提示，停止不代表任务交付成功。演示、只读和缺少执行来源的历史不能控制。
+
+专题路径相对当前 shell 工作目录解析；观察器向祖先定位 `.opc/project.json`，账本和产物始终来自该工程，不能把专题目录当工程根。单专题仅筛选对应研究任务；集合目录支持同名 R01，以专题路径和已有简报交接绑定区分身份。旧研究目录原位保留。
+
+研究现场同步展示工作推进、模块调用状态、真实工具活动和已保存输入交接。未知执行不显示为思考；关系只在新交接时短暂激活。回看演进只读已有记录。默认不自动切换历史运行；勾选“跟随此任务的当前运行”后，只跟随唯一的执行中运行，多候选时需明确选择。专题切换保留各自阅读位置与选择。
 
 前端开发可运行 `npm --prefix web run dev`，Vite 会将 API 转发至本地 Python 服务。生产构建输出到 `opc/observer/static/`，该目录不提交，但构建后打包的 wheel 包含它；安装这种 wheel 后运行观察器不需要 Node。没有安装 observer extra 时原有 `opc` CLI 继续独立工作。只安装源包而未构建前端时，观察服务会明确提示构建命令。
 
@@ -354,6 +363,7 @@ npm --prefix web run typecheck
 npm --prefix web run build
 # 浏览器验收另需 Playwright 与本机 Chromium
 python tools/observer_browser_smoke.py
+python tools/observer_motion_smoke.py
 ```
 
 框架基础安装的回归只需 `python -m pip install -e . pytest` 后运行 `python -m pytest -q`。

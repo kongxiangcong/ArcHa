@@ -23,8 +23,8 @@ class ControlInput(BaseModel):
     action: Literal['pause', 'resume', 'stop']
 
 
-def create_app(root: Path | str, demo=False, *, control=False):
-    adapter = ObserverAdapter(root, demo=demo)
+def create_app(root: Path | str, demo=False, *, control=False, topics=None):
+    adapter = ObserverAdapter(root, demo=demo, topics=topics)
     adapter.control_enabled = bool(control and not demo)
     from .control import ControlService, validate_write
     controller = ControlService(adapter)

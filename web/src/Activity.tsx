@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { ThinkingOrb } from "thinking-orbs";
+import { poll } from "./poll";
 import { enc, get } from "./api";
 import { time } from "./components";
 import type { CallActivity, WorkerSummary } from "./types";
@@ -38,14 +40,20 @@ export function Activity({
       if (pending) return;
       pending = true;
       try {
-        const page = await get<CallActivity>(
-          `/calls/${enc(worker.id)}/activity${cursor ? "?cursor=" + enc(cursor) : ""}`,
-          controller.signal,
-        );
-        if (active) {
+        let more = false;
+        do {
+          const page = await get<CallActivity>(
+            `/calls/${enc(worker.id)}/activity${cursor ? "?cursor=" + enc(cursor) : ""}`,
+            controller.signal,
+          );
+          if (!active) break;
           cursor = page.next_cursor;
+          more = page.data.has_more;
           setState({ id: worker.id, value: page.data });
-        }
+          // Yield between bounded pages so a large terminal tail cannot freeze navigation.
+          if (more)
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        } while (more && active);
       } catch (error) {
         if (active && !controller.signal.aborted)
           setState((old) => ({ ...old, error: (error as Error).message }));
@@ -53,23 +61,37 @@ export function Activity({
         pending = false;
       }
     }
-    void read();
-    const timer =
-      worker.state === "pending"
-        ? setInterval(() => void read(), 1000)
-        : undefined;
+    const stop = poll(read, worker.state === "pending" ? 1000 : 0);
     return () => {
       active = false;
       controller.abort();
-      clearInterval(timer);
+      stop();
     };
   }, [worker.id, worker.state, worker.activity_available, visible]);
   const value = state.id === worker.id ? state.value : undefined;
   const actions = expanded ? value?.actions : value?.actions.slice(-1);
+  const observedBusy =
+    worker.state === "pending" &&
+    !state.error &&
+    value?.actions.some((action) => {
+      const at = Date.parse(action.started_at ?? "");
+      return (
+        action.state === "pending" &&
+        Number.isFinite(at) &&
+        Date.now() - at < 15000
+      );
+    });
   const pendingCount =
     value?.actions.filter((a) => a.state === "pending").length ?? 0;
   return (
     <span className={`activity ${expanded ? "expanded" : ""}`} ref={root}>
+      {observedBusy && visible && (
+        <ThinkingOrb
+          state="working"
+          size={20}
+          aria-label="最近观察到工具动作，结果待确认"
+        />
+      )}
       {state.error && (
         <span className="activity-warning">
           活动更新失败，保留最后记录：{state.error}

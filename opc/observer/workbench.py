@@ -172,7 +172,39 @@ def workbench(adapter, ident):
     unfinished = [c for c in calls if c['state'] in ('pending', 'unknown')]
     recent = [c for c in calls if c['state'] not in ('pending', 'unknown')][-200:]
     visible_calls = sorted(unfinished + recent, key=lambda c: calls.index(c))
-    data = dict(id=ident, source_run_id=row['run_id'], display_label=adapter._run_ref(row)['display_label'], execution=row.get('state') or 'unknown',
+    timeline = []
+    names = {'expert_decision': '研究方向已更新', 'work_reconsidered': '工作安排已修订',
+             'candidate_saved': '候选成果已保存', 'deliverables_saved': '任务产出已保存',
+             'conclusion': '反馈分析已记录', 'expert_stop': '研究推进已收束',
+             'promotion_report': '交付检查已返回'}
+    for event in events:
+        body = event['body']
+        title = names.get(event['kind'])
+        if event['kind'] == 'call_dispatched':
+            title = {'expert': '研究协调已派发', 'designer': '实施工作已派发',
+                     'evaluator': '评价已派发', 'reviewer': '独立审核已派发'}.get(body.get('role'), '工作调用已派发')
+        elif event['kind'] in ('worker_call', 'evaluation_call'):
+            title = '调用结果未知' if (body.get('state') == 'unknown' or body.get('ok') is None) else '调用已返回' if body.get('ok') else '调用未成功'
+        if title:
+            timeline.append(dict(id=str(event['seq']), title=title, at=event.get('at'),
+                                 attempt_no=event.get('attempt_no')))
+    handoffs = {}
+    by_work = {item['work_id']: item for item in work}
+    by_attempt = {item['attempt_no']: item for item in work}
+    for event in events:
+        item = by_attempt.get(event.get('attempt_no'))
+        if event['kind'] != 'call_dispatched' or item is None:
+            continue
+        inputs = mapping(mapping(event['body'].get('inputs')).get('context')).get('handoff', {})
+        for dependency in mapping(inputs).get('inputs', []):
+            if not isinstance(dependency, dict):
+                continue
+            source = by_work.get(dependency.get('work_id'))
+            if source and dependency.get('artifact'):
+                key = str(event['seq']) + ':' + str(source['attempt_no']) + ':' + str(dependency['artifact'])
+                handoffs[key] = dict(id=key, source=source['title'], target=item['title'],
+                                     attempt_no=item['attempt_no'], at=event.get('at'))
+    data = dict(timeline=timeline[-100:], handoffs=list(handoffs.values())[-100:], id=ident, source_run_id=row['run_id'], display_label=adapter._run_ref(row)['display_label'], execution=row.get('state') or 'unknown',
                 goal=goal, stop_reason=stop_description(row), result=user_result(adapter, row, events, closure),
                 control=capability(adapter, row),
                 control_request=None,
