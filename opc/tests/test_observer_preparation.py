@@ -76,3 +76,20 @@ def test_legacy_preparation_receipt_is_visible_without_new_dispatch(tmp_path):
     scene=observer.workbench(ref['id'])['data']
     assert scene['kind']=='preparation' and scene['execution']=='pending' and scene['workers']==[]
     assert scene['preparation_materials']
+
+
+def test_shared_preparation_scope_with_two_brief_origins_is_quarantined(tmp_path):
+    fixture(tmp_path)
+    from opc.tests.test_observer_topics import topic
+    a=topic(tmp_path,'a');b=topic(tmp_path,'b')
+    with sqlite3.connect(tmp_path/'.opc/local/ledger.sqlite3') as db:
+        for index,base in enumerate((a,b)):
+            body=dict(role='onboard',call_id='shared-'+str(index),inputs=dict(brief_input=dict(brief=str((base/'tasks/r01/task-brief.md').relative_to(tmp_path)))))
+            db.execute('INSERT INTO events(run_id,at,kind,body) VALUES(?,?,?,?)',('preparation:shared','2026-11-02','call_dispatched',json.dumps(body)))
+    for scope in (a,b,a.parent):
+        observer=ObserverAdapter(tmp_path,topics=scope)
+        tasks=observer.overview()['data']['tasks']
+        assert all(not observer.research_task(t['id'])['data']['runs'] for t in tasks)
+        assert any(i['code']=='preparation_owner_ambiguous' for i in observer.issues)
+    observer=ObserverAdapter(tmp_path)
+    assert any(r['source_run_id']=='preparation:shared' for r in observer.overview()['data']['unlinked_runs'])

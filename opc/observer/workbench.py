@@ -219,6 +219,8 @@ def workbench(adapter, ident):
     if row.get('_preparation'):
         data['result'] = dict(complete=None, reason=row['_preparation_state'].get('reason'), gaps=None)
         data['observation_note'] = '研究准备事件范围；尚非正式 Run。旧记录未登记调用归属时，执行情况未知；无需重跑准备。'
+        if row.get('_ownership_ambiguous'):
+            data['observation_note'] = '准备来源跨多个专题，归属有歧义；仅在工程未关联准备中显示，未混合到专题。'
         paths = []
         for task in adapter.tasks.values():
             if task['id'] in row.get('_owners', set()):
