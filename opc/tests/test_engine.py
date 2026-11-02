@@ -869,22 +869,30 @@ def test_pause_drains_call_without_dispatching_evaluation(make_project, engine_f
     assert resumed.ledger.attempts(e.run_id)[0]['outcome'] == Outcome.IMPROVEMENT.value
 
 
-def test_stop_cancels_owned_process_without_followup_dispatch(make_project, engine_for, tmp_path, monkeypatch):
+@pytest.mark.parametrize('startup_delay', [0, 2])
+def test_stop_cancels_owned_process_without_followup_dispatch(make_project, engine_for, tmp_path, monkeypatch, startup_delay):
     import threading
-    import time
-    e = engine_for(make_project(strategy=CONTROLLED_DESIGN))
+    strategy = CONTROLLED_DESIGN.replace('import time; from pathlib',
+                                        f'import time; time.sleep({startup_delay}); from pathlib')
+    e = engine_for(make_project(strategy=strategy))
     e.run(max_attempts_now=0)
     worker, observed, release = control_during_design(e, tmp_path, monkeypatch, 'stop')
-    fallback = threading.Timer(2, release.touch)
+    fallback_fired = threading.Event()
+    def emergency_release():
+        fallback_fired.set()
+        release.touch()
+    # A watchdog prevents a broken cancellation from hanging the fixture. Slow
+    # restoration/startup is not cancellation latency: require actual cancelled
+    # receipts before this emergency path can let the child finish naturally.
+    fallback = threading.Timer(20, emergency_release)
     fallback.start()
-    started = time.monotonic()
     try:
         result = e.run(max_attempts_now=1)
+        assert not fallback_fired.is_set(), 'owned process required emergency release instead of cancellation'
     finally:
         fallback.cancel()
         release.touch()
         worker.join(timeout=10)
-    assert time.monotonic() - started < 1.5
     assert result['state'] == 'closed'
     designer = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer']
     assert len(designer) == 1 and designer[0]['state'] == 'cancelled'
