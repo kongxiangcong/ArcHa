@@ -23,3 +23,42 @@ jobs:
         run: python -c "import fastapi, httpx, uvicorn; from fastapi.testclient import TestClient; from opc.observer.api import create_app"
       - name: Test observer installation
         run: python -m pytest -q
+
+  observer-linux:
+    name: Workbench (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install workbench test dependencies
+        run: python -m pip install -e '.[observer,dev]' playwright
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+      - name: Typecheck and build production workbench
+        working-directory: web
+        run: npm run build
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Test observer and topic discovery
+        run: python -m pytest opc/tests/test_observer.py opc/tests/test_observer_topics.py -q
+      - name: Test existing browser paths
+        run: python tools/observer_browser_smoke.py --out work/observer-ci
+      - name: Test live topics and semantic motion
+        run: python tools/observer_motion_smoke.py --out work/observer-motion-ci
+      - name: Save workbench screenshots and checks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workbench-linux-acceptance
+          path: |
+            work/observer-ci/
+            work/observer-motion-ci/
