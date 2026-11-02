@@ -1,12 +1,19 @@
-<p align="center">
-  <img src="docs/assets/archa-icon.svg" width="96" alt="ArcHa icon" />
-</p>
-
 <h1 align="center">ArcHa · Architecture Harness</h1>
 
 <p align="center"><strong>由人定义目标，以实验推进工作，用独立审核交付可信成果。</strong></p>
 <p align="center">探索 Exploration · 优化 Optimization · 开发 Development</p>
-<p align="center"><a href="https://github.com/kongxiangcong/ArcHa">GitHub</a> · <a href="#三步开始一个最小任务">快速开始</a> · <a href="#从一次迭代到可信交付">工作流程</a> · <a href="#当前进度与能力边界">项目状态</a></p>
+<p align="center"><a href="https://github.com/kongxiangcong/ArcHa">GitHub</a> · <a href="#框架总览">框架总览</a> · <a href="#三步开始一个最小任务">快速开始</a> · <a href="#从一次迭代到可信交付">工作流程</a> · <a href="#当前进度与能力边界">项目状态</a></p>
+
+## 框架总览
+
+![ArcHa 工作流程：用户定义目标，专家与设计者迭代推进，经独立审核交付成果](docs/assets/archa-framework.png)
+
+**图 1 · ArcHa 的任务生命周期与执行架构。** 用户设定方向、目标、范围、验收条件和预算；三个技能入口将这些意图转换为可执行任务。实验结果沿 Feedback 回路交给专家分析；独立审核发现的缺口沿 Repair / add evidence 路径返回专家处理。图中展示的是包含独立审核要求的交付流程。
+
+- **任务准备：** `archa-map` 形成研究地图和任务清单；`archa-task` 生成简报并通过 onboard 准备契约；`archa-loop` 启动或恢复执行。首次创建执行 Run 时冻结对应的契约依据。
+- **自动迭代：** Expert 提出假设、proposal、对照与判定方式；Designer 完成开发或调查，交付摘要和原件；需要正式评价时由 Evaluation 执行冻结检查与测量。结果、失败和反例返回 Expert，支持下一步决策。
+- **独立交付：** Expert 选择候选提交与主张版本并请求验收。框架执行完整验收，Reviewer 核查合同要求的需求覆盖、证据充分性及适用边界；缺口回到迭代流程处理，只有满足必需条件才声明完成。
+- **持久化支撑：** 版本化契约明确执行依据，账本与原件保留证据来源，候选和主张保留版本，累计预算与恢复机制维持跨轮次工作的连续性。
 
 ---
 
@@ -59,7 +66,7 @@ ArcHa 的领域事实通过目标项目的 `.opc/` 接入层表达。框架核�
 
 ## 从一次迭代到可信交付
 
-![ArcHa 框架图：用户定义方向与目标，三个技能入口连接专家、设计者、评价与独立审核](docs/assets/archa-framework.png)
+下文对应[框架总览](#框架总览)中的准备、迭代与交付三个阶段。
 
 ### 1. 定义方向与准备任务
 
