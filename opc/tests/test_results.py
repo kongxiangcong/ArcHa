@@ -231,12 +231,14 @@ def test_invalid_worker_plan_cannot_corrupt_results(make_project, engine_for):
     register(root, ENTRY, [dict(key='external/control', experiment_id='E0', question='existing control',
                                 status='completed', refs={}, issues=[])])
     previous = split((root / ENTRY).read_text(encoding="utf-8"))[1]
-    e = use_sequence(engine_for(root), Sequence([plan(1, experiment_id=['not', 'an', 'ID']), stop]))
+    e = use_sequence(engine_for(root), Sequence([plan(1, experiment_id=['not', 'an', 'ID']) for _ in range(3)]))
     result = e.run()
     assert result['state'] == 'blocked' and e.attempt_records() == []
     call = next(c for c in e.ledger.calls(e.run_id) if c['role'] == 'expert')
     assert call['attempt_no'] is None and call['result']['output']['experiment_id'] == ['not', 'an', 'ID']
-    rejection = e.ledger.events(e.run_id, 'expert_rejected')[-1]['body']
+    rejections = e.ledger.events(e.run_id, 'expert_rejected')
+    assert len(rejections) == 3
+    rejection = rejections[0]['body']
     assert rejection['call_id'] == call['call_id'] and 'experiment_id' in rejection['reason']
     assert split((root / ENTRY).read_text(encoding="utf-8"))[1] == previous
 

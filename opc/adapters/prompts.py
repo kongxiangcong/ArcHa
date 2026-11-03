@@ -27,6 +27,9 @@ reopen_conditions ([] if none). Legacy "exhausted"=true closes incomplete."""
 
 def expert_prompt(ctx: dict[str, Any], plain_text_reply: bool = False) -> str:
     rules = (TEXT_REPLY_RULES if plain_text_reply else "") + "\n" + EXHAUSTION_RULE
+    if ctx.get("decision_correction"):
+        rules += ("\nRepair decision_correction.rejected_output using its reason; return a complete decision. "
+                  "The rejected reply was not applied or executed. Corrections consume the same budget.")
     return """EXPERT: Read research.json.
 Read authorized originals; keep contracts.
 knowledge.command: --claim-id/--status/--text/--source.
@@ -58,7 +61,9 @@ delivery_artifacts=[{run_id,attempt,artifact}], distinct from adopted_claims.
 Changed delivery basis needs delivery_basis_review={action,scope,reason,changes}.
 
 Batch: works=[plans], work_id, directions, dependencies=[{work_id,artifact}].
-Dependencies need saved originals; deliverables saves outputs/<path>.
+Dependencies need saved originals. deliverables: concrete relative editable/scratch
+files, never directories/globs (tools/check.py, not tools); saved as outputs/<path>.
+New files are allowed.
 base_work_id selects a candidate dependency. Branches need explicit selection, never
 auto-merge. Formal measurement excludes other compute.
 """ + rules

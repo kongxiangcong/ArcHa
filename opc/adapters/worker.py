@@ -56,7 +56,7 @@ PLAN_SCHEMA: dict[str, Any] = {
 PLAN_SCHEMA["properties"].update({
     "work_id": {"type": ["string", "null"], "description": "stable node identity independent of title; null lets Engine allocate it"},
     "directions": {"type": "array", "items": {"type": "string"}},
-    "deliverables": {"type": "array", "items": {"type": "string"}, "description": "relative editable/scratch file paths to preserve under Attempt outputs/"},
+    "deliverables": {"type": "array", "items": {"type": "string"}, "description": "concrete relative editable/scratch file paths to preserve under Attempt outputs/; no directories or globs; name planned new files explicitly (e.g. tools/check.py, manifests/run.json)"},
     "base_work_id": {"type": ["string", "null"], "description": "use this dependency's saved candidate as the code parent; null uses base_attempt"},
     "dependencies": {"type": "array", "items": {
         "type": "object", "additionalProperties": False, "required": ["work_id", "artifact"],

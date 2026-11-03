@@ -27,7 +27,7 @@ class Branches:
 
     def propose(self, ctx, tree, log_dir):
         self.calls += 1
-        output = {'works': self.works} if self.calls == 1 else stop(ctx)
+        output = {'works': self.works} if self.calls == 1 or ctx.get('decision_correction') else stop(ctx)
         return WorkerCall('expert', True, Cost(), output=output, exhausted=output.get('exhausted', False))
 
     def implement(self, work, ctx, tree, log_dir):
