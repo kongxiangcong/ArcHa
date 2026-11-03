@@ -76,7 +76,7 @@ export function ResearchCanvas({
   );
   const [following, setFollowing] = useState(saved.current?.following ?? true);
   const [folded, setFolded] = useState<string[]>(saved.current?.folded ?? []);
-  const [timelineOpen, setTimelineOpen] = useState(false);
+  const [timelineOpen, setTimelineOpen] = useState(true);
   const [factId, setFactId] = useState<string | null>(null);
   const factHeading = useRef<HTMLHeadingElement>(null);
   const factOpener = useRef<HTMLElement | null>(null);
@@ -190,6 +190,7 @@ export function ResearchCanvas({
   function focus(card: CanvasCard, scale = camera.scale) {
     const p = points.get(card.id);
     if (!p) return;
+    scale = Math.min(scale, (size.width - 32) / 245, (size.height - 32) / 230);
     setCamera({
       x: Math.max(22, size.width * 0.47 - 122 * scale) - p.x * scale,
       y: Math.max(12, (size.height - 230 * scale) / 2) - p.y * scale,
@@ -201,7 +202,7 @@ export function ResearchCanvas({
     setSelected(card.id);
     if (card.round_id)
       setFolded((old) => old.filter((id) => id !== card.round_id));
-    if (locate) focus(card);
+    if (locate || card.call_id) focus(card);
     if (card.material?.availability === "available") {
       setFactId(null);
       onOpen(card.material, opener);
@@ -317,6 +318,7 @@ export function ResearchCanvas({
     const element = viewport.current;
     if (!element) return;
     const wheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
       zoom(event.deltaY > 0 ? 0.93 : 1.07);
     };
@@ -342,7 +344,6 @@ export function ResearchCanvas({
           ? Math.hypot(values[0].x - values[1].x, values[0].y - values[1].y)
           : undefined,
     };
-    setDragging(true);
   }
   function move(event: ReactPointerEvent<HTMLDivElement>) {
     if (!pointers.current.has(event.pointerId) || !drag.current) return;
@@ -354,6 +355,7 @@ export function ResearchCanvas({
       values = [...pointers.current.values()];
     if (values.length === 2 && d.distance) {
       suppressClick.current = true;
+      setDragging(true);
       event.currentTarget.setPointerCapture(event.pointerId);
       inspect();
       const scale = Math.min(
@@ -379,6 +381,7 @@ export function ResearchCanvas({
       4
     ) {
       suppressClick.current = true;
+      setDragging(true);
       event.currentTarget.setPointerCapture(event.pointerId);
       inspect();
       setCamera({
@@ -552,6 +555,7 @@ export function ResearchCanvas({
         ref={viewport}
         className="cc-viewport"
         aria-label="研究画布视口"
+        title="拖动平移；上下滚动浏览；Ctrl 或 ⌘ 加滚轮缩放"
         onPointerDown={start}
         onPointerMove={move}
         onPointerUp={end}

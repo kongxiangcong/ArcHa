@@ -1,3 +1,4 @@
+import { SummaryDialog } from "./SummaryDialog";
 import type { Workbench, WorkerSummary } from "./types";
 import { time, label, preparationLabel } from "./components";
 
@@ -13,13 +14,22 @@ export function CurrentProgress({
   scene,
   worker,
   onGlobal,
+  onDetails,
 }: {
   scene?: Workbench;
   worker?: WorkerSummary;
   onGlobal?: () => void;
+  onDetails?: () => void;
 }) {
   const progress = scene?.current_progress;
   const pending = scene?.workers.some((worker) => worker.state === "pending");
+  const title = worker ? "该次调用摘要" : "当前进展";
+  const copy = worker
+    ? (worker.progress_summary ??
+      (worker.state === "pending"
+        ? "该次调用尚未返回，暂无已记录的任务摘要。"
+        : "该次调用未记录任务摘要。"))
+    : (progress?.progress_summary ?? "暂无已记录的进展说明");
   return (
     <section
       className="current-progress"
@@ -29,6 +39,21 @@ export function CurrentProgress({
         <h2 id="current-progress-title">
           {worker ? "该次调用摘要" : "当前进展"}
         </h2>
+        <SummaryDialog
+          key={worker?.id ?? "global"}
+          title={title}
+          text={
+            copy +
+            (worker
+              ? "\n\n该次调用自述，是否采用及当前安排以全局进展为准。"
+              : "")
+          }
+        />
+        {worker && (
+          <button className="summary-expand" onClick={onDetails}>
+            工作详情
+          </button>
+        )}
         {worker && (
           <button className="btn" onClick={onGlobal}>
             返回全局进展
@@ -47,20 +72,14 @@ export function CurrentProgress({
       </div>
       <div
         className="current-progress-copy"
+        tabIndex={0}
+        aria-label={title + "正文"}
         aria-live="polite"
         aria-atomic="true"
       >
-        {(worker
-          ? (worker.progress_summary ??
-            (worker.state === "pending"
-              ? "该次调用尚未返回，暂无已记录的任务摘要。"
-              : "该次调用未记录任务摘要。"))
-          : (progress?.progress_summary ?? "暂无已记录的进展说明")
-        )
-          .split(/\n\s*\n/)
-          .map((paragraph, index) => (
-            <p key={index}>{paragraph}</p>
-          ))}
+        {copy.split(/\n\s*\n/).map((paragraph, index) => (
+          <p key={index}>{paragraph}</p>
+        ))}
       </div>
       {worker ? (
         <p className="current-progress-meta">

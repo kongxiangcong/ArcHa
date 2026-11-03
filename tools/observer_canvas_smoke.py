@@ -63,9 +63,16 @@ def main():
             page.get_by_role('button', name='协调 1 · 折叠', exact=True).click()
             expect(page.locator('.cc-round-summary')).to_have_count(1)
             page.locator('.cc-round-summary').click(); expect(page.locator('.cc-round-summary')).to_have_count(0)
-            page.get_by_role('button', name='Agent 时间轴', exact=False).click()
+            expect(page.get_by_role('button', name='Agent 时间轴', exact=False)).to_have_attribute('aria-expanded', 'true')
             expect(page.locator('.cc-tracks')).to_be_visible()
             page.locator('.cc-span').filter(has_text='工作 2').last.click()
+            expect(page.get_by_label('工作详情', exact=True)).to_have_count(0)
+            card = page.locator('[data-card-kind="implementation"][aria-pressed="true"]')
+            page.wait_for_timeout(800)
+            box, view = card.bounding_box(), page.locator('.cc-viewport').bounding_box()
+            assert box['y'] >= view['y'] and box['y'] + box['height'] <= view['y'] + view['height']
+            assert page.locator('.main').evaluate('e=>e.scrollTop') == 0
+            page.get_by_role('button', name='工作详情', exact=True).click()
             expect(page.get_by_label('工作详情', exact=True)).to_be_visible()
             expect(page.get_by_label('工作详情', exact=True)).to_contain_text('cat transfer-constraints.py')
             expect(page.locator('.cc-card.selected')).to_have_count(1)
@@ -75,7 +82,7 @@ def main():
             expect(page.get_by_label('任务文件阅读')).to_contain_text('First design')
             page.get_by_role('button', name='返回工作现场', exact=True).click()
             expect(canvas).to_be_visible()
-            expect(page.locator('.cc-span.selected')).to_have_attribute('aria-label', 'Designer 工作 1 调用已结束')
+            expect(page.locator('.cc-span.selected').first).to_have_attribute('aria-label', 'Designer 工作 1 调用已结束')
             print('PASS approved canvas / real round fold / shared timeline selection / declared artifact and focus return', flush=True)
 
             viewport = page.get_by_label('研究画布视口', exact=True); box = viewport.bounding_box()
@@ -146,7 +153,8 @@ def main():
                 stream.write(json.dumps(dict(type='item.completed', item=dict(id='tail', type='command_execution', command='echo preparation-canvas-tail', exit_code=0))) + '\n')
             with sqlite3.connect(prep / '.opc/local/ledger.sqlite3') as db:
                 db.execute('INSERT INTO events(run_id,at,kind,body) VALUES(?,?,?,?)', ('preparation:dma-backpressure', dt.datetime.now(dt.timezone.utc).isoformat(), 'worker_call', json.dumps(dict(call_id='assigned', role='onboard', ok=True, log_dir=str(log.parent)))))
-            page.get_by_role('button', name='Agent 时间轴', exact=False).click(); page.locator('.cc-span,.cc-unknown-time').first.click()
+            page.locator('.cc-span,.cc-unknown-time').first.click()
+            page.get_by_role('button', name='工作详情', exact=True).click()
             expect(page.get_by_label('工作详情', exact=True)).to_contain_text('preparation-canvas-tail', timeout=10000)
             with sqlite3.connect(prep / '.opc/local/ledger.sqlite3') as db: assert db.execute('SELECT count(*) FROM runs').fetchone()[0] == 0
             expect(page.locator('[data-card-kind="preparation"]')).to_have_count(1)

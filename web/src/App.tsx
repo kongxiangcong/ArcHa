@@ -8,6 +8,7 @@ import { poll } from "./poll";
 import { Activity } from "./Activity";
 import { Inspection, MaterialReader } from "./Inspection";
 import type { Material } from "./types";
+import { SummaryDialog } from "./SummaryDialog";
 import { CurrentProgress } from "./CurrentProgress";
 import { Alert, Badge, label, time, preparationLabel } from "./components";
 import type {
@@ -159,7 +160,7 @@ export default function App() {
     () => localStorage.getItem("archa-theme") ?? "light",
   );
   const [detail, setDetail] = useState(
-    () => !!(query.get("attempt") || query.get("call")),
+    () => !!query.get("attempt") && !query.get("call"),
   );
   const [material, setMaterial] = useState<Material | null>(null);
   const materialOpener = useRef<HTMLElement | null>(null);
@@ -299,13 +300,13 @@ export default function App() {
     localStorage.setItem("archa-theme", theme);
   }, [theme]);
   useEffect(() => {
-    if (detail) detailRef.current?.focus();
+    if (detail) detailRef.current?.focus({ preventScroll: true });
   }, [detail]);
   useEffect(() => {
     if (!detail) return;
     const update = () => {
       const bottom = document
-        .querySelector(".runbar")
+        .querySelector(".workbench-overview")
         ?.getBoundingClientRect().bottom;
       if (bottom !== undefined)
         detailRef.current?.style.setProperty(
@@ -315,7 +316,7 @@ export default function App() {
     };
     const observer = new ResizeObserver(update);
     document
-      .querySelectorAll(".selectors,.follow-bar,.runbar")
+      .querySelectorAll(".selectors,.follow-bar,.runbar,.workbench-overview")
       .forEach((element) => observer.observe(element));
     update();
     return () => observer.disconnect();
@@ -361,7 +362,8 @@ export default function App() {
       call: item.id,
       filter: null,
     });
-    setDetail(true);
+    setDetail(false);
+    if (layout === "canvas") return;
     requestAnimationFrame(() =>
       document
         .querySelector<HTMLElement>(`[data-attempt="${item.attempt_no}"]`)
@@ -424,9 +426,92 @@ export default function App() {
         <a className="brand" href="/" aria-label="ArcHa 工作现场">
           <img className="brand-logo" src={logo} alt="ArcHa" />
         </a>
-        <span className="breadcrumb">
-          {o?.project.display_name ?? "项目"} / 工作现场
-        </span>
+        <div className="selectors">
+          <label>
+            专题
+            <select
+              aria-label="选择专题"
+              value={topic}
+              onChange={(e) => {
+                topicViews.current.set(topic, {
+                  task: taskId,
+                  run: runId,
+                  attempt: query.get("attempt"),
+                  call: query.get("call"),
+                  detail,
+                  scroll:
+                    document.querySelector(".work-scroll")?.scrollTop ?? 0,
+                });
+                const saved = topicViews.current.get(e.target.value);
+                restoreScroll.current = saved?.scroll ?? 0;
+                change({
+                  topic: e.target.value,
+                  task: saved?.task ?? null,
+                  run: saved?.run ?? null,
+                  attempt: saved?.attempt ?? null,
+                  call: saved?.call ?? null,
+                  follow: null,
+                });
+                setDetail(saved?.detail ?? false);
+                setMaterial(null);
+              }}
+            >
+              {topics.map((name) => (
+                <option key={name} value={name}>
+                  {name === "legacy" ? "原有研究" : name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            任务
+            <select
+              aria-label="选择任务"
+              value={taskId}
+              onChange={(e) => selectTask(e.target.value)}
+            >
+              {visibleTasks.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.title}
+                </option>
+              ))}
+              <option value="history">未关联运行与准备历史</option>
+            </select>
+          </label>
+          <label>
+            运行
+            <select
+              aria-label="选择运行"
+              value={runId}
+              onChange={(e) => {
+                change({
+                  run: e.target.value,
+                  attempt: null,
+                  call: null,
+                  follow: null,
+                });
+                setMaterial(null);
+                setDetail(false);
+              }}
+            >
+              <option value="">请选择运行</option>
+              {runs.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.display_label ?? "运行记录"}
+                  {x.recorded_state === "closed" ? " · 已结束" : ""}
+                </option>
+              ))}
+              {runId && !runs.some((x) => x.id === runId) && (
+                <option value={runId}>
+                  显式链接 · {scene?.display_label ?? "读取中"}
+                </option>
+              )}
+            </select>
+          </label>
+          <button className="btn" onClick={() => setRefresh((n) => n + 1)}>
+            刷新
+          </button>
+        </div>
         <div className="top-right">
           <div className="layout-switch" aria-label="工作台视图">
             <button
@@ -473,92 +558,6 @@ export default function App() {
           </button>
         </nav>
         <main className="main">
-          <div className="selectors">
-            <label>
-              专题
-              <select
-                aria-label="选择专题"
-                value={topic}
-                onChange={(e) => {
-                  topicViews.current.set(topic, {
-                    task: taskId,
-                    run: runId,
-                    attempt: query.get("attempt"),
-                    call: query.get("call"),
-                    detail,
-                    scroll:
-                      document.querySelector(".work-scroll")?.scrollTop ?? 0,
-                  });
-                  const saved = topicViews.current.get(e.target.value);
-                  restoreScroll.current = saved?.scroll ?? 0;
-                  change({
-                    topic: e.target.value,
-                    task: saved?.task ?? null,
-                    run: saved?.run ?? null,
-                    attempt: saved?.attempt ?? null,
-                    call: saved?.call ?? null,
-                    follow: null,
-                  });
-                  setDetail(saved?.detail ?? false);
-                  setMaterial(null);
-                }}
-              >
-                {topics.map((name) => (
-                  <option key={name} value={name}>
-                    {name === "legacy" ? "原有研究" : name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              任务
-              <select
-                aria-label="选择任务"
-                value={taskId}
-                onChange={(e) => selectTask(e.target.value)}
-              >
-                {visibleTasks.map((x) => (
-                  <option key={x.id} value={x.id}>
-                    {x.title}
-                  </option>
-                ))}
-                <option value="history">未关联运行与准备历史</option>
-              </select>
-            </label>
-            <label>
-              运行
-              <select
-                aria-label="选择运行"
-                value={runId}
-                onChange={(e) => {
-                  change({
-                    run: e.target.value,
-                    attempt: null,
-                    call: null,
-                    follow: null,
-                  });
-                  setMaterial(null);
-                  setDetail(false);
-                }}
-              >
-                <option value="">请选择运行</option>
-                {runs.map((x) => (
-                  <option key={x.id} value={x.id}>
-                    {x.display_label ?? "运行记录"}
-                    {x.recorded_state === "closed" ? " · 已结束" : ""}
-                  </option>
-                ))}
-                {runId && !runs.some((x) => x.id === runId) && (
-                  <option value={runId}>
-                    显式链接 · {scene?.display_label ?? "读取中"}
-                  </option>
-                )}
-              </select>
-            </label>
-            <button className="btn" onClick={() => setRefresh((n) => n + 1)}>
-              刷新
-            </button>
-          </div>
           <div
             className="follow-bar"
             hidden={
@@ -658,7 +657,20 @@ export default function App() {
           <Alert error={workbench.error} stale={!!scene} />
           <Alert error={work.error} stale={!!work.items.length} />
           <div className="workbench-overview">
-            <div className="heading">
+            <div className="heading" tabIndex={0} aria-label="任务介绍">
+              <SummaryDialog
+                key={`intro:${taskId}:${runId}`}
+                title="任务介绍"
+                text={[
+                  title,
+                  scene?.goal ?? t?.briefs[0]?.goal,
+                  scene?.result.reason,
+                  scene?.result.gaps,
+                  scene?.stop_reason,
+                ]
+                  .filter(Boolean)
+                  .join("\n\n")}
+              />
               <h1>{title}</h1>
               <p className="goal">
                 {scene?.goal ??
@@ -694,6 +706,7 @@ export default function App() {
               key={`progress:${taskId}:${runId}`}
               scene={scene}
               worker={worker}
+              onDetails={() => setDetail(true)}
               onGlobal={() => change({ call: null })}
             />
           </div>
