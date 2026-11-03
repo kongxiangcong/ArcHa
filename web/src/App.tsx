@@ -352,6 +352,11 @@ export default function App() {
         closeMaterial();
         return;
       }
+      if (event.key === "Escape" && infoOpen) {
+        event.preventDefault();
+        setInfoOpen(false);
+        return;
+      }
       if (event.key === "Escape" && detail) {
         event.preventDefault();
         closeDetail();
@@ -359,7 +364,7 @@ export default function App() {
     };
     addEventListener("keydown", key);
     return () => removeEventListener("keydown", key);
-  }, [detail, closeDetail, material, closeMaterial]);
+  }, [detail, closeDetail, material, closeMaterial, infoOpen]);
   function chooseWork(item: WorkItem, target: HTMLElement) {
     origin.current = target;
     change({
@@ -381,9 +386,10 @@ export default function App() {
       call: item.id,
       filter: null,
     });
-    setInfoOpen(false);
+    setDetail(false);
+    setMaterial(null);
     setInfoTab("worker");
-    setDetail(true);
+    setInfoOpen(true);
     if (layout === "canvas") return;
     requestAnimationFrame(() =>
       document
@@ -713,7 +719,9 @@ export default function App() {
               onWork={(attempt, opener) => {
                 origin.current = opener;
                 change({ attempt: String(attempt), call: null });
-                setDetail(true);
+                setDetail(false);
+                setInfoTab("worker");
+                setInfoOpen(true);
               }}
               onFactOpen={() => {
                 setDetail(false);
