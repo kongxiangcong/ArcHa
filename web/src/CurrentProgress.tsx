@@ -1,4 +1,4 @@
-import type { Workbench } from "./types";
+import type { Workbench, WorkerSummary } from "./types";
 import { time, label, preparationLabel } from "./components";
 
 const roles: Record<string, string> = {
@@ -9,7 +9,15 @@ const roles: Record<string, string> = {
   engine: "引擎",
 };
 
-export function CurrentProgress({ scene }: { scene?: Workbench }) {
+export function CurrentProgress({
+  scene,
+  worker,
+  onGlobal,
+}: {
+  scene?: Workbench;
+  worker?: WorkerSummary;
+  onGlobal?: () => void;
+}) {
   const progress = scene?.current_progress;
   const pending = scene?.workers.some((worker) => worker.state === "pending");
   return (
@@ -18,7 +26,14 @@ export function CurrentProgress({ scene }: { scene?: Workbench }) {
       aria-labelledby="current-progress-title"
     >
       <div className="current-progress-heading">
-        <h2 id="current-progress-title">当前进展</h2>
+        <h2 id="current-progress-title">
+          {worker ? "该次调用摘要" : "当前进展"}
+        </h2>
+        {worker && (
+          <button className="btn" onClick={onGlobal}>
+            返回全局进展
+          </button>
+        )}
         <span className="muted">
           {scene
             ? scene.kind === "preparation"
@@ -35,13 +50,32 @@ export function CurrentProgress({ scene }: { scene?: Workbench }) {
         aria-live="polite"
         aria-atomic="true"
       >
-        <p>{progress?.progress_summary ?? "暂无已记录的进展说明"}</p>
+        {(worker
+          ? (worker.progress_summary ??
+            (worker.state === "pending"
+              ? "该次调用尚未返回，暂无已记录的任务摘要。"
+              : "该次调用未记录任务摘要。"))
+          : (progress?.progress_summary ?? "暂无已记录的进展说明")
+        )
+          .split(/\n\s*\n/)
+          .map((paragraph, index) => (
+            <p key={index}>{paragraph}</p>
+          ))}
       </div>
-      {progress && (
+      {worker ? (
         <p className="current-progress-meta">
-          最近已完成进展 · {roles[progress.role] ?? "引擎"} · 更新于{" "}
-          {time(progress.at)}
+          {roles[worker.role] ?? label(worker.role)} · {label(worker.state)} ·{" "}
+          {time(worker.ended_at ?? worker.started_at)}
+          <br />
+          该次调用自述，是否采用及当前安排以全局进展为准。
         </p>
+      ) : (
+        progress && (
+          <p className="current-progress-meta">
+            最近已完成进展 · {roles[progress.role] ?? "引擎"} · 更新于{" "}
+            {time(progress.at)}
+          </p>
+        )
       )}
     </section>
   );

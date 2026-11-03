@@ -24,6 +24,9 @@ def records(adapter, ident):
 def workers(adapter, row, events):
     dispatches = {e['body'].get('call_id'): e for e in events if e['kind'] == 'call_dispatched'}
     completed = {e['body'].get('call_id') for e in events if e['kind'] in ('worker_call', 'evaluation_call')}
+    from ..core.progress import public_text, compact
+    receipts = {c['call_id']: mapping(parsed(c.get('result'), {}))
+                for c in adapter._db(row['run_id'], tables_to_read=('calls',)).get('calls', [])}
     calls = []
     for e in events:
         b = e['body']
@@ -33,7 +36,14 @@ def workers(adapter, row, events):
         state = ('pending' if e['kind'] == 'call_dispatched' else
                  b['state'] if b.get('state') in ('unknown', 'cancelled') else
                  'finished' if b.get('ok') is True else 'failed' if b.get('ok') is False else 'unknown')
-        calls.append(dict(id=adapter._id('call', row['run_id'] + ':' + str((dispatch or e)['seq'])),
+        receipt = receipts.get(b.get('call_id'), {})
+        output = receipt.get('output')
+        if isinstance(output, str):
+            output = parsed(output, {})
+        if isinstance(output, dict) and isinstance(output.get('reply'), str):
+            output = parsed(output['reply'], {})
+        value = public_text(b.get('worker_progress_summary') or mapping(output).get('progress_summary'))
+        calls.append(dict(progress_summary=compact(value) if value else None, id=adapter._id('call', row['run_id'] + ':' + str((dispatch or e)['seq'])),
                           attempt_no=e.get('attempt_no'), role=b.get('role') or 'evaluator', state=state,
                           started_at=(dispatch or {}).get('at'), ended_at=None if state == 'pending' else e.get('at'),
                           error=b.get('error') if isinstance(b.get('error'), str) else None,
@@ -164,14 +174,14 @@ def stop_description(row):
 
 def current_progress(events):
     """Only processed business outcomes; a raw worker reply is not engine acceptance."""
-    from ..core.progress import public_text
+    from ..core.progress import public_text, compact
     for event in reversed(events):
         body = event['body']
         value = public_text(body.get('progress_summary'))
         role = body.get('progress_source')
         if value and role in ('onboard', 'expert', 'designer', 'reviewer', 'engine'):
             return dict(sequence=event['seq'], at=event.get('at'), role=role,
-                        progress_summary=value, attempt_no=event.get('attempt_no'),
+                        progress_summary=compact(value), attempt_no=event.get('attempt_no'),
                         call_id=body.get('progress_call_id'))
     return None
 

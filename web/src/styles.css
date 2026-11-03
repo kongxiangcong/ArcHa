@@ -1069,3 +1069,30 @@ footer {
     flex-direction: column;
   }
 }
+
+/* Shared overview for canvas and desk. */
+.workbench-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  margin-bottom: 18px;
+  flex-shrink: 0;
+}
+.workbench-overview .heading,
+.workbench-overview .current-progress {
+  min-width: 0;
+  margin: 0;
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow-wrap: anywhere;
+}
+.canvas-mode .workbench-overview .heading .goal {
+  display: block;
+}
+@media (max-width: 760px) {
+  .workbench-overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

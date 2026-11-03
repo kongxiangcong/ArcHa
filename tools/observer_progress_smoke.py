@@ -39,6 +39,8 @@ def main():
         event('run-dma-r1', 'candidate_saved', 1, commit='c' * 40)
         event('preparation:dma-backpressure', 'preparation', state='ready',
               brief_input=dict(brief='.opc/research/tasks/r01-dma/task-brief.md'))
+        event('run-dma-r1', 'worker_call', call_id='summary-expert', role='expert', ok=True,
+              worker_progress_summary='提出释放后恢复容量的假设。\n\n下一步安排对照检查。')
         app = create_app(root)
         adapter = app.state.adapter
         task = next(t for t in adapter.overview()['data']['tasks'] if t['research_task_id'] == 'R01')
@@ -77,7 +79,28 @@ def main():
                 page.get_by_role('button', name='工作列表', exact=True).click()
                 expect(panel).to_contain_text('已完成容量检查')
                 page.screenshot(path=str(args.out / 'desk.png'), full_page=True)
-                passed('shared window in canvas and desk / role / timestamp / polite live region')
+                widths = page.locator('.workbench-overview').evaluate('(e) => [...e.children].map(c => c.getBoundingClientRect().width)')
+                assert abs(widths[0] - widths[1]) < 1
+                call = next(w for w in adapter.workbench(run)['data']['workers'] if w.get('progress_summary') and '提出释放' in w['progress_summary'])
+                page.locator(f'[data-call="{call["id"]}"]').click()
+                expect(panel).to_contain_text('该次调用摘要')
+                expect(panel).to_contain_text('提出释放后恢复容量的假设')
+                expect(panel).to_contain_text('该次调用自述')
+                expect(page.locator('.current-progress-copy p')).to_have_count(2)
+                page.reload()
+                expect(panel).to_contain_text('提出释放后恢复容量的假设')
+                page.get_by_role('button', name='返回全局进展', exact=True).click()
+                expect(panel).to_contain_text('已完成容量检查')
+                if page.get_by_role('button', name='关闭详情', exact=True).is_visible():
+                    page.get_by_role('button', name='关闭详情', exact=True).click()
+                page.get_by_role('button', name='画布', exact=True).click()
+                page.get_by_role('button', name='Agent 时间轴', exact=False).click()
+                page.locator('.cc-overall-track .cc-unknown-time').filter(has_text='Expert').last.click()
+                expect(panel).to_contain_text('提出释放后恢复容量的假设')
+                page.get_by_role('button', name='返回全局进展', exact=True).click()
+                page.get_by_role('button', name='关闭详情', exact=True).click()
+                page.get_by_role('button', name='工作列表', exact=True).click()
+                passed('equal overview columns / worker click and refresh / canvas timeline selection / return to global')
 
                 page.get_by_role('button', name='工作列表', exact=True).focus()
                 focus = page.evaluate('document.activeElement.textContent')
@@ -122,7 +145,7 @@ def main():
                     panel.scroll_into_view_if_needed()
                     size = panel.bounding_box()
                     assert size and size['width'] <= 390
-                    assert page.locator('.current-progress-copy p').evaluate('(p) => p.scrollWidth <= p.clientWidth')
+                    assert page.locator('.current-progress-copy p').evaluate_all('(ps) => ps.every(p => p.scrollWidth <= p.clientWidth)')
                     page.screenshot(path=str(args.out / ('narrow-canvas.png' if layout == '画布' else 'narrow-desk.png')), full_page=True)
                 passed('long Chinese paragraphs wrap at 390px in both layouts')
                 other_task = next(t for t in adapter.overview()['data']['tasks'] if t['research_task_id'] == 'R02')

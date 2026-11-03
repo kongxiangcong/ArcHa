@@ -16,13 +16,29 @@ def public_text(value):
     return value
 
 
+def compact(value):
+    """Display limit only; keep the next step when shortening old verbose receipts."""
+    value = value.strip()
+    actual, marker, following = value.partition('下一步')
+    if marker:
+        following = marker + following.strip()
+        if len(following) > 100:
+            following = following[:99] + '…'
+        room = 200 - len(following) - 2
+        actual = actual.strip()
+        if len(actual) > room:
+            actual = actual[:room - 1] + '…'
+        return actual + '\n\n' + following
+    return value if len(value) <= 200 else value[:199] + '…'
+
+
 def compose(actual, next_step, worker=None):
     # The worker supplies concrete observations. The engine owns the current next step.
     value = public_text(worker)
     detail = value.split('下一步', 1)[0].strip() if value and '下一步' in value else None
     if detail and not re.search(r'(?<!不代表)任务已完成|(?<!不代表)任务完成|(?<!未)验收通过', detail):
         actual = detail.rstrip('。；\n ') + '。' + actual
-    return actual + next_step
+    return compact(actual + next_step)
 
 
 def problem(reason):

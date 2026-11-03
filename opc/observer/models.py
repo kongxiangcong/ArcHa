@@ -299,6 +299,7 @@ class ControlCapability(DTO):
 
 
 class WorkerSummary(DTO):
+    progress_summary: str | None = None
     id: str
     attempt_no: int | None
     role: str

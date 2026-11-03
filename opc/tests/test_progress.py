@@ -210,3 +210,45 @@ def test_onboard_and_preparation_review_narration_use_real_preparation_scope(mak
     assert value['kind'] == 'preparation'
     assert '已独立核对准备检查' in value['current_progress']['progress_summary']
     assert ('审核未通过' in value['current_progress']['progress_summary']) is not accepted
+
+
+def test_worker_summary_is_call_scoped_and_not_engine_acceptance(make_project, engine_for):
+    root = make_project()
+    first = '提出先验证容量边界的假设。\n\n下一步实施对照检查。'
+    second = '提出修正后的容量检查要求。\n\n下一步实施对照检查。'
+    engine = use_sequence(engine_for(root), Sequence([
+        plan(1, deliverables=['tools'], progress_summary=first),
+        plan(1, progress_summary=second)], [4]))
+    engine.run(max_attempts_now=1)
+    view = scene(root, engine.run_id)
+    experts = [w for w in view['workers'] if w['role'] == 'expert']
+    assert [w['progress_summary'] for w in experts] == [first, second]
+    assert first not in view['current_progress']['progress_summary']
+    assert all(w.get('progress_summary') is None for w in view['workers'] if w['role'] == 'designer')
+
+
+def test_preparation_and_review_worker_summary_from_existing_receipts(tmp_path):
+    from opc.observer.workbench import workers
+    class Adapter:
+        def _db(self, *args, **kwargs):
+            return {'calls': [{'call_id': 'review', 'result': json.dumps({'output': {'reply': json.dumps({
+                'progress_summary': '审核发现仍缺少对照。下一步补齐对照。'})}})}]}
+        def _id(self, kind, value):
+            return value
+    events = [dict(kind='worker_call', seq=i, at='now', body=dict(call_id=call, role=role, ok=True, **body))
+              for i, (call, role, body) in enumerate([
+                  ('prepare', 'onboard', {'worker_progress_summary': '工具链已接通。下一步检查准备结果。'}),
+                  ('review', 'reviewer', {}), ('old', 'designer', {})])]
+    values = workers(Adapter(), {'run_id': 'preparation:test'}, events)
+    assert '工具链已接通' in values[0]['progress_summary']
+    assert '仍缺少对照' in values[1]['progress_summary']
+    assert values[2]['progress_summary'] is None
+
+
+def test_compact_display_keeps_next_step_without_changing_receipt():
+    from opc.core.progress import compact
+    raw = '已完成检查。' * 80 + '下一步等待用户恢复。'
+    shown = compact(raw)
+    assert len(shown) <= 200
+    assert shown.endswith('\n\n下一步等待用户恢复。')
+    assert len(raw) > 200

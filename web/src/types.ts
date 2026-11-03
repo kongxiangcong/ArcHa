@@ -280,6 +280,7 @@ export interface WorkItem {
   availability: string;
 }
 export interface WorkerSummary {
+  progress_summary?: string | null;
   id: string;
   attempt_no: number | null;
   role: string;

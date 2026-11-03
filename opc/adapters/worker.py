@@ -20,13 +20,17 @@ PLAN_FIELDS = ("title", "changes")
 #: on the other's module staying present.
 EXHAUSTED_SENTINEL = "NO_EXPERIMENT"
 
-PROGRESS_RULE = """Return progress_summary: a short Chinese paragraph, usually 2–3 sentences,
+PROGRESS_RULE = """Return progress_summary: at most 200 Chinese characters, in 2–3 short paragraphs separated by blank lines,
 describing actual progress/results/problems in plain language and one explicit 下一步.
 No paths, file lists, hashes, internal IDs, JSON field names, audit details or private
 reasoning. A plan is not execution; worker success is not experiment or task success.
 If undecided, next step is 由研究协调分析结果并确定方案. If blocked, explain the prerequisite;
 if paused wait for user resume; if budget exhausted stop pending new authorization.
 At incomplete closeout name gaps and grounded reopening conditions, never promise restart.
+Role focus: Expert explains the hypothesis, requirements or interpretation proposed and what
+remains unverified; Designer explains what experiment or implementation actually ran, observed
+results and limitations of the interpretation; reviewer states the verdict and concrete gaps;
+onboard states readiness achieved and missing prerequisites. Never invent missing results.
 Only confirmed final delivery may say 本任务已完成，暂无后续执行安排. This text is display only."""
 PROGRESS_SCHEMA = {"type": "string", "description": PROGRESS_RULE}
 

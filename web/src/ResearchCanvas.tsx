@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import dagre from "@dagrejs/dagre";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import type {
   CanvasCard,
@@ -12,15 +13,6 @@ import { Activity } from "./Activity";
 import "./canvas.css";
 
 type Camera = { x: number; y: number; scale: number };
-const columns: Record<string, number> = {
-  brief: 50,
-  preparation: 50,
-  direction: 350,
-  implementation: 650,
-  artifact: 950,
-  evaluation: 1250,
-  feedback: 1550,
-};
 const colors: Record<string, string> = {
   human: "#c9cec4",
   context: "#c9cec4",
@@ -103,6 +95,7 @@ export function ResearchCanvas({
     null,
   );
   const initial = useRef(false);
+  const suppressClick = useRef(false);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const drag = useRef<{
     x: number;
@@ -129,17 +122,48 @@ export function ResearchCanvas({
       source: null,
       material: scene.run_brief?.material ?? null,
     });
-  const artifacts = new Map<number, number>();
+  // Layout follows recorded dependencies; display coordinates never create handoffs.
+  const layout = new dagre.graphlib.Graph();
+  layout.setGraph({
+    rankdir: "LR",
+    ranksep: 55,
+    nodesep: 55,
+    marginx: 50,
+    marginy: 130,
+  });
+  layout.setDefaultEdgeLabel(() => ({}));
+  for (const card of cards)
+    layout.setNode(card.id, { width: 245, height: 230 });
+  for (const edge of graph?.edges ?? []) {
+    if (layout.hasNode(edge.source) && layout.hasNode(edge.target))
+      layout.setEdge(edge.source, edge.target);
+  }
+  // Keep recorded stages of a work readable even when no handoff was recorded.
+  // These ordering constraints belong only to the layout, never the displayed edges.
+  for (const no of new Set(cards.map((card) => card.attempt_no))) {
+    if (no === null) continue;
+    let previous: CanvasCard[] = [];
+    for (const kind of [
+      "direction",
+      "implementation",
+      "artifact",
+      "evaluation",
+      "feedback",
+    ]) {
+      const stage = cards.filter(
+        (card) => card.attempt_no === no && card.kind === kind,
+      );
+      if (!stage.length) continue;
+      for (const from of previous)
+        for (const to of stage) layout.setEdge(from.id, to.id);
+      previous = stage;
+    }
+  }
+  dagre.layout(layout);
   const points = new Map(
     cards.map((card) => {
-      let x = columns[card.kind] ?? 650,
-        y = 130 + Math.max(0, (card.attempt_no ?? 1) - 1) * 300;
-      if (card.kind === "artifact") {
-        const i = artifacts.get(card.attempt_no ?? 0) ?? 0;
-        artifacts.set(card.attempt_no ?? 0, i + 1);
-        x += i * 900;
-      }
-      return [card.id, { x, y }];
+      const point = layout.node(card.id);
+      return [card.id, { x: point.x - 122.5, y: point.y - 115 }];
     }),
   );
   const fact = cards.find((card) => card.id === factId);
@@ -300,8 +324,10 @@ export function ResearchCanvas({
     return () => element.removeEventListener("wheel", wheel);
   }, [camera, size, onInspect]);
   function start(event: ReactPointerEvent<HTMLDivElement>) {
-    if ((event.target as HTMLElement).closest("button,a,select")) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
+    if (event.button !== 0) return;
+    const control = (event.target as HTMLElement).closest("button,a,select");
+    if (control && !control.matches(".cc-card")) return;
+    suppressClick.current = false;
     pointers.current.set(event.pointerId, {
       x: event.clientX,
       y: event.clientY,
@@ -327,6 +353,8 @@ export function ResearchCanvas({
     const d = drag.current,
       values = [...pointers.current.values()];
     if (values.length === 2 && d.distance) {
+      suppressClick.current = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
       inspect();
       const scale = Math.min(
         1.6,
@@ -350,6 +378,8 @@ export function ResearchCanvas({
       Math.abs(event.clientX - d.x) + Math.abs(event.clientY - d.y) >
       4
     ) {
+      suppressClick.current = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
       inspect();
       setCamera({
         ...d.camera,
@@ -379,6 +409,80 @@ export function ResearchCanvas({
     extent = Math.max(max - min, 1000);
   const roles = [...new Set(scene?.workers.map((w) => w.role) ?? [])];
   const timelineWorkers = scene?.workers ?? [];
+  const overallWorkers = timelineWorkers.filter(
+    (worker) => worker.role === "expert" || worker.role === "designer",
+  );
+  const laneEnds: number[] = [];
+  const overallSpans = overallWorkers
+    .filter((worker) => finiteTime(worker.started_at) !== null)
+    .sort((a, b) => finiteTime(a.started_at)! - finiteTime(b.started_at)!)
+    .map((worker) => {
+      const start = finiteTime(worker.started_at)!;
+      const end = Math.max(
+        finiteTime(worker.ended_at) ?? start,
+        start + extent * 0.005,
+      );
+      let lane = laneEnds.findIndex((until) => until <= start);
+      if (lane < 0) lane = laneEnds.length;
+      laneEnds[lane] = end;
+      return { worker, lane };
+    });
+  const overallUnknown = overallWorkers.filter(
+    (worker) => finiteTime(worker.started_at) === null,
+  );
+  const overallHeight = overallWorkers.length
+    ? Math.max(29, laneEnds.length * 22 + 4) + (overallUnknown.length ? 29 : 0)
+    : 29;
+  function chooseTimelineWorker(worker: WorkerSummary, opener: HTMLElement) {
+    inspect();
+    setFactId(null);
+    const card = cards.find((c) => c.call_id === worker.id);
+    if (card) {
+      setSelected(card.id);
+      if (card.round_id)
+        setFolded((old) => old.filter((id) => id !== card.round_id));
+      focus(card, size.width < 700 ? 0.87 : 0.82);
+    }
+    onWorker(worker, opener);
+  }
+  function timelineSpan(worker: WorkerSummary, overall = false, lane = 0) {
+    const start = finiteTime(worker.started_at),
+      end = finiteTime(worker.ended_at);
+    if (start === null)
+      return (
+        <button
+          key={worker.id}
+          className="cc-unknown-time"
+          onClick={(e) => chooseTimelineWorker(worker, e.currentTarget)}
+        >
+          {label(worker.role)} · 时间未记录 · {label(worker.state)}
+        </button>
+      );
+    const width =
+      end !== null && end >= start
+        ? Math.max(0.5, ((end - start) / extent) * 98)
+        : 0.5;
+    return (
+      <button
+        key={worker.id}
+        className={`cc-span${activeTimelineCall === worker.id ? " selected" : ""}`}
+        style={
+          {
+            left: `${((start - min) / extent) * 98}%`,
+            width: `${width}%`,
+            top: overall ? lane * 22 + 1 : 1,
+            "--role": colors[worker.role] ?? colors.expert,
+          } as CSSProperties
+        }
+        title={`${label(worker.role)} · ${label(worker.state)} · ${time(worker.started_at)}${worker.ended_at ? " → " + time(worker.ended_at) : " · 结束时间未记录"}`}
+        aria-label={`${label(worker.role)} ${worker.attempt_no ? "工作 " + worker.attempt_no : "运行级调用"} ${label(worker.state)}`}
+        onClick={(e) => chooseTimelineWorker(worker, e.currentTarget)}
+      >
+        {overall ? `${label(worker.role)} · ` : ""}
+        {worker.attempt_no ? "工作 " + worker.attempt_no : label(worker.state)}
+      </button>
+    );
+  }
   const timelineLinks = (graph?.edges ?? []).flatMap((edge) => {
     const a = timelineWorkers.findIndex((w) => w.id === edge.source_call_id),
       b = timelineWorkers.findIndex((w) => w.id === edge.target_call_id),
@@ -405,7 +509,14 @@ export function ResearchCanvas({
   function path(source: string, target: string) {
     const a = points.get(source)!,
       b = points.get(target)!;
-    return `M ${a.x + 245} ${a.y + 115} C ${a.x + 285} ${a.y + 115},${b.x - 40} ${b.y + 115},${b.x} ${b.y + 115}`;
+    if (b.y >= a.y + 230 || a.y >= b.y + 230) {
+      const downward = b.y > a.y;
+      const fromY = a.y + (downward ? 230 : 0);
+      const toY = b.y + (downward ? 0 : 230);
+      const middle = (fromY + toY) / 2;
+      return `M ${a.x + 122.5} ${fromY} C ${a.x + 122.5} ${middle},${b.x + 122.5} ${middle},${b.x + 122.5} ${toY}`;
+    }
+    return `M ${a.x + 245} ${a.y + 115} C ${a.x + 272.5} ${a.y + 115},${b.x - 27.5} ${b.y + 115},${b.x} ${b.y + 115}`;
   }
   return (
     <section
@@ -445,6 +556,14 @@ export function ResearchCanvas({
         onPointerMove={move}
         onPointerUp={end}
         onPointerCancel={end}
+        onClickCapture={(event) => {
+          if (suppressClick.current && event.detail !== 0) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+          suppressClick.current = false;
+        }}
+        onDragStart={(event) => event.preventDefault()}
       >
         <div
           className={`cc-world${dragging ? " dragging" : ""}`}
@@ -525,11 +644,12 @@ export function ResearchCanvas({
           {(graph?.rounds ?? []).map((round) => {
             const members = cards.filter((c) => c.round_id === round.id);
             const y = Math.min(...members.map((c) => points.get(c.id)!.y));
+            const x = Math.min(...members.map((c) => points.get(c.id)!.x));
             return folded.includes(round.id) ? (
               <button
                 key={round.id}
                 className="cc-round-summary"
-                style={{ left: 350, top: y }}
+                style={{ left: x, top: y }}
                 onClick={() => {
                   inspect();
                   setFolded((old) => old.filter((id) => id !== round.id));
@@ -545,7 +665,7 @@ export function ResearchCanvas({
               <button
                 key={round.id}
                 className="cc-round-label"
-                style={{ left: 350, top: y - 45 }}
+                style={{ left: x, top: y - 45 }}
                 onClick={() => {
                   inspect();
                   setFolded((old) => [...old, round.id]);
@@ -644,27 +764,35 @@ export function ResearchCanvas({
                   <time>{time(new Date(max).toISOString())}</time>
                 </div>
               )}
+              <div
+                className="cc-track cc-overall-track"
+                aria-label="整体泳道：Expert 与 Designer"
+                style={{ height: overallHeight }}
+              >
+                <span title="Expert 与 Designer 的整体协作过程">整体</span>
+                <div
+                  className="cc-track-line"
+                  style={{ height: overallHeight - 4 }}
+                >
+                  {overallSpans.map(({ worker, lane }) =>
+                    timelineSpan(worker, true, lane),
+                  )}
+                  {!!overallUnknown.length && (
+                    <div
+                      className="cc-overall-unknown"
+                      style={{ top: laneEnds.length * 22 }}
+                    >
+                      {overallUnknown.map((worker) => timelineSpan(worker))}
+                    </div>
+                  )}
+                  {!overallWorkers.length && (
+                    <span className="cc-overall-empty">
+                      暂无 Expert 或 Designer 调用
+                    </span>
+                  )}
+                </div>
+              </div>
               {scene?.workers.map((worker) => {
-                const start = finiteTime(worker.started_at),
-                  end = finiteTime(worker.ended_at);
-                const width =
-                  start !== null && end !== null && end >= start
-                    ? Math.max(0.5, ((end - start) / extent) * 98)
-                    : 0.5;
-                const choose = (opener: HTMLElement) => {
-                  inspect();
-                  setFactId(null);
-                  const card = cards.find((c) => c.call_id === worker.id);
-                  if (card) {
-                    setSelected(card.id);
-                    if (card.round_id)
-                      setFolded((old) =>
-                        old.filter((id) => id !== card.round_id),
-                      );
-                    focus(card, size.width < 700 ? 0.87 : 0.82);
-                  }
-                  onWorker(worker, opener);
-                };
                 return (
                   <div
                     className="cc-track"
@@ -679,32 +807,7 @@ export function ResearchCanvas({
                       {label(worker.role)}
                       {worker.attempt_no ? " · " + worker.attempt_no : ""}
                     </span>
-                    <div className="cc-track-line">
-                      {start === null ? (
-                        <button
-                          className="cc-unknown-time"
-                          onClick={(e) => choose(e.currentTarget)}
-                        >
-                          {label(worker.role)} · 时间未记录 ·{" "}
-                          {label(worker.state)}
-                        </button>
-                      ) : (
-                        <button
-                          className={`cc-span${activeTimelineCall === worker.id ? " selected" : ""}`}
-                          style={{
-                            left: `${((start - min) / extent) * 98}%`,
-                            width: `${width}%`,
-                          }}
-                          title={`${label(worker.role)} · ${label(worker.state)} · ${time(worker.started_at)}${worker.ended_at ? " → " + time(worker.ended_at) : " · 结束时间未记录"}`}
-                          aria-label={`${label(worker.role)} ${worker.attempt_no ? "工作 " + worker.attempt_no : "运行级调用"} ${label(worker.state)}`}
-                          onClick={(e) => choose(e.currentTarget)}
-                        >
-                          {worker.attempt_no
-                            ? "工作 " + worker.attempt_no
-                            : label(worker.state)}
-                        </button>
-                      )}
-                    </div>
+                    <div className="cc-track-line">{timelineSpan(worker)}</div>
                   </div>
                 );
               })}
@@ -714,7 +817,10 @@ export function ResearchCanvas({
                 aria-hidden="true"
                 viewBox={`0 0 1000 ${Math.max(29, timelineWorkers.length * 29)}`}
                 preserveAspectRatio="none"
-                style={{ height: timelineWorkers.length * 29 }}
+                style={{
+                  height: timelineWorkers.length * 29,
+                  top: (known.length ? 24 : 0) + overallHeight,
+                }}
               >
                 {timelineLinks.map(({ edge, a, b, x }) => (
                   <g key={edge.id}>

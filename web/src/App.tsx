@@ -657,39 +657,46 @@ export default function App() {
           <Alert error={task.error} stale={!!t} />
           <Alert error={workbench.error} stale={!!scene} />
           <Alert error={work.error} stale={!!work.items.length} />
-          <div className="heading">
-            <h1>{title}</h1>
-            <p className="goal">
-              {scene?.goal ??
-                t?.briefs[0]?.goal ??
-                "选择任务与运行，查看已记录的工作进展。"}
-            </p>
-            {scene?.availability === "partial" && (
-              <p className="muted">
-                部分历史内容不可用，当前仅展示可确认的记录。
+          <div className="workbench-overview">
+            <div className="heading">
+              <h1>{title}</h1>
+              <p className="goal">
+                {scene?.goal ??
+                  t?.briefs[0]?.goal ??
+                  "选择任务与运行，查看已记录的工作进展。"}
               </p>
-            )}
-            {scene?.result.reason && (
-              <p className="result-message">
-                {scene.result.complete === true
-                  ? "交付已完成"
-                  : scene.result.complete === false
-                    ? "交付尚未完成"
-                    : "当前结果"}
-                ：{scene.result.reason}
-              </p>
-            )}
-            {scene?.result.gaps && (
-              <p className="muted">尚待完成：{scene.result.gaps}</p>
-            )}
-            {scene?.stop_reason && (
-              <p className="muted">
-                {scene.execution === "paused" ? "暂停说明" : "结束原因"}：
-                {scene.stop_reason}
-              </p>
-            )}
+              {scene?.availability === "partial" && (
+                <p className="muted">
+                  部分历史内容不可用，当前仅展示可确认的记录。
+                </p>
+              )}
+              {scene?.result.reason && (
+                <p className="result-message">
+                  {scene.result.complete === true
+                    ? "交付已完成"
+                    : scene.result.complete === false
+                      ? "交付尚未完成"
+                      : "当前结果"}
+                  ：{scene.result.reason}
+                </p>
+              )}
+              {scene?.result.gaps && (
+                <p className="muted">尚待完成：{scene.result.gaps}</p>
+              )}
+              {scene?.stop_reason && (
+                <p className="muted">
+                  {scene.execution === "paused" ? "暂停说明" : "结束原因"}：
+                  {scene.stop_reason}
+                </p>
+              )}
+            </div>
+            <CurrentProgress
+              key={`progress:${taskId}:${runId}`}
+              scene={scene}
+              worker={worker}
+              onGlobal={() => change({ call: null })}
+            />
           </div>
-          <CurrentProgress key={`progress:${taskId}:${runId}`} scene={scene} />
           {layout === "canvas" ? (
             <ResearchCanvas
               key={runId}
