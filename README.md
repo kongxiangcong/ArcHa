@@ -29,7 +29,7 @@
 
 > **用户掌握“为什么做、做到什么程度”；Worker 负责“提出方案、落实工作、解释证据”；框架保证执行与交付有据可查。**
 
-Python 发行包名为 `archa-opc`，底层引擎和命令行仍使用 `opc`。`archa-map`、`archa-task`、`archa-loop` 是面向用户的 Agent 技能入口。
+Python 发行包名为 `archa-opc`，底层引擎和命令行仍使用 `opc`。`archa-map`、`archa-task`、`archa-loop` 是研究流程技能入口；`archa-log` 独立整理已有研究进度，不参与调度。
 
 ## 为什么需要 Architecture Harness
 
@@ -320,6 +320,10 @@ opc report -p /absolute/path/to/project --task <task-id> --revision <revision>
 
 “当前进展”窗口在两种布局中展示所选准备任务或 Run 最近一次已处理的进展与下一步。现有 Worker 随返回生成中文说明，引擎按实际校验、评价和控制状态确定最终展示内容；说明附在已有业务事件上，按事件顺序读取，不增加模型调用，也不参与验收或调度。顶部单行选择专题、任务与运行；画布与默认展开的 Agent 时间轴占据主要空间。任务介绍、当前进展与所选 Worker 摘要共用画布右上角信息浮窗，默认收起，可切换页签、滚动、调整大小，并记住页签和尺寸。点击 Worker 卡片直接展开信息浮窗并切换到对应摘要，不再弹出工作详情或原始 JSON；缺少摘要时显示空态。工作区支持上下滚动，短窗口不会裁掉展开的时间轴；画布拖动平移，普通滚轮上下浏览，Ctrl 或 ⌘ 加滚轮缩放。摘要不超过200字、分段展示：Expert 侧重假设和要求，Designer 侧重实验、观测和局限，审核侧重判断和缺口。自述从原回执读取，与引擎最终处理区分；旧记录没有说明时显示空态，不重跑历史工作。浏览器回归可在构建后运行 `python tools/observer_progress_smoke.py`（可通过 `--chromium` 指定浏览器）。
 
+顶部“研究日志”入口打开独立弹窗，先读取已有日志，再在启用写入的工作台中按需调用独立脚本更新。只读模式不更新；没有新事实时不调用模型。日志默认追加到任务简报目录的 `PROGRESS_LOG.md`，保留旧记录，同一轮新增评价写补充记录。脚本复用本机 Expert 的 Codex/DSH 配置整理文字，不派发研究、不修改 Run 或研究预算；这次文字整理仍会产生模型调用费用。未登记到账本的主流程补跑暂不自动归档。
+
+独立使用：`python skills/archa-log/scripts/log.py -p <工程目录> --run-id <实际Run标识> --timezone Asia/Shanghai`，仅查看加 `--read`。技能内容见 [archa-log](skills/archa-log/SKILL.md)。已有项目需要更新部署的 runtime 才能使用该脚本。
+
 <details>
 <summary>展开：安装、启动与开发验证</summary>
 
@@ -387,6 +391,7 @@ CI 在基础安装和安装 observer 测试依赖后分别运行完整回归，�
 - [archa-map：方向地图与项目初始化](skills/archa-map/SKILL.md)
 - [archa-task：任务简报与自动 onboard](skills/archa-task/SKILL.md)
 - [archa-loop：运行、恢复、终验与修复](skills/archa-loop/SKILL.md)
+- [archa-log：独立增量研究日志](skills/archa-log/SKILL.md)
 - [Expert / Designer 的工作协议](opc/adapters/prompts.py)
 - [任务配置及 Profile 解析](opc/core/config.py)
 - [交付验收与独立审核实现](opc/core/promote.py)

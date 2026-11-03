@@ -52,6 +52,7 @@ RUNTIME_FILES = (
     "opc/adapters/scripted.py",
     "opc/adapters/worker.py",
     "opc/cli.py",
+    "opc/log.py",
     "opc/core/__init__.py",
     "opc/core/accept.py",
     "opc/core/config.py",

@@ -13,7 +13,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-NAMES = ("archa-map", "archa-task", "archa-loop")
+NAMES = ("archa-map", "archa-task", "archa-loop", "archa-log")
 
 
 def install(destination: Path) -> dict:

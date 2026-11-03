@@ -1185,3 +1185,43 @@ footer {
     display: none;
   }
 }
+
+.research-log-dialog {
+  width: min(820px, 94vw);
+  height: min(780px, 88dvh);
+  padding: 18px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.research-log-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.research-log-dialog::backdrop {
+  background: #0008;
+}
+.research-log-dialog header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.research-log-dialog h2 {
+  flex: 1;
+  font-size: 18px;
+}
+.research-log-copy {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
+.research-log-copy h2 {
+  font-size: 18px;
+  margin-top: 28px;
+}
+.research-log-copy h3 {
+  font-size: 15px;
+}

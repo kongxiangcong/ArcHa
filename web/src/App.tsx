@@ -5,6 +5,7 @@ import { ResearchDesk } from "./ResearchDesk";
 import { ResearchCanvas } from "./ResearchCanvas";
 import logo from "../../docs/assets/archa-aha-orange.svg";
 import { poll } from "./poll";
+import { ResearchLog } from "./ResearchLog";
 import { Activity } from "./Activity";
 import { MaterialReader } from "./Inspection";
 import type { Material } from "./types";
@@ -161,6 +162,7 @@ export default function App() {
   const [detail, setDetail] = useState(
     () => !!query.get("attempt") && !query.get("call"),
   );
+  const [logOpen, setLogOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [infoTab, setInfoTabState] = useState<InfoTab>("progress");
   function setInfoTab(tab: InfoTab) {
@@ -402,6 +404,9 @@ export default function App() {
     setDetail(false);
     setMaterial(null);
   }
+  useEffect(() => {
+    setLogOpen(false);
+  }, [runId, taskId]);
   const infoPanel = (
     <CanvasInfo
       key={`${taskId}:${runId}`}
@@ -466,6 +471,13 @@ export default function App() {
           </button>
         </div>
       </dialog>
+      {logOpen && (
+        <ResearchLog
+          key={runId}
+          run={runId}
+          onClose={() => setLogOpen(false)}
+        />
+      )}
       <header className="topbar">
         <a className="brand" href="/" aria-label="ArcHa 工作现场">
           <img className="brand-logo" src={logo} alt="ArcHa" />
@@ -557,6 +569,17 @@ export default function App() {
           </button>
         </div>
         <div className="top-right">
+          <button
+            className="btn"
+            disabled={!runId}
+            onClick={() => {
+              setInfoOpen(false);
+              setDetail(false);
+              setLogOpen(true);
+            }}
+          >
+            研究日志
+          </button>
           <div className="layout-switch" aria-label="工作台视图">
             <button
               aria-pressed={layout === "canvas"}
