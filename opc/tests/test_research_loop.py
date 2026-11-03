@@ -525,7 +525,7 @@ def test_context_bounds_machine_data_and_history(make_project, engine_for):
     assert data['cases']['last'][-1]['latency'] == 1002
     raw = json.loads((e.attempt_dir(15) / 'eval/evaluation.json').read_text())
     assert len(raw['metrics']['values']) == 2158 and len(raw['data'][0]['data']['cases']) == 1000
-    assert len(expert_prompt(ctx)) < 2800
+    assert len(expert_prompt(ctx)) < 3500
     assert len(ctx['pending_feedback']) == 15
     assert len(e.ledger.events(e.run_id, 'conclusion')) == 15
 

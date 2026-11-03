@@ -318,6 +318,8 @@ opc report -p /absolute/path/to/project --task <task-id> --revision <revision>
 
 工作台展示任务进度、Worker 活动、历史调用、证据与交付状态，默认只读。显式启用控制模式后，可以暂停、继续同一运行或停止，保留成果、冻结配置和累计用量。
 
+“当前进展”窗口在两种布局中展示所选准备任务或 Run 最近一次已处理的进展与下一步。现有 Worker 随返回生成中文说明，引擎按实际校验、评价和控制状态确定最终展示内容；说明附在已有业务事件上，按事件顺序读取，不增加模型调用，也不参与验收或调度。旧记录没有说明时显示空态，不重跑历史工作。浏览器回归可在构建后运行 `python tools/observer_progress_smoke.py`（可通过 `--chromium` 指定浏览器）。
+
 <details>
 <summary>展开：安装、启动与开发验证</summary>
 

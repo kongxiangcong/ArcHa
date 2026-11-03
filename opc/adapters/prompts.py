@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from .worker import PROGRESS_RULE
 
 
 def _history(ctx: dict[str, Any]) -> str:
@@ -66,7 +67,7 @@ files, never directories/globs (tools/check.py, not tools); saved as outputs/<pa
 New files are allowed.
 base_work_id selects a candidate dependency. Branches need explicit selection, never
 auto-merge. Formal measurement excludes other compute.
-""" + rules
+""" + rules + "\n" + PROGRESS_RULE
 
 
 def designer_prompt(plan: dict[str, Any], ctx: dict[str, Any]) -> str:
@@ -105,4 +106,4 @@ adopted_claims=[{{task_id,claim_id,version}}] for claims additionally adopted (r
 alone is not adoption), and evidence_files=[relative paths] for necessary original
 observations/traces to preserve before cleanup under outputs/<path>. Reference
 already persistent evidence directly. Empty arrays are valid. Measurements run separately.
-"""
+""" + PROGRESS_RULE

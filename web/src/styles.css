@@ -1030,3 +1030,42 @@ footer {
   gap: 12px;
   margin-top: 24px;
 }
+/* Shared by canvas and desk; polling leaves unchanged live text nodes intact. */
+.current-progress {
+  margin: 0 0 18px;
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  min-width: 0;
+}
+.current-progress-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.current-progress h2 {
+  margin: 0;
+  font-size: 15px;
+}
+.current-progress-copy p {
+  margin: 10px 0;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.current-progress-meta {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.65;
+}
+@media (max-width: 600px) {
+  .current-progress {
+    padding: 12px;
+  }
+  .current-progress-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

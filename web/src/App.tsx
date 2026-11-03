@@ -8,6 +8,7 @@ import { poll } from "./poll";
 import { Activity } from "./Activity";
 import { Inspection, MaterialReader } from "./Inspection";
 import type { Material } from "./types";
+import { CurrentProgress } from "./CurrentProgress";
 import { Alert, Badge, label, time, preparationLabel } from "./components";
 import type {
   Envelope,
@@ -688,6 +689,7 @@ export default function App() {
               </p>
             )}
           </div>
+          <CurrentProgress key={`progress:${taskId}:${runId}`} scene={scene} />
           {layout === "canvas" ? (
             <ResearchCanvas
               key={runId}

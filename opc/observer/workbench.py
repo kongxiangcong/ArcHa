@@ -162,6 +162,20 @@ def stop_description(row):
             }.get(key, '运行需要处理，请查看相关工作' if row.get('state') == 'blocked' else '本次运行已结束')
 
 
+def current_progress(events):
+    """Only processed business outcomes; a raw worker reply is not engine acceptance."""
+    from ..core.progress import public_text
+    for event in reversed(events):
+        body = event['body']
+        value = public_text(body.get('progress_summary'))
+        role = body.get('progress_source')
+        if value and role in ('onboard', 'expert', 'designer', 'reviewer', 'engine'):
+            return dict(sequence=event['seq'], at=event.get('at'), role=role,
+                        progress_summary=value, attempt_no=event.get('attempt_no'),
+                        call_id=body.get('progress_call_id'))
+    return None
+
+
 def workbench(adapter, ident):
     row, events, calls, work = scene(adapter, ident)
     closure = next((e['body'] for e in reversed(events) if e['kind'] == 'expert_stop'), {})
@@ -209,6 +223,7 @@ def workbench(adapter, ident):
                 handoffs[key] = dict(id=key, source=source['title'], target=item['title'],
                                      attempt_no=item['attempt_no'], at=event.get('at'))
     data = dict(kind='preparation' if row.get('_preparation') else 'execution', preparation=row.get('_preparation_state'), timeline=timeline[-100:], handoffs=list(handoffs.values())[-100:], id=ident, source_run_id=row['run_id'], display_label=adapter._run_ref(row)['display_label'], execution=row.get('state') or 'unknown',
+                current_progress=current_progress(events),
                 goal=goal, stop_reason=stop_description(row), result=user_result(adapter, row, events, closure),
                 control=capability(adapter, row),
                 control_request=None,

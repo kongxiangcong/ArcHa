@@ -1869,7 +1869,8 @@ class Engine:
                 n = self.ledger.begin_selected_works(self.run_id, call_id, selected, champ[0], focus)[0]
             return n, None
 
-    def save_candidate(self, ws: Workspaces, n: int, parent: str, patch: str, title: str) -> str:
+    def save_candidate(self, ws: Workspaces, n: int, parent: str, patch: str, title: str,
+                       *, evaluation_requested: bool | None = None) -> str:
         saved = [e for e in self.ledger.events(self.run_id, "candidate_saved") if e["attempt"] == n]
         if saved:
             return saved[-1]["body"]["commit"]
@@ -1880,7 +1881,8 @@ class Engine:
                                     (self.task.task_id, n, title)) if patch.strip() else parent
             git("update-ref", "refs/opc-candidates/%s/%s/a%d" %
                 (self.task.task_id, self.run_id, n), candidate, cwd=self.root)
-            self.ledger.event(self.run_id, "candidate_saved", n, commit=candidate, parent=parent)
+            self.ledger.event(self.run_id, "candidate_saved", n, commit=candidate, parent=parent,
+                              evaluation_requested=evaluation_requested)
             return candidate
         finally:
             ws.drop(tree)
@@ -2071,7 +2073,9 @@ class Engine:
                                        files=rep.editable)
             # Snapshot only authorized edits, before gates can create outputs.
             # Keep a ref even for NO_GAIN/BROKEN; selecting it never moves champion.
-            candidate = self.save_candidate(ws, n, parent, patch, plan["title"])
+            candidate = self.save_candidate(ws, n, parent, patch, plan["title"],
+                evaluation_requested=(plan.get('evaluate') if plan.get('evaluate') is not None else
+                                      bool(self.task.acceptance.objective_metric)))
             selection = next(e for e in self.ledger.events(self.run_id, "work_selected") if e["attempt"] == n)
             if not self.task.acceptance.objective_metric and selection["body"].get("batch_size", 1) == 1:
                 self.ledger.event(self.run_id, "working_version", n, commit=candidate)

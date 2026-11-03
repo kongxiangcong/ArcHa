@@ -20,6 +20,16 @@ PLAN_FIELDS = ("title", "changes")
 #: on the other's module staying present.
 EXHAUSTED_SENTINEL = "NO_EXPERIMENT"
 
+PROGRESS_RULE = """Return progress_summary: a short Chinese paragraph, usually 2–3 sentences,
+describing actual progress/results/problems in plain language and one explicit 下一步.
+No paths, file lists, hashes, internal IDs, JSON field names, audit details or private
+reasoning. A plan is not execution; worker success is not experiment or task success.
+If undecided, next step is 由研究协调分析结果并确定方案. If blocked, explain the prerequisite;
+if paused wait for user resume; if budget exhausted stop pending new authorization.
+At incomplete closeout name gaps and grounded reopening conditions, never promise restart.
+Only confirmed final delivery may say 本任务已完成，暂无后续执行安排. This text is display only."""
+PROGRESS_SCHEMA = {"type": "string", "description": PROGRESS_RULE}
+
 PLAN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -124,6 +134,8 @@ PLAN_SCHEMA["properties"]["delivery_basis_review"] = {"type": ["object", "null"]
                    "scope": {"type": "string"}, "reason": {"type": "string"},
                    "changes": {"type": "array", "items": _BASIS_CHANGE_SCHEMA}}}
 PLAN_SCHEMA["required"] += ["delivery_claims", "delivery_artifacts", "delivery_basis_review"]
+PLAN_SCHEMA["properties"]["progress_summary"] = PROGRESS_SCHEMA
+PLAN_SCHEMA["required"].append("progress_summary")
 
 
 

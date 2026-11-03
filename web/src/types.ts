@@ -291,6 +291,14 @@ export interface WorkerSummary {
   activity_note: string;
 }
 export interface Workbench {
+  current_progress?: {
+    sequence: number;
+    at: string | null;
+    role: string;
+    progress_summary: string;
+    attempt_no: number | null;
+    call_id: string | null;
+  } | null;
   run_brief?: {
     goal: string | null;
     version: string;

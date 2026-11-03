@@ -61,6 +61,7 @@ RUNTIME_FILES = (
     "opc/core/ledger.py",
     "opc/core/model.py",
     "opc/core/platform.py",
+    "opc/core/progress.py",
     "opc/core/windows.py",
     "opc/core/promote.py",
     "opc/core/results.py",

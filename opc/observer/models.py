@@ -360,7 +360,17 @@ class WorkHandoff(DTO):
     at: str | None = None
 
 
+class CurrentProgress(DTO):
+    sequence: int
+    at: str | None = None
+    role: str
+    progress_summary: str
+    attempt_no: int | None = None
+    call_id: str | None = None
+
+
 class Workbench(DTO):
+    current_progress: CurrentProgress | None = None
     canvas: dict = Field(default_factory=dict)
     run_brief: dict | None = None
     kind: str = "execution"
