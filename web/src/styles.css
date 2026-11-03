@@ -1031,71 +1031,8 @@ footer {
   margin-top: 24px;
 }
 /* Shared by canvas and desk; polling leaves unchanged live text nodes intact. */
-.current-progress {
-  margin: 0 0 18px;
-  padding: 14px 18px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-  min-width: 0;
-}
-.current-progress-heading {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-}
-.current-progress h2 {
-  margin: 0;
-  font-size: 15px;
-}
-.current-progress-copy p {
-  margin: 10px 0;
-  line-height: 1.75;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.current-progress-meta {
-  margin: 0;
-  font-size: 12px;
-  opacity: 0.65;
-}
-@media (max-width: 600px) {
-  .current-progress {
-    padding: 12px;
-  }
-  .current-progress-heading {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-}
 
 /* Shared overview for canvas and desk. */
-.workbench-overview {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 16px;
-  margin-bottom: 18px;
-  flex-shrink: 0;
-}
-.workbench-overview .heading,
-.workbench-overview .current-progress {
-  min-width: 0;
-  margin: 0;
-  padding: 14px 18px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-  overflow-wrap: anywhere;
-}
-.canvas-mode .workbench-overview .heading .goal {
-  display: block;
-}
-@media (max-width: 760px) {
-  .workbench-overview {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
 
 /* Reading detail is optional; the scene keeps its viewport when selection changes. */
 .topbar .selectors {
@@ -1119,99 +1056,9 @@ footer {
   width: clamp(110px, 14vw, 220px);
   min-width: 0;
 }
-.workbench-overview {
-  margin: 0 12px 6px;
-  gap: 8px;
-}
-.workbench-overview .heading,
-.workbench-overview .current-progress {
-  height: 106px;
-  padding: 8px 12px;
-  overflow: auto;
-}
-.workbench-overview .heading h1 {
-  font-size: 16px;
-  margin: 0 0 4px;
-}
-.workbench-overview .heading .goal {
-  font-size: 12px;
-}
-.workbench-overview .current-progress {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.current-progress-heading {
-  flex-shrink: 0;
-  gap: 4px 8px;
-  align-items: center;
-}
-.current-progress-heading h2 {
-  font-size: 13px;
-}
-.current-progress-heading .muted {
-  display: none;
-}
-.current-progress-heading .btn,
-.summary-expand {
-  padding: 2px 5px;
-  font-size: 11px;
-}
-.current-progress-copy {
-  min-height: 0;
-  flex: 1;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.current-progress-copy p {
-  font-size: 12px;
-  line-height: 1.6;
-  margin: 4px 0;
-}
-.current-progress-meta {
-  font-size: 10px;
-  flex-shrink: 0;
-  line-height: 1.4;
-}
-.workbench-overview .heading > .summary-expand {
-  float: right;
-}
-.summary-dialog {
-  width: min(600px, 90vw);
-  max-height: 80dvh;
-  padding: 20px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  color: var(--ink);
-  background: var(--surface);
-}
-.summary-dialog::backdrop {
-  background: #0008;
-}
-.summary-dialog header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-.summary-dialog h2 {
-  font-size: 18px;
-  margin: 0;
-}
-.summary-dialog-copy {
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-  line-height: 1.8;
-}
 .canvas-mode .topbar {
   gap: 10px;
   padding: 0 12px;
-}
-.canvas-mode .workbench-overview .heading {
-  padding: 8px 12px;
-}
-.canvas-mode .workbench-overview .heading h1 {
-  font-size: 16px;
 }
 @media (max-width: 760px) {
   .topbar .brand,
@@ -1224,35 +1071,8 @@ footer {
   .topbar .top-right {
     flex-shrink: 0;
   }
-  .canvas-mode .workbench-overview {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
-    margin-inline: 6px;
-  }
-  .canvas-mode .workbench-overview .heading,
-  .canvas-mode .workbench-overview .current-progress {
-    height: 112px;
-    padding: 6px;
-  }
-  .canvas-mode .workbench-overview .heading h1 {
-    font-size: 13px;
-  }
 }
 /* Keep reading controls on one compact row, including narrow screens. */
-.workbench-overview .current-progress-heading {
-  flex-direction: row;
-  flex-wrap: nowrap;
-  align-items: center;
-  overflow-x: auto;
-  min-height: 24px;
-}
-.workbench-overview .current-progress-heading > * {
-  flex-shrink: 0;
-}
-.workbench-overview .current-progress-meta {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 @media (max-width: 760px) {
   .canvas-mode .topbar .selectors select {
     width: 110px;
@@ -1272,4 +1092,96 @@ footer {
 }
 .canvas-mode .cc-tracks {
   overscroll-behavior-y: auto;
+}
+/* The canvas owns its optional information window; it reserves no layout row. */
+.canvas-info {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 6;
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 20px);
+  color: var(--ink);
+  user-select: text;
+  cursor: auto;
+}
+.canvas-info.expanded {
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 25px #0004;
+}
+.info-toggle {
+  align-self: flex-end;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+.canvas-info nav {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  margin: 6px 0;
+}
+.canvas-info nav button {
+  font-size: 12px;
+  padding: 5px 7px;
+}
+.canvas-info nav button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.info-copy {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+  font-size: 13px;
+}
+.info-copy p {
+  margin: 4px 0 10px;
+}
+.canvas-info small {
+  margin-left: 20px;
+  font-size: 10px;
+  opacity: 0.7;
+}
+.info-resize {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  padding: 4px;
+  cursor: nesw-resize;
+  touch-action: none;
+}
+.inspector .detail-section p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-height: 24px;
+}
+.canvas-mode .inspector {
+  position: fixed;
+  top: var(--inspector-top, 160px);
+  bottom: 24px;
+  right: 12px;
+  width: min(454px, calc(100vw - 24px));
+  margin: 0;
+  max-height: calc(100dvh - 170px);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+@media (max-width: 600px) {
+  .canvas-info.expanded {
+    width: calc(100% - 24px) !important;
+  }
+  .info-resize {
+    display: none;
+  }
 }

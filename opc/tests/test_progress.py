@@ -252,3 +252,18 @@ def test_compact_display_keeps_next_step_without_changing_receipt():
     assert len(shown) <= 200
     assert shown.endswith('\n\n下一步等待用户恢复。')
     assert len(raw) > 200
+
+
+def test_worker_readable_only_projects_recorded_prose():
+    from opc.observer.workbench import worker_readable
+    detail, result = worker_readable({'plan': {'title': '容量实验', 'changes': '测量满载后的行为',
+        'deliverables': ['private/result.json']}, 'context': {'secret': 'INTERNAL'}},
+        {'summary': '已完成三次检查，尚不能比较性能。', 'completed': True, 'call_id': 'INTERNAL'}, 'designer')
+    assert '容量实验' in detail and result == '已完成三次检查，尚不能比较性能。'
+    assert 'INTERNAL' not in detail + result and 'json' not in detail + result
+    assert worker_readable({}, {'summary': '{"internal": "raw"}'}, 'designer') == (None, None)
+    detail, result = worker_readable({}, {'works': [{'hypothesis': '降低批量可能减少等待', 'changes': '补齐对照'}],
+        'conclusions': [{'conclusion': '已有观测尚不能解释原因'}]}, 'expert')
+    assert '降低批量' in detail and '尚不能解释原因' in result
+    assert worker_readable({}, {}, 'expert') == (None, None)
+    assert worker_readable({}, {'summary': '```json\n{}\n```'}, 'designer') == (None, None)

@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import dagre from "@dagrejs/dagre";
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import type {
+  ReactNode,
+  CSSProperties,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import type {
   CanvasCard,
   Material,
@@ -42,7 +46,11 @@ export function ResearchCanvas({
   onInspect,
   onFollow,
   onFactOpen,
+  infoPanel,
+  infoOpen,
 }: {
+  infoPanel?: ReactNode;
+  infoOpen?: boolean;
   scene?: Workbench;
   task?: TaskDetail;
   scope: string;
@@ -78,6 +86,9 @@ export function ResearchCanvas({
   const [folded, setFolded] = useState<string[]>(saved.current?.folded ?? []);
   const [timelineOpen, setTimelineOpen] = useState(true);
   const [factId, setFactId] = useState<string | null>(null);
+  useEffect(() => {
+    if (infoOpen) setFactId(null);
+  }, [infoOpen]);
   const factHeading = useRef<HTMLHeadingElement>(null);
   const factOpener = useRef<HTMLElement | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -190,20 +201,48 @@ export function ResearchCanvas({
   function focus(card: CanvasCard, scale = camera.scale) {
     const p = points.get(card.id);
     if (!p) return;
-    scale = Math.min(scale, (size.width - 32) / 245, (size.height - 32) / 230);
+    const panelWidth = infoOpen
+      ? (viewport.current
+          ?.querySelector(".canvas-info")
+          ?.getBoundingClientRect().width ?? 350) + 24
+      : 0;
+    const width =
+      size.width - panelWidth > 270 ? size.width - panelWidth : size.width;
+    scale = Math.min(scale, (width - 32) / 245, (size.height - 32) / 230);
     setCamera({
-      x: Math.max(22, size.width * 0.47 - 122 * scale) - p.x * scale,
+      x: Math.max(22, width * 0.47 - 122 * scale) - p.x * scale,
       y: Math.max(12, (size.height - 230 * scale) / 2) - p.y * scale,
       scale,
     });
   }
+  useEffect(() => {
+    if (infoOpen) {
+      const card = cards.find((c) => c.id === selected);
+      if (card) focus(card);
+    }
+  }, [infoOpen]);
   function select(card: CanvasCard, opener: HTMLElement, locate = false) {
     inspect();
     setSelected(card.id);
     if (card.round_id)
       setFolded((old) => old.filter((id) => id !== card.round_id));
     if (locate || card.call_id) focus(card);
-    if (card.material?.availability === "available") {
+    const selectedWorker = scene?.workers.find(
+      (item) => item.id === card.call_id,
+    );
+    if (
+      selectedWorker &&
+      ["expert", "designer", "onboard", "reviewer"].includes(card.role)
+    ) {
+      setFactId(null);
+      onWorker(selectedWorker, opener);
+    } else if (
+      ["expert", "designer"].includes(card.role) &&
+      card.attempt_no !== null
+    ) {
+      setFactId(null);
+      onWork(card.attempt_no, opener);
+    } else if (card.material?.availability === "available") {
       setFactId(null);
       onOpen(card.material, opener);
     } else if (
@@ -318,6 +357,7 @@ export function ResearchCanvas({
     const element = viewport.current;
     if (!element) return;
     const wheel = (event: WheelEvent) => {
+      if ((event.target as HTMLElement).closest(".canvas-info")) return;
       if (!event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
       zoom(event.deltaY > 0 ? 0.93 : 1.07);
@@ -326,6 +366,7 @@ export function ResearchCanvas({
     return () => element.removeEventListener("wheel", wheel);
   }, [camera, size, onInspect]);
   function start(event: ReactPointerEvent<HTMLDivElement>) {
+    if ((event.target as HTMLElement).closest(".canvas-info")) return;
     if (event.button !== 0) return;
     const control = (event.target as HTMLElement).closest("button,a,select");
     if (control && !control.matches(".cc-card")) return;
@@ -569,6 +610,7 @@ export function ResearchCanvas({
         }}
         onDragStart={(event) => event.preventDefault()}
       >
+        {infoPanel}
         <div
           className={`cc-world${dragging ? " dragging" : ""}`}
           data-camera={`${camera.x},${camera.y},${camera.scale}`}

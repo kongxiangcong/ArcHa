@@ -21,12 +21,38 @@ def records(adapter, ident):
     return row, data['attempts'], events
 
 
+def worker_readable(input_data, output, role):
+    """Project known prose only. Never serialize arbitrary inputs or receipts for the UI."""
+    def prose(value):
+        if isinstance(value, str) and value.strip() and not value.lstrip().startswith(('{', '[', '```')):
+            return value.strip()
+        return None
+    def sections(values):
+        return '\n\n'.join(dict.fromkeys(v for v in values if v)) or None
+    plan = mapping(input_data.get('plan'))
+    task = mapping(mapping(input_data.get('context')).get('task'))
+    details = sections([prose(plan.get(k)) for k in ('title', 'hypothesis', 'changes')] + [prose(task.get('goal'))])
+    output = mapping(output)
+    results = [prose(output.get(k)) for k in ('summary', 'progress_summary', 'reason', 'stop_reason')]
+    if role == 'expert':
+        proposed = output.get('works') if isinstance(output.get('works'), list) else [output]
+        proposals = [prose(mapping(work).get(k)) for work in proposed for k in ('title', 'hypothesis', 'changes')]
+        details = sections(proposals) or details
+        results += [prose(mapping(item).get('conclusion')) for item in output.get('conclusions', []) if isinstance(item, dict)] if isinstance(output.get('conclusions'), list) else []
+        results += proposals
+    if output.get('verdict') in ('accept', 'reject'):
+        results.insert(0, '审核通过' if output['verdict'] == 'accept' else '审核未通过')
+    return details, sections(results)
+
+
 def workers(adapter, row, events):
     dispatches = {e['body'].get('call_id'): e for e in events if e['kind'] == 'call_dispatched'}
     completed = {e['body'].get('call_id') for e in events if e['kind'] in ('worker_call', 'evaluation_call')}
     from ..core.progress import public_text, compact
+    records = adapter._db(row['run_id'], tables_to_read=('calls',)).get('calls', [])
+    inputs = {c['call_id']: mapping(parsed(c.get('input'), {})) for c in records}
     receipts = {c['call_id']: mapping(parsed(c.get('result'), {}))
-                for c in adapter._db(row['run_id'], tables_to_read=('calls',)).get('calls', [])}
+                for c in records}
     calls = []
     for e in events:
         b = e['body']
@@ -43,7 +69,14 @@ def workers(adapter, row, events):
         if isinstance(output, dict) and isinstance(output.get('reply'), str):
             output = parsed(output['reply'], {})
         value = public_text(b.get('worker_progress_summary') or mapping(output).get('progress_summary'))
-        calls.append(dict(progress_summary=compact(value) if value else None, id=adapter._id('call', row['run_id'] + ':' + str((dispatch or e)['seq'])),
+        task_summary, result_summary = worker_readable(
+            inputs.get(b.get('call_id')) or mapping(mapping((dispatch or {}).get('body')).get('inputs')),
+            output, b.get('role'))
+        if state not in ('finished', 'failed'):
+            result_summary = None
+        elif not result_summary:
+            result_summary = value
+        calls.append(dict(task_summary=task_summary, result_summary=result_summary, progress_summary=compact(value) if value else None, id=adapter._id('call', row['run_id'] + ':' + str((dispatch or e)['seq'])),
                           attempt_no=e.get('attempt_no'), role=b.get('role') or 'evaluator', state=state,
                           started_at=(dispatch or {}).get('at'), ended_at=None if state == 'pending' else e.get('at'),
                           error=b.get('error') if isinstance(b.get('error'), str) else None,
