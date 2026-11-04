@@ -132,3 +132,12 @@ def engine_for():
     def make(root: Path, task_id: str = "t-toy"):
         return Engine(root, task_id, log=lambda s: None)
     return make
+
+
+@pytest.fixture(autouse=True)
+def isolated_native_home(tmp_path, monkeypatch):
+    """Fake transports must not depend on developer credentials/configuration."""
+    home = tmp_path / 'native-codex-home'
+    home.mkdir()
+    (home / 'config.toml').write_text('model = "fixture-model"\n', encoding='utf-8')
+    monkeypatch.setenv('OPC_CODEX_HOME', str(home))

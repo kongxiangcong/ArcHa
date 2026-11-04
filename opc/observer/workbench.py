@@ -21,9 +21,38 @@ def records(adapter, ident):
     return row, data['attempts'], events
 
 
+def worker_readable(input_data, output, role):
+    """Project known prose only. Never serialize arbitrary inputs or receipts for the UI."""
+    def prose(value):
+        if isinstance(value, str) and value.strip() and not value.lstrip().startswith(('{', '[', '```')):
+            return value.strip()
+        return None
+    def sections(values):
+        return '\n\n'.join(dict.fromkeys(v for v in values if v)) or None
+    plan = mapping(input_data.get('plan'))
+    task = mapping(mapping(input_data.get('context')).get('task'))
+    details = sections([prose(plan.get(k)) for k in ('title', 'hypothesis', 'changes')] + [prose(task.get('goal'))])
+    output = mapping(output)
+    results = [prose(output.get(k)) for k in ('summary', 'progress_summary', 'reason', 'stop_reason')]
+    if role == 'expert':
+        proposed = output.get('works') if isinstance(output.get('works'), list) else [output]
+        proposals = [prose(mapping(work).get(k)) for work in proposed for k in ('title', 'hypothesis', 'changes')]
+        details = sections(proposals) or details
+        results += [prose(mapping(item).get('conclusion')) for item in output.get('conclusions', []) if isinstance(item, dict)] if isinstance(output.get('conclusions'), list) else []
+        results += proposals
+    if output.get('verdict') in ('accept', 'reject'):
+        results.insert(0, '审核通过' if output['verdict'] == 'accept' else '审核未通过')
+    return details, sections(results)
+
+
 def workers(adapter, row, events):
     dispatches = {e['body'].get('call_id'): e for e in events if e['kind'] == 'call_dispatched'}
     completed = {e['body'].get('call_id') for e in events if e['kind'] in ('worker_call', 'evaluation_call')}
+    from ..core.progress import public_text, compact
+    records = adapter._db(row['run_id'], tables_to_read=('calls',)).get('calls', [])
+    inputs = {c['call_id']: mapping(parsed(c.get('input'), {})) for c in records}
+    receipts = {c['call_id']: mapping(parsed(c.get('result'), {}))
+                for c in records}
     calls = []
     for e in events:
         b = e['body']
@@ -33,7 +62,21 @@ def workers(adapter, row, events):
         state = ('pending' if e['kind'] == 'call_dispatched' else
                  b['state'] if b.get('state') in ('unknown', 'cancelled') else
                  'finished' if b.get('ok') is True else 'failed' if b.get('ok') is False else 'unknown')
-        calls.append(dict(id=adapter._id('call', row['run_id'] + ':' + str((dispatch or e)['seq'])),
+        receipt = receipts.get(b.get('call_id'), {})
+        output = receipt.get('output')
+        if isinstance(output, str):
+            output = parsed(output, {})
+        if isinstance(output, dict) and isinstance(output.get('reply'), str):
+            output = parsed(output['reply'], {})
+        value = public_text(b.get('worker_progress_summary') or mapping(output).get('progress_summary'))
+        task_summary, result_summary = worker_readable(
+            inputs.get(b.get('call_id')) or mapping(mapping((dispatch or {}).get('body')).get('inputs')),
+            output, b.get('role'))
+        if state not in ('finished', 'failed'):
+            result_summary = None
+        elif not result_summary:
+            result_summary = value
+        calls.append(dict(task_summary=task_summary, result_summary=result_summary, progress_summary=compact(value) if value else None, id=adapter._id('call', row['run_id'] + ':' + str((dispatch or e)['seq'])),
                           attempt_no=e.get('attempt_no'), role=b.get('role') or 'evaluator', state=state,
                           started_at=(dispatch or {}).get('at'), ended_at=None if state == 'pending' else e.get('at'),
                           error=b.get('error') if isinstance(b.get('error'), str) else None,
@@ -162,24 +205,95 @@ def stop_description(row):
             }.get(key, '运行需要处理，请查看相关工作' if row.get('state') == 'blocked' else '本次运行已结束')
 
 
+def current_progress(events):
+    """Only processed business outcomes; a raw worker reply is not engine acceptance."""
+    from ..core.progress import public_text, compact
+    for event in reversed(events):
+        body = event['body']
+        value = public_text(body.get('progress_summary'))
+        role = body.get('progress_source')
+        if value and role in ('onboard', 'expert', 'designer', 'reviewer', 'engine'):
+            return dict(sequence=event['seq'], at=event.get('at'), role=role,
+                        progress_summary=compact(value), attempt_no=event.get('attempt_no'),
+                        call_id=body.get('progress_call_id'))
+    return None
+
+
 def workbench(adapter, ident):
     row, events, calls, work = scene(adapter, ident)
     closure = next((e['body'] for e in reversed(events) if e['kind'] == 'expert_stop'), {})
     run_dir = adapter._run_dir(row)
     contract = adapter._read(run_dir / 'frozen/task.json', json_file=True, default={}) if run_dir else {}
     goal = text(mapping(contract).get('goal'))
+    if row.get('_preparation'):
+        owner = next((t for t in adapter.tasks.values() if t['id'] in row.get('_owners', set())), None)
+        goal = owner['title'] if owner else '研究准备'
+
     from .control import capability
     unfinished = [c for c in calls if c['state'] in ('pending', 'unknown')]
     recent = [c for c in calls if c['state'] not in ('pending', 'unknown')][-200:]
     visible_calls = sorted(unfinished + recent, key=lambda c: calls.index(c))
-    data = dict(id=ident, source_run_id=row['run_id'], display_label=adapter._run_ref(row)['display_label'], execution=row.get('state') or 'unknown',
+    timeline = []
+    names = {'preparation': '研究准备状态已更新', 'preparation_candidate': '准备产物已保存', 'expert_decision': '研究方向已更新', 'work_reconsidered': '工作安排已修订',
+             'candidate_saved': '候选成果已保存', 'deliverables_saved': '任务产出已保存',
+             'conclusion': '反馈分析已记录', 'expert_stop': '研究推进已收束',
+             'promotion_report': '交付检查已返回'}
+    for event in events:
+        body = event['body']
+        title = names.get(event['kind'])
+        if event['kind'] == 'call_dispatched':
+            title = {'onboard': '研究准备已派发', 'expert': '研究协调已派发', 'designer': '实施工作已派发',
+                     'evaluator': '评价已派发', 'reviewer': '独立审核已派发'}.get(body.get('role'), '工作调用已派发')
+        elif event['kind'] in ('worker_call', 'evaluation_call'):
+            title = '调用结果未知' if (body.get('state') == 'unknown' or body.get('ok') is None) else '调用已返回' if body.get('ok') else '调用未成功'
+        if title:
+            timeline.append(dict(id=str(event['seq']), title=title, at=event.get('at'),
+                                 attempt_no=event.get('attempt_no')))
+    handoffs = {}
+    by_work = {item['work_id']: item for item in work}
+    by_attempt = {item['attempt_no']: item for item in work}
+    for event in events:
+        item = by_attempt.get(event.get('attempt_no'))
+        if event['kind'] != 'call_dispatched' or item is None:
+            continue
+        inputs = mapping(mapping(event['body'].get('inputs')).get('context')).get('handoff', {})
+        for dependency in mapping(inputs).get('inputs', []):
+            if not isinstance(dependency, dict):
+                continue
+            source = by_work.get(dependency.get('work_id'))
+            if source and dependency.get('artifact'):
+                key = str(event['seq']) + ':' + str(source['attempt_no']) + ':' + str(dependency['artifact'])
+                handoffs[key] = dict(id=key, source=source['title'], target=item['title'],
+                                     attempt_no=item['attempt_no'], at=event.get('at'))
+    data = dict(kind='preparation' if row.get('_preparation') else 'execution', preparation=row.get('_preparation_state'), timeline=timeline[-100:], handoffs=list(handoffs.values())[-100:], id=ident, source_run_id=row['run_id'], display_label=adapter._run_ref(row)['display_label'], execution=row.get('state') or 'unknown',
+                current_progress=current_progress(events),
                 goal=goal, stop_reason=stop_description(row), result=user_result(adapter, row, events, closure),
                 control=capability(adapter, row),
                 control_request=None,
                 workers=visible_calls, workers_truncated=len(visible_calls) < len(calls), work_count=len(work),
                 availability='partial' if row.get('_snapshot') or not goal else 'available',
                 observation_note='显示最后已知记录；派发记录不代表执行仍然存活')
-    if adapter.control_enabled:
+    from .canvas import project, run_brief
+    data['run_brief'] = run_brief(adapter, row, contract)
+    data['canvas'] = project(adapter, row, adapter._db(row['run_id'], tables_to_read=('attempts',))['attempts'] if not row.get('_snapshot') else adapter.snapshots[row['run_id']].get('attempts', []), events, calls, work)
+    data['preparation_materials'] = []
+    if row.get('_preparation'):
+        data['result'] = dict(complete=None, reason=row['_preparation_state'].get('reason'), gaps=None)
+        data['observation_note'] = '研究准备事件范围；尚非正式 Run。旧记录未登记调用归属时，执行情况未知；无需重跑准备。'
+        if row.get('_ownership_ambiguous'):
+            data['observation_note'] = '准备来源跨多个专题，归属有歧义；仅在工程未关联准备中显示，未混合到专题。'
+        paths = []
+        for task in adapter.tasks.values():
+            if task['id'] in row.get('_owners', set()):
+                paths.extend([task['_path'], task['_path'].parent / 'task-brief.md'])
+        paths.extend(adapter.artifact_registry[rv['contract_artifact_id']]['path'] for rv in adapter.revisions.values()
+                     if rv.get('research_task_id') in row.get('_owners', set()))
+        for path in dict.fromkeys(paths):
+            if adapter._allowed(path) and path.is_file():
+                artifact = adapter._register(path, phase='task')
+                data['preparation_materials'].append(dict(id=artifact['id'], name=adapter._display(path),
+                    purpose='研究准备材料', availability=artifact['availability'], note=None))
+    if adapter.control_enabled and not row.get('_preparation'):
         from .control import read_requests, view
         latest = read_requests(adapter, row['run_id'])
         data['control_request'] = adapter.control_service.observe(row, latest) if latest and hasattr(adapter, 'control_service') else view(adapter, row, latest) if latest else None

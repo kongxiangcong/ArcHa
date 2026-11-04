@@ -220,6 +220,8 @@ class Ledger:
     # ------------------------------------------------------------------ events
     def _event(self, db: sqlite3.Connection, run_id: str, kind: str, attempt: int | None,
                body: dict[str, Any]) -> None:
+        from .progress import decorate
+        body = decorate(db, run_id, kind, attempt, body)
         db.execute("INSERT INTO events (run_id, at, kind, attempt_no, body) VALUES (?,?,?,?,?)",
                    (run_id, now(), kind, attempt, json.dumps(body, default=str,
                                                              ensure_ascii=False)))
@@ -416,7 +418,8 @@ class Ledger:
                                 (run_id,)).fetchone()[0] or 0) + 1
             for offset, (plan, parent) in enumerate(works):
                 n = first + offset
-                plan = {**plan, "work_id": plan.get("work_id") or "a%d" % n}
+                plan = {**{k: v for k, v in plan.items() if k != 'progress_summary'},
+                        "work_id": plan.get("work_id") or "a%d" % n}
                 db.execute("INSERT INTO attempts (run_id, attempt_no, state, champion_before, focus, plan, "
                            "started_at) VALUES (?,?,?,?,?,?,?)",
                            (run_id, n, "planned", champion, focus, json.dumps(plan), now()))

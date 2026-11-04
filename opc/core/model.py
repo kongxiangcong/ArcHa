@@ -161,7 +161,7 @@ def write_json(path: Path, value: Any) -> None:
     """Atomic: a crash leaves the old file or the new one, never half of either."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp-", suffix=path.suffix)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
+    with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
         json.dump(value, f, ensure_ascii=False, indent=2, default=str)
         f.write("\n")
     os.replace(tmp, path)
@@ -170,6 +170,6 @@ def write_json(path: Path, value: Any) -> None:
 def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp-")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
+    with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
         f.write(text)
     os.replace(tmp, path)

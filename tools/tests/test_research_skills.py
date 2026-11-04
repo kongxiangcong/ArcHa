@@ -113,12 +113,12 @@ def test_bundle_relocation_and_reinstall_backup(tmp_path):
     (skill / "local-note.txt").write_text("keep my local changes", encoding="utf-8")
     report = json.loads(subprocess.run(command, check=True, capture_output=True, text=True).stdout)
     backups = [Path(p) for p in report["backups"]]
-    assert len(backups) == 3
+    assert len(backups) == 4
     assert {Path(p).name for p in report["installed"]} == {
-        "archa-map", "archa-task", "archa-loop"}
+        "archa-map", "archa-task", "archa-loop", "archa-log"}
     assert (destination / "archa-loop/SKILL.md").is_file()
     assert (backups[0] / "local-note.txt").read_text(encoding="utf-8") == "keep my local changes"
-    for name in ('archa-map', 'archa-task', 'archa-loop'):
+    for name in ('archa-map', 'archa-task', 'archa-loop', 'archa-log'):
         assert (destination / name / 'SKILL.md').read_bytes() == (ROOT / 'skills' / name / 'SKILL.md').read_bytes()
     assert (skill / 'scripts/research.py').read_bytes() == (ROOT / 'skills/archa-map/scripts/research.py').read_bytes()
     moved = tmp_path / "relocated"

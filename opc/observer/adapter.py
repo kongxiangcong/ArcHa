@@ -65,9 +65,10 @@ class ObserverAdapter:
     adapter_id = 'archa-current'
     adapter_version = '1.0'
 
-    def __init__(self, root: Path | str, demo=False):
+    def __init__(self, root: Path | str, demo=False, *, topics=None):
         self.root = Path(root).resolve()
         self.demo = demo
+        self.topics = Path(topics).resolve() if topics is not None else None
         self.control_enabled = False
         self.project_key = 'p_' + digest(str(self.root))[:16]
         self.lock = threading.RLock()
@@ -251,23 +252,31 @@ class ObserverAdapter:
         self.briefs = {}
         self.revisions = {}
         self.maps = []
-        map_path = self.root / '.opc/research/research-map.md'
-        body = self._read(map_path)
-        if body is not None:
-            art = self._register(map_path, title='研究地图', phase='map')
-            self.maps.append(dict(id=art['id'], artifact_id=art['id'], label='研究地图', title='研究地图'))
-            for match in re.finditer(r'^- \[([ xX])\]\s*([^|\n]+)\|\s*\[([^\]]+)\]\(([^)]+)\)\s*\|\s*status=([^|\n]+)\|\s*depends=(.*)$', body, re.M):
-                _, raw_id, title, relpath, status_raw, depends = match.groups()
-                task_path = map_path.parent / relpath.strip()
-                tid = self._id('research-task', str(map_path) + ':' + raw_id.strip())
-                task_art = self._register(task_path, phase='task')
-                self.tasks[tid] = dict(id=tid, title=title, research_task_id=raw_id.strip(), map_artifact_id=art['id'],
-                                       task_artifact_id=task_art['id'], depends_on=re.findall(r'\b[A-Z]+\d+\b', depends),
-                                       raw_preparation_status=status_raw.strip(), briefs=[], revision_refs=[],
-                                       link_state='verified', meta=meta([self._source(task_art)]), _path=task_path.resolve())
-        research = self.root / '.opc/research/tasks'
-        task_files = sorted(research.glob('*/task.md')) if research.exists() else []
-        brief_files = sorted(research.glob('*/task-brief.md')) if research.exists() else []
+        topics_root = self.root / '.opc/research/topics'
+        research_roots = ([self.root / '.opc/research'] if self.topics is None else [])
+        selected = self.topics or topics_root
+        if selected == topics_root:
+            research_roots.extend(p for p in sorted(selected.glob('*')) if p.is_dir() and self._allowed(p))
+        else:
+            research_roots.append(selected)
+        task_files, brief_files = [], []
+        for research in research_roots:
+            map_path = research / 'research-map.md'
+            body = self._read(map_path)
+            if body is not None:
+                art = self._register(map_path, title=research.name + ' · 研究地图', phase='map')
+                self.maps.append(dict(id=art['id'], artifact_id=art['id'], label='研究地图', title=research.name + ' · 研究地图'))
+                for match in re.finditer(r'^- \[([ xX])\]\s*([^|\n]+)\|\s*\[([^\]]+)\]\(([^)]+)\)\s*\|\s*status=([^|\n]+)\|\s*depends=(.*)$', body, re.M):
+                    _, raw_id, title, relpath, status_raw, depends = match.groups()
+                    task_path = map_path.parent / relpath.strip()
+                    tid = self._id('research-task', str(map_path) + ':' + raw_id.strip())
+                    task_art = self._register(task_path, phase='task')
+                    self.tasks[tid] = dict(id=tid, title=title, research_task_id=raw_id.strip(), map_artifact_id=art['id'],
+                                           task_artifact_id=task_art['id'], depends_on=re.findall(r'\b[A-Z]+\d+\b', depends),
+                                           raw_preparation_status=status_raw.strip(), briefs=[], revision_refs=[],
+                                           link_state='verified', meta=meta([self._source(task_art)]), _path=task_path.resolve())
+            task_files.extend(sorted((research / 'tasks').glob('*/task.md')))
+            brief_files.extend(sorted((research / 'tasks').glob('*/task-brief.md')))
         for path in task_files:
             if not self._allowed(path) or any(
                 t.get('_path') == path.resolve() or
@@ -317,7 +326,20 @@ class ObserverAdapter:
                     self.issues.append(issue('snapshot_only', '账本不可用；仅显示已有 views 快照，时间与内容可能滞后'))
         self.run_numbers = {r['run_id']: n for n, r in enumerate(sorted(self.run_rows, key=lambda r: (r.get('created_at') or '', r['run_id'])), 1)}
         self.source_at = max((e['at'] for e in db['events'] if e.get('at')), default=None)
+        for task in self.tasks.values():
+            try:
+                relative = task['_path'].relative_to(self.root).parts
+            except ValueError:
+                relative = ()
+            task['topic'] = relative[3] if len(relative) > 3 and relative[2] == 'topics' else 'legacy'
         self._link_revisions()
+        from .preparation import discover
+        self.run_rows.extend(discover(self, db['events']))
+        self.run_numbers = {r['run_id']: n for n, r in enumerate(self.run_rows, 1)}
+        if self.topics is not None:
+            visible = {(r['execution_task_id'], r['revision']) for r in self.revisions.values()
+                       if r.get('research_task_id') in self.tasks}
+            self.run_rows = [r for r in self.run_rows if (r['task_id'], r['revision']) in visible or bool(r.get('_owners', set()) & self.tasks.keys())]
         self.discovery_at = __import__('time').monotonic()
 
     def _brief(self, path):
@@ -505,8 +527,8 @@ class ObserverAdapter:
         with self.lock:
             self._discover()
             linked_revs = {r['id'] for t in self.tasks.values() for r in t['revision_refs']}
-            revision_refs = [ref(r, r['execution_task_id'] + ' / ' + r['revision']) for r in self.revisions.values() if r['id'] not in linked_revs]
-            unlinked = [self._run_ref(r) for r in self.run_rows if not any(rv['execution_task_id'] == r.get('task_id') and rv['revision'] == r.get('revision') and rv['id'] in linked_revs for rv in self.revisions.values())]
+            revision_refs = [ref(r, r['execution_task_id'] + ' / ' + r['revision']) for r in self.revisions.values() if r['id'] not in linked_revs and self.topics is None]
+            unlinked = [self._run_ref(r) for r in self.run_rows if not any(rv['execution_task_id'] == r.get('task_id') and rv['revision'] == r.get('revision') and rv['id'] in linked_revs for rv in self.revisions.values()) and not r.get('_owners')]
             return self.envelope(dict(project=self.project, maps=self.maps,
                                       tasks=[self._public(t) for t in self.tasks.values()],
                                       unlinked_revisions=revision_refs, unlinked_runs=unlinked,
@@ -535,7 +557,7 @@ class ObserverAdapter:
             if task is None:
                 raise ObserverError(404, 'not_found', '未知研究任务')
             revisions = [r for r in self.revisions.values() if any(x['id'] == r['id'] for x in task['revision_refs'])]
-            rows = [r for r in self.run_rows if any(rv['execution_task_id'] == r.get('task_id') and rv['revision'] == r.get('revision') for rv in revisions)]
+            rows = [r for r in self.run_rows if any(rv['execution_task_id'] == r.get('task_id') and rv['revision'] == r.get('revision') for rv in revisions) or ident in r.get('_owners', set())]
             return self.envelope(dict(task=self._public(task), briefs=[self.briefs[b['id']] for b in task['briefs']],
                                       revisions=[self._public(r) for r in revisions], runs=[self._run_ref(r) for r in rows],
                                       artifacts=[self.artifact_registry[a]['dto'] for a in dict.fromkeys(
@@ -558,6 +580,8 @@ class ObserverAdapter:
             rows = self._db(tables_to_read=('runs',))['runs']
         except ObserverError:
             rows = []
+        self._discover()
+        rows = rows + [r for r in self.run_rows if r.get('_preparation')]
         rows = rows or self.run_rows
         for row in rows:
             if self._id('run', row['run_id']) == ident:
@@ -565,6 +589,8 @@ class ObserverAdapter:
         raise ObserverError(404, 'not_found', '未知运行记录')
 
     def _run_dir(self, row):
+        if row.get('_preparation'):
+            return None
         project_id = self.project.get('source_project_id')
         if not project_id:
             return None

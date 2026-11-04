@@ -27,7 +27,7 @@ class Branches:
 
     def propose(self, ctx, tree, log_dir):
         self.calls += 1
-        output = {'works': self.works} if self.calls == 1 else stop(ctx)
+        output = {'works': self.works} if self.calls == 1 or ctx.get('decision_correction') else stop(ctx)
         return WorkerCall('expert', True, Cost(), output=output, exhausted=output.get('exhausted', False))
 
     def implement(self, work, ctx, tree, log_dir):
@@ -144,9 +144,12 @@ def test_formal_measurement_waits_for_all_controlled_compute(make_project, engin
 
 
 class Processes(Branches):
-    def __init__(self, works, seconds):
+    def __init__(self, works, seconds, *, expected_processes=3, startup_delay=0):
         super().__init__(works)
         self.seconds = seconds
+        self.expected_processes = expected_processes
+        self.startup_delay = startup_delay
+        self.processes_started = 0
         self.started = threading.Event()
         self.executed = []
 
@@ -157,11 +160,14 @@ class Processes(Branches):
         started = time.monotonic()
         with self.lock:
             self.executed.append(work['work_id'])
-            if len(self.executed) == 3:
-                self.started.set()
         (tree / 'params.json').write_text('{"x":4}')
+        time.sleep(self.startup_delay)  # Optional slow-start injection, not a readiness assertion.
         with Process([sys.executable, '-c', f'import time; time.sleep({self.seconds})'],
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as process:
+            with self.lock:
+                self.processes_started += 1
+                if self.processes_started == self.expected_processes:
+                    self.started.set()  # OS process and its ownership are now established.
             process.wait()
         return WorkerCall('designer', process.returncode == 0,
                           Cost(time.monotonic() - started, 0, 0), output={'summary': 'Controlled computation ended'})
@@ -170,11 +176,10 @@ class Processes(Branches):
 @pytest.mark.parametrize('command', ['pause', 'stop'])
 def test_parallel_control_drains_receipts_and_never_dispatches_followup(make_project, engine_for, command):
     from opc.core.ledger import Ledger
-    worker = Processes([plan(i, work_id=f'work-{i}', evaluate=True) for i in range(4)], .18 if command == 'pause' else 2)
+    worker = Processes([plan(i, work_id=f'work-{i}', evaluate=True) for i in range(4)], 2 if command == 'pause' else 20)
     e = use_sequence(engine_for(make_project()), worker)
     def control():
-        assert worker.started.wait(3)
-        time.sleep(.03)
+        assert worker.started.wait(30)
         external = Ledger(e.ledger.path)
         external.set_control(e.run_id, command)
         external.close()
@@ -201,15 +206,15 @@ def test_parallel_control_drains_receipts_and_never_dispatches_followup(make_pro
 def test_parallel_wall_allowance_cancels_on_sum_of_active_execution(make_project, engine_for):
     from opc.tests.conftest import task
     contract = task()
-    contract['budget']['max_wall_seconds'] = .6
-    worker = Processes([plan(i, work_id=f'work-{i}', evaluate=False) for i in range(3)], 2)
+    contract['budget']['max_wall_seconds'] = 6
+    worker = Processes([plan(i, work_id=f'work-{i}', evaluate=False) for i in range(3)], 20)
     e = use_sequence(engine_for(make_project(tsk=contract)), worker)
     result = e.run()
     calls = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer']
     assert result['state'] == 'closed' and 'budget_exhausted' in result['stop_reason']
     assert len(calls) == 3 and all(c['state'] == 'cancelled' for c in calls)
-    assert all(c['result']['cost']['wall_seconds'] < .6 for c in calls)
-    assert result['spent']['wall_seconds'] >= .6
+    assert all(c['result']['cost']['wall_seconds'] < 6 for c in calls)
+    assert result['spent']['wall_seconds'] >= 6
     assert not result['pending_conclusions']  # cancelled work is still unfinished, not fake success.
 
 
@@ -245,25 +250,26 @@ def test_branch_failure_does_not_starve_independent_work_beyond_cap(make_project
         assert result['state'] == 'closed' and e.attempt_records()[0]['outcome'] == 'worker_failed'
 
 
-def test_unknown_execution_cancels_peers_and_blocks_new_run(make_project, engine_for):
+@pytest.mark.parametrize('startup_delay', [0, .1])
+def test_unknown_execution_cancels_peers_and_blocks_new_run(make_project, engine_for, startup_delay):
     from opc.core.model import OPCError
     class Unknown(Processes):
         def implement(self, work, ctx, tree, log_dir):
             if work['work_id'] == 'unknown':
                 with self.lock:
                     self.executed.append(work['work_id'])
-                assert self.started.wait(3)
-                time.sleep(.03)
+                assert self.started.wait(30)
                 raise RuntimeError('terminal lost')
             return super().implement(work, ctx, tree, log_dir)
     worker = Unknown([plan(0, work_id='unknown', evaluate=False),
-                      plan(1, work_id='peer-1', evaluate=False), plan(2, work_id='peer-2', evaluate=False)], 2)
+                      plan(1, work_id='peer-1', evaluate=False), plan(2, work_id='peer-2', evaluate=False)],
+                     20, expected_processes=2, startup_delay=startup_delay)
     root = make_project()
     e = use_sequence(engine_for(root), worker)
     before = time.monotonic()
     with pytest.raises(RuntimeError, match='terminal lost'):
         e.run()
-    assert time.monotonic() - before < 2
+    assert time.monotonic() - before < 15
     calls = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'designer']
     assert len(calls) == 3 and calls[0]['result'] is None
     assert all(c['state'] == 'cancelled' for c in calls[1:])

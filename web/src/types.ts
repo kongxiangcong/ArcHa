@@ -78,6 +78,7 @@ export interface Metric {
   source_refs: SourceRef[];
 }
 export interface Task extends Ref {
+  topic: string;
   title: string;
   research_task_id: string | null;
   map_artifact_id: string | null;
@@ -279,6 +280,9 @@ export interface WorkItem {
   availability: string;
 }
 export interface WorkerSummary {
+  task_summary?: string | null;
+  result_summary?: string | null;
+  progress_summary?: string | null;
   id: string;
   attempt_no: number | null;
   role: string;
@@ -290,6 +294,54 @@ export interface WorkerSummary {
   activity_note: string;
 }
 export interface Workbench {
+  current_progress?: {
+    sequence: number;
+    at: string | null;
+    role: string;
+    progress_summary: string;
+    attempt_no: number | null;
+    call_id: string | null;
+  } | null;
+  run_brief?: {
+    goal: string | null;
+    version: string;
+    material: Material | null;
+  } | null;
+  canvas?: {
+    cards: CanvasCard[];
+    edges: {
+      id: string;
+      source: string;
+      target: string;
+      at: string | null;
+      sequence: number;
+      label: string;
+      source_call_id?: string | null;
+      target_call_id?: string | null;
+    }[];
+    rounds: {
+      id: string;
+      title: string;
+      at: string | null;
+      attempts: number[];
+    }[];
+    note: string;
+  };
+  preparation_materials?: Material[];
+  kind?: "preparation" | "execution";
+  timeline: {
+    id: string;
+    title: string;
+    at: string | null;
+    attempt_no: number | null;
+  }[];
+  handoffs: {
+    id: string;
+    source: string;
+    target: string;
+    attempt_no: number;
+    at: string | null;
+  }[];
   id: string;
   display_label: string;
   source_run_id: string;
@@ -372,4 +424,20 @@ export interface ControlRequestView {
   sequence: number;
   reason: string;
   run: { state: string; execution_unknown: boolean };
+}
+
+export interface CanvasCard {
+  id: string;
+  role: string;
+  kind: string;
+  title: string;
+  summary: string | null;
+  attempt_no: number | null;
+  round_id: string | null;
+  state: string;
+  call_id: string | null;
+  material: Material | null;
+  at: string | null;
+  sequence: number;
+  source: { kind: string; sequence: number } | null;
 }

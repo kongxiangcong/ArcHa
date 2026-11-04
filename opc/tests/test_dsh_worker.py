@@ -6,6 +6,7 @@ turn-end error code taxonomy. A real dsh is not required, and no test here claim
 a real model ran.
 """
 from __future__ import annotations
+from pathlib import Path
 
 import json
 import stat
@@ -190,7 +191,7 @@ def test_dsh_missing_binary_is_infra(make_project, engine_for):
     assert call["attempt_no"] is None and call["result"]["ok"] is False
     assert call["result"]["extra"]["infra"] is True
     assert "dsh could not start" in call["result"]["error"]
-    assert "/nonexistent/dsh" in call["result"]["error"]
+    assert str(Path("/nonexistent/dsh").resolve()) in call["result"]["error"]
     assert call["result"]["cost"]["tokens"] == 0
     assert s["spent"]["search_attempts"] == 0
 

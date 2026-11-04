@@ -1,3 +1,4 @@
+import sys
 """Delivery consumes explicitly selected claim and artifact revisions."""
 import json
 
@@ -199,6 +200,7 @@ def test_related_counterclaim_and_direct_work_basis_survive_selection(make_proje
     assert reviewed['candidate']['claims'] != reviewed['candidate']['basis']
 
 
+@pytest.mark.skipif(sys.platform != 'linux', reason='executes real Linux Landlock permission probes; unsupported-platform refusal covered separately')
 def test_reviewer_reads_selected_binary_original_but_not_sibling_or_writes(make_project, engine_for, tmp_path):
     from opc.core.promote import promote
     from opc.tests.conftest import component

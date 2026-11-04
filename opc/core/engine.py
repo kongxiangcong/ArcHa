@@ -44,6 +44,7 @@ from .workspace import (Workspaces, apply_patch, cas_update_ref, commit_tree, di
                         extract_patch, patch_digest, read_ref, rev_parse, sandbox, tracked_digest)
 
 HISTORY_WINDOW = 12
+MAX_EXPERT_CORRECTIONS = 2
 
 
 @dataclass
@@ -1540,7 +1541,8 @@ class Engine:
                 refs.append(normalized)
         return refs
 
-    def validate_work_batch(self, works: list[dict], replace_attempt: int | None = None) -> str | None:
+    def validate_work_batch(self, works: list[dict], replace_attempt: int | None = None,
+                            source_tree: Path | None = None) -> str | None:
         existing = [a for a in self.attempt_records() if a["attempt_no"] != replace_attempt]
         graph = {(a["plan"] or {}).get("work_id") or "a%d" % a["attempt_no"]:
                  (a["plan"] or {}).get("dependencies") or [] for a in existing}
@@ -1554,10 +1556,17 @@ class Engine:
                 return "duplicate work_id: " + work_id
             dependencies = work.get("dependencies") or []
             directions = work.get("directions") or []
-            deliverables = work.get("deliverables") or []
-            if not isinstance(deliverables, list) or not all(isinstance(path, str) and portable_path(path)
-                    and (self.comp.is_editable(path) or self.comp.is_scratch(path)) for path in deliverables):
-                return "deliverables must be relative editable/scratch file paths"
+            deliverables = work.get("deliverables", [])
+            if not isinstance(deliverables, list):
+                return "work %s: deliverables must be a list of concrete relative editable/scratch file paths" % work_id
+            for path in deliverables:
+                if (not isinstance(path, str) or not portable_path(path) or path.endswith("/")
+                        or any(c in path for c in "*?[]")
+                        or (source_tree is not None and (source_tree / path).is_dir())
+                        or not (self.comp.is_editable(path) or self.comp.is_scratch(path))):
+                    return ("work %s: deliverables entry %r must be a concrete relative editable/scratch file path; "
+                            "directories and globs are not allowed (e.g. tools/check.py, manifests/run.json); "
+                            "planned new files are allowed" % (work_id, path))
             if not isinstance(directions, list) or not all(isinstance(d, str) and d.strip() for d in directions):
                 return "directions must be a list of nonempty labels"
             if not isinstance(dependencies, list) or not all(
@@ -1616,6 +1625,7 @@ class Engine:
     def choose_work(self, ws: Workspaces, basis_attempt: int | None = None,
                     *, final_feedback_only: bool = False) -> tuple[int | None, StopDecision | None]:
         """Run-level decisions select work; receipt/decision replay never calls the expert twice."""
+        correction = None
         while True:
             stops = self.ledger.events(self.run_id, "expert_stop")
             if stops:
@@ -1668,6 +1678,17 @@ class Engine:
                         else:
                             ctx["session_id"] = prior_session["session_id"]
                 if not replay:
+                    # Recover a correction interrupted after rejection but before dispatch.
+                    rejections = self.ledger.events(self.run_id, "expert_rejected")
+                    last = rejections[-1]["body"] if rejections else {}
+                    if (correction is None and calls and last.get("call_id") == calls[-1]["call_id"]
+                            and last.get("correctable") and last.get("correction_attempt", 0) < MAX_EXPERT_CORRECTIONS):
+                        correction = dict(call_id=last["call_id"], reason=last["reason"],
+                                          rejected_output=calls[-1]["result"]["output"],
+                                          attempt=last.get("correction_attempt", 0) + 1,
+                                          max_attempts=MAX_EXPERT_CORRECTIONS)
+                    if correction:
+                        ctx["decision_correction"] = correction
                     ctx["knowledge"] = self.knowledge_context(tree / "research.json", ctx["claims"])
                     ctx["claims"] = ctx["knowledge"].pop("claims")
                     ctx["claim_history"] = ctx["knowledge"].pop("claim_history")
@@ -1682,8 +1703,8 @@ class Engine:
                         self.hard_check()
                         continue
                     return None, StopDecision("blocked", "expert worker unavailable: " + call.error[:200])
-                ws.drop(loader)
                 output = call.output or {} if call.exhausted else call.output
+                correctable = False
                 why = self.validate_conclusions(output) if isinstance(output, dict) else "expert reply is not an object"
                 if why is None:
                     why = self.validate_claims(output)
@@ -1714,9 +1735,11 @@ class Engine:
                     works = output.get("works") if output.get("works") is not None else [output]
                     if not isinstance(works, list) or not works:
                         why = "works must be a nonempty list of selected work"
+                        correctable = True
                     else:
                         for work in works:
                             why = validate_plan(work)
+                            correctable = why is not None
                             if why is None and "adopted_claims" in work:
                                 try:
                                     work["adopted_claims"] = self.claim_refs(work["adopted_claims"], output.get("claims", []))
@@ -1727,7 +1750,8 @@ class Engine:
                             if why:
                                 break
                         if why is None:
-                            why = self.validate_work_batch(works, basis_attempt if adjusting else None)
+                            why = self.validate_work_batch(works, basis_attempt if adjusting else None, loader)
+                            correctable = why is not None
                 if why is None:
                     review = output.get("basis_review")
                     if basis_attempt is not None:
@@ -1755,8 +1779,17 @@ class Engine:
                                 why = "basis supplement requires new work"
                     elif review is not None:
                         why = "basis_review requires an affected pending work"
+                ws.drop(loader)
                 if why:
-                    self.ledger.event(self.run_id, "expert_rejected", call_id=call.call_id, reason=why)
+                    correction_attempt = ctx.get("decision_correction", {}).get("attempt", 0)
+                    self.ledger.event(self.run_id, "expert_rejected", call_id=call.call_id, reason=why,
+                                      correction_attempt=correction_attempt, correctable=correctable)
+                    if correctable and correction_attempt < MAX_EXPERT_CORRECTIONS:
+                        correction = dict(call_id=call.call_id, reason=why, rejected_output=call.output,
+                                          attempt=correction_attempt + 1,
+                                          max_attempts=MAX_EXPERT_CORRECTIONS)
+                        self.hard_check()
+                        continue
                     return None, StopDecision("blocked", "expert decision: " + why)
                 if call.exhausted:
                     output = {**output, "exhausted": True}
@@ -1768,6 +1801,7 @@ class Engine:
                     self.hard_check()
                     continue
                 decision = dict(call_id=call.call_id, output=output)
+                correction = None
             output, call_id = decision["output"], decision["call_id"]
             review = output.get("basis_review")
             if review and review["action"] in ("continue", "adjust"):
@@ -1835,7 +1869,8 @@ class Engine:
                 n = self.ledger.begin_selected_works(self.run_id, call_id, selected, champ[0], focus)[0]
             return n, None
 
-    def save_candidate(self, ws: Workspaces, n: int, parent: str, patch: str, title: str) -> str:
+    def save_candidate(self, ws: Workspaces, n: int, parent: str, patch: str, title: str,
+                       *, evaluation_requested: bool | None = None) -> str:
         saved = [e for e in self.ledger.events(self.run_id, "candidate_saved") if e["attempt"] == n]
         if saved:
             return saved[-1]["body"]["commit"]
@@ -1846,7 +1881,8 @@ class Engine:
                                     (self.task.task_id, n, title)) if patch.strip() else parent
             git("update-ref", "refs/opc-candidates/%s/%s/a%d" %
                 (self.task.task_id, self.run_id, n), candidate, cwd=self.root)
-            self.ledger.event(self.run_id, "candidate_saved", n, commit=candidate, parent=parent)
+            self.ledger.event(self.run_id, "candidate_saved", n, commit=candidate, parent=parent,
+                              evaluation_requested=evaluation_requested)
             return candidate
         finally:
             ws.drop(tree)
@@ -2037,7 +2073,9 @@ class Engine:
                                        files=rep.editable)
             # Snapshot only authorized edits, before gates can create outputs.
             # Keep a ref even for NO_GAIN/BROKEN; selecting it never moves champion.
-            candidate = self.save_candidate(ws, n, parent, patch, plan["title"])
+            candidate = self.save_candidate(ws, n, parent, patch, plan["title"],
+                evaluation_requested=(plan.get('evaluate') if plan.get('evaluate') is not None else
+                                      bool(self.task.acceptance.objective_metric)))
             selection = next(e for e in self.ledger.events(self.run_id, "work_selected") if e["attempt"] == n)
             if not self.task.acceptance.objective_metric and selection["body"].get("batch_size", 1) == 1:
                 self.ledger.event(self.run_id, "working_version", n, commit=candidate)

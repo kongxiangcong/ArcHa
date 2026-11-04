@@ -29,7 +29,7 @@
 
 > **用户掌握“为什么做、做到什么程度”；Worker 负责“提出方案、落实工作、解释证据”；框架保证执行与交付有据可查。**
 
-Python 发行包名为 `archa-opc`，底层引擎和命令行仍使用 `opc`。`archa-map`、`archa-task`、`archa-loop` 是面向用户的 Agent 技能入口。
+Python 发行包名为 `archa-opc`，底层引擎和命令行仍使用 `opc`。`archa-map`、`archa-task`、`archa-loop` 是研究流程技能入口；`archa-log` 独立整理已有研究进度，不参与调度。
 
 ## 为什么需要 Architecture Harness
 
@@ -83,6 +83,8 @@ ArcHa 的领域事实通过目标项目的 `.opc/` 接入层表达。框架核�
 专家读取当前任务、历史结果与授权材料，提出 hypothesis / proposal：要解决什么问题，采用什么方法，哪些观察会支持或削弱假设，为什么值得投入下一步。
 
 一个工作可以是代码开发，也可以是无补丁的新测量、诊断、证据补充或分析。实验允许得到“不支持原假设”或“证据不足”的结果。
+
+工作计划或交付清单校验失败时，引擎保留原调用回执，将具体错误与被拒绝的输出反馈给 Expert，在同一 Run 内最多追加两次纠错调用；仍不合规则进入 blocked。纠错遵守累计预算与暂停、停止指令。`deliverables` 必须填写具体的相对文件路径，不能填写目录或通配符；允许声明实施阶段将新建的文件。
 
 ### 3. 由设计者实施，框架保存与评价
 
@@ -314,7 +316,13 @@ opc report -p /absolute/path/to/project --task <task-id> --revision <revision>
 
 ## 工作台
 
-工作台展示任务进度、Worker 活动、历史调用、证据与交付状态，默认只读。显式启用控制模式后，可以暂停、继续同一运行或停止，保留成果、冻结配置和累计用量。
+工作台展示任务进度、Worker 活动、历史调用、证据与交付状态，默认可查看并更新研究日志。显式启用控制模式后，可以暂停、继续同一运行或停止，保留成果、冻结配置和累计用量。
+
+“当前进展”窗口在两种布局中展示所选准备任务或 Run 最近一次已处理的进展与下一步。现有 Worker 随返回生成中文说明，引擎按实际校验、评价和控制状态确定最终展示内容；说明附在已有业务事件上，按事件顺序读取，不增加模型调用，也不参与验收或调度。顶部单行选择专题、任务与运行；画布与默认展开的 Agent 时间轴占据主要空间。任务介绍、当前进展与所选 Worker 摘要共用画布右上角信息浮窗，默认收起，可切换页签、滚动、调整大小，并记住页签和尺寸。点击 Worker 卡片直接展开信息浮窗并切换到对应摘要，不再弹出工作详情或原始 JSON；缺少摘要时显示空态。工作区支持上下滚动，短窗口不会裁掉展开的时间轴；画布拖动平移，普通滚轮上下浏览，Ctrl 或 ⌘ 加滚轮缩放。摘要不超过200字、分段展示：Expert 侧重假设和要求，Designer 侧重实验、观测和局限，审核侧重判断和缺口。自述从原回执读取，与引擎最终处理区分；旧记录没有说明时显示空态，不重跑历史工作。浏览器回归可在构建后运行 `python tools/observer_progress_smoke.py`（可通过 `--chromium` 指定浏览器）。
+
+顶部“研究日志”入口打开独立弹窗，先读取已有日志，再按需调用独立脚本更新，无需启用 --control。演示模式、准备记录和快照记录仅供查看；没有新事实时不调用模型。日志默认追加到任务简报目录的 `PROGRESS_LOG.md`，保留旧记录，同一轮新增评价写补充记录。脚本复用本机 Expert 的 Codex/DSH 配置整理文字，不派发研究、不修改 Run 或研究预算；这次文字整理仍会产生模型调用费用。未登记到账本的主流程补跑暂不自动归档。
+
+独立使用：`python skills/archa-log/scripts/log.py -p <工程目录> --run-id <实际Run标识> --timezone Asia/Shanghai`，仅查看加 `--read`。技能内容见 [archa-log](skills/archa-log/SKILL.md)。已有项目需要更新部署的 runtime 才能使用该脚本。
 
 <details>
 <summary>展开：安装、启动与开发验证</summary>
@@ -335,6 +343,11 @@ python -m opc.observer --demo
 访问 <http://127.0.0.1:8765>。演示模式在独立临时目录生成合成的当前源格式材料，仍由同一读取适配器处理；页面始终标注演示。退出清理临时材料，不访问用户项目。查看真实项目：
 
 ```bash
+# 在目标工程目录内，直接指定单个专题（也接受 --topics / --topic）
+python -m opc.observer .opc/research/topics/decode-pim-mapping
+# 或观察整个 topics 集合；会持续发现新增专题、任务和运行
+python -m opc.observer --topics .opc/research/topics
+# 旧工程入口仍兼容，相对路径也可用
 python -m opc.observer --project /absolute/path/to/project
 # 显式启用本机运行控制（支持暂停、继续同一运行及停止）
 python -m opc.observer --project /absolute/path/to/project --control
@@ -342,6 +355,12 @@ python -m opc.observer --project /absolute/path/to/project --control
 ```
 
 观察器不创建缺失项目或数据库。默认且仅允许绑定 loopback；远程使用既有 SSH 隧道。项目配置明确指定的外置 `artifact_root` 也可读取，其他路径和越界符号链接会被拒绝。Markdown 不执行原始 HTML，外部图片不自动加载，HTML/SVG 原件仅显示源码或下载。页面 URL 保存任务、run、工作、筛选与所选调用；局部刷新保留阅读位置。控制接口只接受同源 JSON 和固定项目目标；重试先查询原请求，不自动补发。继续使用独立本地执行进程，保留原运行、冻结配置、成功回执与累计用量，不依赖页面或 HTTP 连接存活；恢复失败或执行未确认时保留现场，不自动重启。已暂停运行停止时直接由运行端关闭，不先恢复工作；无法确认执行结束时明确提示，停止不代表任务交付成功。演示、只读和缺少执行来源的历史不能控制。
+
+专题路径相对当前 shell 工作目录解析；观察器向祖先定位 `.opc/project.json`，账本和产物始终来自该工程，不能把专题目录当工程根。单专题仅筛选对应研究任务；集合目录支持同名 R01，以专题路径和已有简报交接绑定区分身份。旧研究目录原位保留。
+
+研究现场同步展示工作推进、模块调用状态、真实工具活动和已保存输入交接。未知执行不显示为思考；关系只在新交接时短暂激活。回看演进只读已有记录。默认不自动切换历史运行；勾选“跟随此任务的当前运行”后，只跟随唯一的执行中运行，多候选时需明确选择。专题切换保留各自阅读位置与选择。
+
+准备过程也会作为“准备记录”显示在对应专题任务下，即使尚无正式 Run 或合同。它来自 preparation 事件范围，准备就绪不等于研究完成；新 onboard/reviewer 调用登记自己的日志归属，旧 runtime 未登记的活动不按最近日志猜测。准备入口仅供观察，不提供正式 Run 控制。部署已有项目需核对其 `.opc/runtime` 版本；重新构建前端不会补回旧运行未保存的调用归属。
 
 前端开发可运行 `npm --prefix web run dev`，Vite 会将 API 转发至本地 Python 服务。生产构建输出到 `opc/observer/static/`，该目录不提交，但构建后打包的 wheel 包含它；安装这种 wheel 后运行观察器不需要 Node。没有安装 observer extra 时原有 `opc` CLI 继续独立工作。只安装源包而未构建前端时，观察服务会明确提示构建命令。
 
@@ -354,6 +373,7 @@ npm --prefix web run typecheck
 npm --prefix web run build
 # 浏览器验收另需 Playwright 与本机 Chromium
 python tools/observer_browser_smoke.py
+python tools/observer_motion_smoke.py
 ```
 
 框架基础安装的回归只需 `python -m pip install -e . pytest` 后运行 `python -m pytest -q`。
@@ -371,6 +391,7 @@ CI 在基础安装和安装 observer 测试依赖后分别运行完整回归，�
 - [archa-map：方向地图与项目初始化](skills/archa-map/SKILL.md)
 - [archa-task：任务简报与自动 onboard](skills/archa-task/SKILL.md)
 - [archa-loop：运行、恢复、终验与修复](skills/archa-loop/SKILL.md)
+- [archa-log：独立增量研究日志](skills/archa-log/SKILL.md)
 - [Expert / Designer 的工作协议](opc/adapters/prompts.py)
 - [任务配置及 Profile 解析](opc/core/config.py)
 - [交付验收与独立审核实现](opc/core/promote.py)

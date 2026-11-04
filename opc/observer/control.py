@@ -38,6 +38,8 @@ def read_requests(adapter, run_id=None, request_id=None):
 
 
 def unavailable_reason(adapter, row):
+    if row.get('_preparation'):
+        return '研究准备记录仅供观察，不是正式运行'
     reason = ('演示模式仅供查看' if adapter.demo else '当前服务为只读模式' if not adapter.control_enabled else
               '历史快照不能执行控制' if row.get('_snapshot') else
               '运行已经结束' if row.get('state') == 'closed' else None)

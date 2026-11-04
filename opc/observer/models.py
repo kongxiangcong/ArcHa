@@ -106,6 +106,7 @@ class Project(Entity):
 
 
 class ResearchTask(Entity):
+    topic: str = 'legacy'
     title: str
     research_task_id: str | None = None
     map_artifact_id: str | None = None
@@ -298,6 +299,9 @@ class ControlCapability(DTO):
 
 
 class WorkerSummary(DTO):
+    task_summary: str | None = None
+    result_summary: str | None = None
+    progress_summary: str | None = None
     id: str
     attempt_no: int | None
     role: str
@@ -344,7 +348,39 @@ class ControlRequestView(DTO):
     run: dict
 
 
+class ProgressEvent(DTO):
+    id: str
+    title: str
+    at: str | None = None
+    attempt_no: int | None = None
+
+
+class WorkHandoff(DTO):
+    id: str
+    source: str
+    target: str
+    attempt_no: int
+    at: str | None = None
+
+
+class CurrentProgress(DTO):
+    sequence: int
+    at: str | None = None
+    role: str
+    progress_summary: str
+    attempt_no: int | None = None
+    call_id: str | None = None
+
+
 class Workbench(DTO):
+    current_progress: CurrentProgress | None = None
+    canvas: dict = Field(default_factory=dict)
+    run_brief: dict | None = None
+    kind: str = "execution"
+    preparation: dict | None = None
+    preparation_materials: list[dict] = Field(default_factory=list)
+    timeline: list[ProgressEvent] = Field(default_factory=list)
+    handoffs: list[WorkHandoff] = Field(default_factory=list)
     id: str
     display_label: str
     source_run_id: str

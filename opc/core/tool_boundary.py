@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import sysconfig
 
 RUNTIME_READ = ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/etc/ld.so.cache',
                 '/etc/localtime', '/etc/nsswitch.conf', '/etc/passwd', '/etc/group',
@@ -92,6 +93,7 @@ def restrict(reads, writes, runtime=()):
     class Ruleset(C.Structure):
         _fields_ = [('fs', C.c_uint64)]
     class PathRule(C.Structure):
+        _layout_ = 'ms'
         _pack_ = 1
         _fields_ = [('access', C.c_uint64), ('parent', C.c_int)]
     def check(value):
@@ -148,7 +150,13 @@ def main():
            'PYTHONNOUSERSITE': '1', 'PYTHONDONTWRITEBYTECODE': '1',
            'OMP_NUM_THREADS': '1', 'OPENBLAS_NUM_THREADS': '1'}
     env.update(policy.get('env', {}))
-    restrict(policy['read'], policy['write'])
+    # Trust only the interpreter runtime, never the whole hosted tool cache.
+    runtime = [str(Path(sys.executable).resolve()), sysconfig.get_path('stdlib'),
+               sysconfig.get_config_var('LIBDIR')]
+    runtime = [p for p in runtime if p]
+    if sysconfig.get_config_var('LIBDIR'):
+        env['LD_LIBRARY_PATH'] = sysconfig.get_config_var('LIBDIR')
+    restrict(policy['read'], policy['write'], runtime=runtime)
     os.execvpe(command[0], command, env)
 
 

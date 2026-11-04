@@ -22,6 +22,7 @@ def test_new_literal_deliverable_gets_only_its_exact_file_grant(tmp_path):
     assert not (tree / 'results/frozen.md').exists()
 
 
+@pytest.mark.skipif(sys.platform != 'linux', reason='executes real Linux Landlock permission probes; unsupported-platform refusal covered separately')
 def test_task_tool_can_change_editable_input_but_not_frozen_or_sibling(tmp_path):
     tree = tmp_path / 'work'
     tree.mkdir()
@@ -89,6 +90,7 @@ def test_invalid_tool_scope_is_reported_as_not_started_not_unknown(tmp_path):
     assert not list(outside.iterdir())
 
 
+@pytest.mark.skipif(sys.platform != 'linux', reason='executes real Linux Landlock permission probes; unsupported-platform refusal covered separately')
 def test_only_declared_dependency_artifact_is_readable_and_transport_env_is_absent(tmp_path):
     from opc.core.tool_boundary import worker_policy
     tree, evidence = tmp_path / 'work', tmp_path / 'evidence'
@@ -167,3 +169,10 @@ def test_native_profile_initialization_failure_blocks_without_unknown_execution(
     assert call['state'] == 'not_started' and call['result']['usage_complete']
     assert call['result']['extra']['capability_gap']
     assert not e.ledger.open_attempts(e.run_id)
+
+
+def test_unsupported_platform_refuses_unisolated_tools(monkeypatch):
+    import opc.core.tool_boundary as boundary
+    monkeypatch.setattr(boundary.sys, 'platform', 'win32')
+    with pytest.raises(RuntimeError, match='refusing unisolated execution'):
+        boundary.restrict([], [])

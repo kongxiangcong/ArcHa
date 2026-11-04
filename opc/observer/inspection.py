@@ -15,17 +15,17 @@ def relative(value):
     return isinstance(value, str) and bool(value) and not Path(value).is_absolute() and not any(p in ('..', '.git', '.opc') for p in Path(value).parts) and '\\' not in value
 
 
-def register(adapter, key, name, purpose, *, path=None, version=None, unavailable=False):
+def register(adapter, key, name, purpose, *, path=None, version=None, unavailable=False, content=None):
     ident = adapter._id('material', key)
     mime = mimetypes.guess_type(name)[0] or 'application/octet-stream'
-    available = bool(path and adapter._allowed(path) and path.is_file()) if path else bool(version and git_size(adapter, version, name) is not None)
-    textual = mime.startswith('text/') or Path(name).suffix.lower() in ('.json', '.yaml', '.yml', '.toml', '.py', '.ts', '.tsx', '.js', '.c', '.cpp', '.h', '.sv', '.v', '.sh', '.svg')
+    available = content is not None or (bool(path and adapter._allowed(path) and path.is_file()) if path else bool(version and git_size(adapter, version, name) is not None))
+    textual = mime.startswith('text/') or Path(name).suffix.lower() in ('.md', '.txt', '.json', '.yaml', '.yml', '.toml', '.py', '.ts', '.tsx', '.js', '.c', '.cpp', '.h', '.sv', '.v', '.sh', '.svg')
     available = available and not unavailable and textual
     stat = path.stat() if available and path else None
-    dto = dict(id=ident, kind='task_material', title=name, display_path=name, content_origin='file',
+    dto = dict(id=ident, kind='task_material', title=name, display_path=name, content_origin='projection' if content is not None else 'file',
                phase='task', availability='available' if available else 'missing', mime=mime,
                can_preview=available, can_download=False, meta=meta(availability='available' if available else 'missing'), link_targets={})
-    adapter.artifact_registry[ident] = dict(dto=dto, task_material=True, path=path, version=version, name=name, signature=(stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns) if stat else None)
+    adapter.artifact_registry[ident] = dict(dto=dto, task_material=True, path=path, version=version, name=name, signature=(stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns) if stat else None, inline_bytes=content)
     return dict(id=ident, name=name, purpose=purpose, availability=dto['availability'], note=None if available else '所选工作版本的材料不可用或不支持文本预览')
 
 
@@ -122,7 +122,11 @@ def content(adapter, ident, offset, limit):
     if item['dto']['availability'] != 'available':
         raise ObserverError(404, 'material_unavailable', '所选工作版本的材料不可用')
     try:
-        if path:
+        if item.get('inline_bytes') is not None:
+            size = len(item['inline_bytes'])
+            raw = item['inline_bytes'][offset:offset + limit + 4]
+            version = item['version']
+        elif path:
             if not adapter._allowed(path):
                 raise ObserverError(404, 'path_denied', '任务材料超出允许目录')
             with path.open('rb') as stream:

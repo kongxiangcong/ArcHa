@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { enc, get, useResource } from "./api";
 import { useRunControl } from "./useRunControl";
+import { ResearchDesk } from "./ResearchDesk";
+import { ResearchCanvas } from "./ResearchCanvas";
+import logo from "../../docs/assets/archa-aha-orange.svg";
+import { poll } from "./poll";
+import { ResearchLog } from "./ResearchLog";
 import { Activity } from "./Activity";
-import { Inspection, MaterialReader } from "./Inspection";
+import { MaterialReader } from "./Inspection";
 import type { Material } from "./types";
-import { Alert, Badge, label, time } from "./components";
+import { CanvasInfo, type InfoTab } from "./CanvasInfo";
+import { Alert, Badge, label, time, preparationLabel } from "./components";
 import type {
   Envelope,
   Overview,
@@ -106,12 +112,11 @@ function useWorkItems(
         pending = false;
       }
     }
-    void read();
-    const timer = setInterval(() => void read(), 1500);
+    const stop = poll(read, 1500);
     return () => {
       active = false;
       controller.abort();
-      clearInterval(timer);
+      stop();
     };
   }, [run, scope, key, revision, refresh, target]);
   return {
@@ -128,24 +133,65 @@ function useWorkItems(
 export default function App() {
   const [query, change] = useSelection();
   const [refresh, setRefresh] = useState(0);
+  const [layout, setLayout] = useState(
+    () => sessionStorage.getItem("archa-layout") ?? "canvas",
+  );
+  function chooseLayout(value: string) {
+    setLayout(value);
+    sessionStorage.setItem("archa-layout", value);
+  }
+
+  const topicViews = useRef(
+    new Map<
+      string,
+      {
+        task: string;
+        run: string;
+        attempt: string | null;
+        call: string | null;
+        detail: boolean;
+        scroll: number;
+      }
+    >(),
+  );
+  const restoreScroll = useRef<number | null>(null);
   const [navExpanded, setNavExpanded] = useState(false);
   const [theme, setTheme] = useState(
     () => localStorage.getItem("archa-theme") ?? "light",
   );
   const [detail, setDetail] = useState(
-    () => !!(query.get("attempt") || query.get("call")),
+    () => !!query.get("attempt") && !query.get("call"),
   );
+  const [logOpen, setLogOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [infoTab, setInfoTabState] = useState<InfoTab>("progress");
+  function setInfoTab(tab: InfoTab) {
+    setInfoTabState(tab);
+    sessionStorage.setItem(`archa-info-tab:${taskId}:${runId}`, tab);
+  }
   const [material, setMaterial] = useState<Material | null>(null);
   const materialOpener = useRef<HTMLElement | null>(null);
+  const materialPositions = useRef<
+    { element: Element; top: number; left: number }[]
+  >([]);
   const closeMaterial = useCallback(() => {
     setMaterial(null);
-    requestAnimationFrame(() => materialOpener.current?.focus());
+    requestAnimationFrame(() => {
+      for (const { element, top, left } of materialPositions.current) {
+        element.scrollTop = top;
+        element.scrollLeft = left;
+      }
+      materialOpener.current?.focus({ preventScroll: true });
+    });
   }, []);
   const origin = useRef<HTMLElement | null>(null);
   const detailRef = useRef<HTMLElement>(null);
   const overview = useResource<Overview>("/overview", 5000, refresh);
   const o = overview.value?.data;
-  const taskId = query.get("task") ?? o?.tasks[0]?.id ?? "history";
+  const topic = query.get("topic") ?? o?.tasks[0]?.topic ?? "legacy";
+  const topics = [...new Set(o?.tasks.map((item) => item.topic) ?? [])];
+  const visibleTasks = o?.tasks.filter((item) => item.topic === topic) ?? [];
+  const taskId = query.get("task") ?? visibleTasks[0]?.id ?? "history";
   const runId = query.get("run") ?? "";
   const scope = query.get("filter") === "attention" ? "attention" : "all";
   const task = useResource<TaskDetail>(
@@ -187,6 +233,13 @@ export default function App() {
       : "pause";
   const selectedNo = Number(query.get("attempt")) || null;
   const work = useWorkItems(runId, scope, refresh, selectedNo);
+  useEffect(() => {
+    if (restoreScroll.current !== null && (work.items.length || !runId)) {
+      const element = document.querySelector(".work-scroll");
+      if (element) element.scrollTop = restoreScroll.current;
+      restoreScroll.current = null;
+    }
+  }, [topic, work.items.length, runId]);
   const selectedCall = query.get("call");
   const selectedItems = useRef<{ run: string; items: Map<number, WorkItem> }>({
     run: runId,
@@ -201,8 +254,26 @@ export default function App() {
     ? selectedItems.current.items.get(selectedNo)
     : undefined;
   const worker = scene?.workers.find((w) => w.id === selectedCall);
+  useEffect(() => {
+    setInfoOpen(false);
+    const saved = sessionStorage.getItem(`archa-info-tab:${taskId}:${runId}`);
+    setInfoTabState(
+      saved === "task" || saved === "worker" || saved === "progress"
+        ? saved
+        : selectedCall
+          ? "worker"
+          : "progress",
+    );
+  }, [taskId, runId]);
+  useEffect(() => {
+    if (detail || material) setInfoOpen(false);
+  }, [detail, material]);
   const located = useRef<string | null>(null);
   useEffect(() => {
+    if (layout !== "list") {
+      located.current = null;
+      return;
+    }
     const key = selectedNo ? runId + "/" + selectedNo : null;
     if (!key) {
       located.current = null;
@@ -216,9 +287,32 @@ export default function App() {
       target.scrollIntoView({ block: "nearest" });
       located.current = key;
     }
-  }, [runId, selectedNo, work.items]);
+  }, [runId, selectedNo, work.items, layout]);
   const runs: Ref[] =
     taskId === "history" ? (o?.unlinked_runs ?? []) : (t?.runs ?? []);
+  const following = query.get("follow") === "1";
+  const activeRuns = runs.filter(
+    (item) => item.kind === "execution" && item.recorded_state === "active",
+  );
+  const followTarget = activeRuns.length === 1 ? activeRuns[0] : null;
+  useEffect(() => {
+    if (following && followTarget && followTarget.id !== runId) {
+      change({ run: followTarget.id, attempt: null, call: null }, true);
+      setMaterial(null);
+      setDetail(false);
+    }
+  }, [following, followTarget?.id, runId, change]);
+  useEffect(() => {
+    if (layout !== "canvas" || runId) return;
+    const initial = followTarget ?? (runs.length === 1 ? runs[0] : null);
+    if (initial) change({ run: initial.id }, true);
+  }, [
+    layout,
+    runId,
+    followTarget?.id,
+    runs.map((item) => item.id).join("|"),
+    change,
+  ]);
   const title =
     t?.task.title ?? (taskId === "history" ? "运行历史" : "工作现场");
 
@@ -227,11 +321,30 @@ export default function App() {
     localStorage.setItem("archa-theme", theme);
   }, [theme]);
   useEffect(() => {
-    if (detail) detailRef.current?.focus();
+    if (detail) detailRef.current?.focus({ preventScroll: true });
   }, [detail]);
+  useEffect(() => {
+    if (!detail) return;
+    const update = () => {
+      const bottom = document
+        .querySelector(".cc-viewport,.topbar")
+        ?.getBoundingClientRect().bottom;
+      if (bottom !== undefined)
+        detailRef.current?.style.setProperty(
+          "--inspector-top",
+          `${Math.ceil((document.querySelector(".cc-viewport")?.getBoundingClientRect().top ?? bottom) + 52)}px`,
+        );
+    };
+    const observer = new ResizeObserver(update);
+    document
+      .querySelectorAll(".topbar")
+      .forEach((element) => observer.observe(element));
+    update();
+    return () => observer.disconnect();
+  }, [detail, material]);
   const closeDetail = useCallback(() => {
     setDetail(false);
-    origin.current?.focus();
+    origin.current?.focus({ preventScroll: true });
   }, []);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
@@ -241,6 +354,11 @@ export default function App() {
         closeMaterial();
         return;
       }
+      if (event.key === "Escape" && infoOpen) {
+        event.preventDefault();
+        setInfoOpen(false);
+        return;
+      }
       if (event.key === "Escape" && detail) {
         event.preventDefault();
         closeDetail();
@@ -248,7 +366,7 @@ export default function App() {
     };
     addEventListener("keydown", key);
     return () => removeEventListener("keydown", key);
-  }, [detail, closeDetail, material, closeMaterial]);
+  }, [detail, closeDetail, material, closeMaterial, infoOpen]);
   function chooseWork(item: WorkItem, target: HTMLElement) {
     origin.current = target;
     change({
@@ -270,7 +388,11 @@ export default function App() {
       call: item.id,
       filter: null,
     });
-    setDetail(true);
+    setDetail(false);
+    setMaterial(null);
+    setInfoTab("worker");
+    setInfoOpen(true);
+    if (layout === "canvas") return;
     requestAnimationFrame(() =>
       document
         .querySelector<HTMLElement>(`[data-attempt="${item.attempt_no}"]`)
@@ -278,12 +400,32 @@ export default function App() {
     );
   }
   function selectTask(value: string) {
-    change({ task: value, run: null, attempt: null, call: null });
+    change({ task: value, run: null, attempt: null, call: null, follow: null });
     setDetail(false);
     setMaterial(null);
   }
+  useEffect(() => {
+    setLogOpen(false);
+  }, [runId, taskId]);
+  const infoPanel = (
+    <CanvasInfo
+      key={`${taskId}:${runId}`}
+      open={infoOpen && !detail && !material}
+      tab={infoTab}
+      onTab={setInfoTab}
+      onOpen={() => {
+        setDetail(false);
+        setMaterial(null);
+        setInfoOpen(true);
+      }}
+      onClose={() => setInfoOpen(false)}
+      title={title}
+      scene={scene}
+      worker={worker}
+    />
+  );
   return (
-    <div className="app">
+    <div className={`app${layout === "canvas" ? " canvas-mode" : ""}`}>
       <dialog
         ref={stopDialog}
         className="stop-dialog"
@@ -329,17 +471,129 @@ export default function App() {
           </button>
         </div>
       </dialog>
+      {logOpen && (
+        <ResearchLog
+          key={runId}
+          run={runId}
+          onClose={() => setLogOpen(false)}
+        />
+      )}
       <header className="topbar">
         <a className="brand" href="/" aria-label="ArcHa 工作现场">
-          <span className="brand-mark" aria-hidden="true">
-            A
-          </span>
-          ArcHa
+          <img className="brand-logo" src={logo} alt="ArcHa" />
         </a>
-        <span className="breadcrumb">
-          {o?.project.display_name ?? "项目"} / 工作现场
-        </span>
+        <div className="selectors">
+          <label>
+            专题
+            <select
+              aria-label="选择专题"
+              value={topic}
+              onChange={(e) => {
+                topicViews.current.set(topic, {
+                  task: taskId,
+                  run: runId,
+                  attempt: query.get("attempt"),
+                  call: query.get("call"),
+                  detail,
+                  scroll:
+                    document.querySelector(".work-scroll")?.scrollTop ?? 0,
+                });
+                const saved = topicViews.current.get(e.target.value);
+                restoreScroll.current = saved?.scroll ?? 0;
+                change({
+                  topic: e.target.value,
+                  task: saved?.task ?? null,
+                  run: saved?.run ?? null,
+                  attempt: saved?.attempt ?? null,
+                  call: saved?.call ?? null,
+                  follow: null,
+                });
+                setDetail(saved?.detail ?? false);
+                setMaterial(null);
+              }}
+            >
+              {topics.map((name) => (
+                <option key={name} value={name}>
+                  {name === "legacy" ? "原有研究" : name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            任务
+            <select
+              aria-label="选择任务"
+              value={taskId}
+              onChange={(e) => selectTask(e.target.value)}
+            >
+              {visibleTasks.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.title}
+                </option>
+              ))}
+              <option value="history">未关联运行与准备历史</option>
+            </select>
+          </label>
+          <label>
+            运行
+            <select
+              aria-label="选择运行"
+              value={runId}
+              onChange={(e) => {
+                change({
+                  run: e.target.value,
+                  attempt: null,
+                  call: null,
+                  follow: null,
+                });
+                setMaterial(null);
+                setDetail(false);
+              }}
+            >
+              <option value="">请选择运行</option>
+              {runs.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.display_label ?? "运行记录"}
+                  {x.recorded_state === "closed" ? " · 已结束" : ""}
+                </option>
+              ))}
+              {runId && !runs.some((x) => x.id === runId) && (
+                <option value={runId}>
+                  显式链接 · {scene?.display_label ?? "读取中"}
+                </option>
+              )}
+            </select>
+          </label>
+          <button className="btn" onClick={() => setRefresh((n) => n + 1)}>
+            刷新
+          </button>
+        </div>
         <div className="top-right">
+          <button
+            className="btn"
+            disabled={!runId}
+            onClick={() => {
+              setInfoOpen(false);
+              setDetail(false);
+              setLogOpen(true);
+            }}
+          >
+            研究日志
+          </button>
+          <div className="layout-switch" aria-label="工作台视图">
+            <button
+              aria-pressed={layout === "canvas"}
+              onClick={() => chooseLayout("canvas")}
+            >
+              画布
+            </button>
+            <button
+              aria-pressed={layout === "list"}
+              onClick={() => chooseLayout("list")}
+            >
+              工作列表
+            </button>
+          </div>
           {o?.project.source_mode === "demo" && (
             <span className="mode">演示数据 · 只读</span>
           )}
@@ -371,57 +625,44 @@ export default function App() {
           </button>
         </nav>
         <main className="main">
-          <div className="selectors">
+          <div
+            className="follow-bar"
+            hidden={
+              layout === "canvas" &&
+              activeRuns.length <= 1 &&
+              (!followTarget || following || followTarget.id === runId)
+            }
+          >
             <label>
-              任务
-              <select
-                aria-label="选择任务"
-                value={taskId}
-                onChange={(e) => selectTask(e.target.value)}
-              >
-                {o?.tasks.map((x) => (
-                  <option key={x.id} value={x.id}>
-                    {x.title}
-                  </option>
-                ))}
-                <option value="history">未关联运行与准备历史</option>
-              </select>
+              <input
+                type="checkbox"
+                checked={following}
+                onChange={(e) =>
+                  change({ follow: e.target.checked ? "1" : null })
+                }
+              />{" "}
+              跟随此任务的当前运行
             </label>
-            <label>
-              运行
-              <select
-                aria-label="选择运行"
-                value={runId}
-                onChange={(e) => {
-                  change({ run: e.target.value, attempt: null, call: null });
-                  setMaterial(null);
-                  setDetail(false);
-                }}
+            {activeRuns.length > 1 && <span>有多个当前运行，请明确选择</span>}
+            {!following && followTarget && followTarget.id !== runId && (
+              <button
+                className="link-button"
+                onClick={() =>
+                  change({ run: followTarget.id, attempt: null, call: null })
+                }
               >
-                <option value="">请选择运行</option>
-                {runs.map((x) => (
-                  <option key={x.id} value={x.id}>
-                    {x.display_label ?? "运行记录"}
-                    {x.recorded_state === "closed" ? " · 已结束" : ""}
-                  </option>
-                ))}
-                {runId && !runs.some((x) => x.id === runId) && (
-                  <option value={runId}>
-                    显式链接 · {scene?.display_label ?? "读取中"}
-                  </option>
-                )}
-              </select>
-            </label>
-            <button className="btn" onClick={() => setRefresh((n) => n + 1)}>
-              刷新
-            </button>
+                有当前运行 · 前往查看
+              </button>
+            )}
           </div>
           <div className="runbar">
             <div className="run-status" role="status">
               <span className={`status-dot ${scene?.execution ?? ""}`} />
               <strong>
                 {scene
-                  ? label(scene.execution)
+                  ? scene.kind === "preparation"
+                    ? preparationLabel(scene.execution)
+                    : label(scene.execution)
                   : runId
                     ? "读取运行中"
                     : "未选择运行"}
@@ -482,40 +723,73 @@ export default function App() {
           <Alert error={task.error} stale={!!t} />
           <Alert error={workbench.error} stale={!!scene} />
           <Alert error={work.error} stale={!!work.items.length} />
-          <div className="heading">
-            <p className="eyebrow">WORKSPACE / 当前任务</p>
-            <h1>{title}</h1>
-            <p className="goal">
-              {scene?.goal ??
-                t?.briefs[0]?.goal ??
-                "选择任务与运行，查看已记录的工作进展。"}
-            </p>
-            {scene?.availability === "partial" && (
-              <p className="muted">
-                部分历史内容不可用，当前仅展示可确认的记录。
-              </p>
-            )}
-            {scene?.result.reason && (
-              <p className="result-message">
-                {scene.result.complete === true
-                  ? "交付已完成"
-                  : scene.result.complete === false
-                    ? "交付尚未完成"
-                    : "当前结果"}
-                ：{scene.result.reason}
-              </p>
-            )}
-            {scene?.result.gaps && (
-              <p className="muted">尚待完成：{scene.result.gaps}</p>
-            )}
-            {scene?.stop_reason && (
-              <p className="muted">
-                {scene.execution === "paused" ? "暂停说明" : "结束原因"}：
-                {scene.stop_reason}
-              </p>
-            )}
-          </div>
-          <div className="content" hidden={!!material}>
+          {layout !== "canvas" && infoPanel}
+          {layout === "canvas" ? (
+            <ResearchCanvas
+              key={runId}
+              scope={runId || taskId}
+              infoPanel={infoPanel}
+              infoOpen={infoOpen && !detail}
+              scene={scene}
+              task={t}
+              hidden={!!material}
+              selectedNo={selectedNo}
+              selectedCall={selectedCall}
+              onInspect={() => {
+                if (following) change({ follow: null });
+              }}
+              onFollow={() => change({ follow: "1" })}
+              onWork={(attempt, opener) => {
+                origin.current = opener;
+                change({ attempt: String(attempt), call: null });
+                setDetail(false);
+                setInfoTab("worker");
+                setInfoOpen(true);
+              }}
+              onFactOpen={() => {
+                setDetail(false);
+                setInfoOpen(false);
+              }}
+              onWorker={chooseWorker}
+              onOpen={(item, opener) => {
+                materialPositions.current = [
+                  ...document.querySelectorAll(
+                    ".main,.inspector-content,.work-scroll,.worker-scroll",
+                  ),
+                ].map((element) => ({
+                  element,
+                  top: element.scrollTop,
+                  left: element.scrollLeft,
+                }));
+                materialOpener.current = opener;
+                setMaterial(item);
+              }}
+            />
+          ) : (
+            <ResearchDesk
+              key={runId}
+              scene={scene}
+              hidden={!!material}
+              onOpen={(item, opener) => {
+                materialPositions.current = [
+                  ...document.querySelectorAll(
+                    ".main,.inspector-content,.work-scroll,.worker-scroll",
+                  ),
+                ].map((element) => ({
+                  element,
+                  top: element.scrollTop,
+                  left: element.scrollLeft,
+                }));
+                materialOpener.current = opener;
+                setMaterial(item);
+              }}
+              onChoose={(attempt) => {
+                change({ attempt: String(attempt), call: null });
+                setDetail(true);
+              }}
+            />
+          )}
+          <div className="content" hidden={!!material || layout === "canvas"}>
             <section className="work-pane" aria-label="工作进展">
               <div className="panel-heading">
                 <h2>
@@ -540,7 +814,7 @@ export default function App() {
                 {work.items.map((item, i) => (
                   <div className="work-row" key={item.id}>
                     <button
-                      className="work-button"
+                      className="work-button t-resize"
                       aria-pressed={selectedNo === item.attempt_no}
                       data-attempt={item.attempt_no}
                       onClick={(e) => chooseWork(item, e.currentTarget)}
@@ -636,35 +910,48 @@ export default function App() {
                 tabIndex={0}
                 aria-label="Worker 列表"
               >
-                {scene?.workers.map((w, index) => (
-                  <button
-                    className={`worker${w.id === selectedCall || (w.attempt_no === selectedNo && selectedNo !== null) ? " selected" : ""}`}
-                    key={w.id}
-                    data-call={w.id}
-                    onClick={(e) => chooseWorker(w, e.currentTarget)}
-                  >
-                    <span className="worker-top">
-                      <span className="avatar">{w.role[0]?.toUpperCase()}</span>
-                      <span>
-                        <strong className="worker-name">{label(w.role)}</strong>
-                        <span className="worker-purpose">调用 {index + 1}</span>
+                {scene?.workers
+                  .slice()
+                  .sort(
+                    (a, b) =>
+                      Number(b.state === "pending") -
+                      Number(a.state === "pending"),
+                  )
+                  .map((w, index) => (
+                    <button
+                      className={`worker${w.id === selectedCall || (w.attempt_no === selectedNo && selectedNo !== null) ? " selected" : ""}`}
+                      key={w.id}
+                      data-call={w.id}
+                      onClick={(e) => chooseWorker(w, e.currentTarget)}
+                    >
+                      <span className="worker-top">
+                        <span className="avatar">
+                          {w.role[0]?.toUpperCase()}
+                        </span>
+                        <span>
+                          <strong className="worker-name">
+                            {label(w.role)}
+                          </strong>
+                          <span className="worker-purpose">
+                            调用 {index + 1}
+                          </span>
+                        </span>
+                        <Badge value={w.state} />
                       </span>
-                      <Badge value={w.state} />
-                    </span>
-                    <span className="worker-task">
-                      {w.attempt_no === null
-                        ? "运行级协调"
-                        : `工作 ${w.attempt_no}`}
-                    </span>
-                    {w.error && (
-                      <span className="activity-line">{w.error}</span>
-                    )}
-                    <Activity worker={w} />
-                    <span className="activity-time">
-                      {time(w.ended_at ?? w.started_at)}
-                    </span>
-                  </button>
-                ))}
+                      <span className="worker-task">
+                        {w.attempt_no === null
+                          ? "运行级协调"
+                          : `工作 ${w.attempt_no}`}
+                      </span>
+                      {w.error && (
+                        <span className="activity-line">{w.error}</span>
+                      )}
+                      <Activity worker={w} />
+                      <span className="activity-time">
+                        {time(w.ended_at ?? w.started_at)}
+                      </span>
+                    </button>
+                  ))}
                 {!scene?.workers.length && (
                   <p className="empty">暂无调用记录</p>
                 )}
@@ -686,7 +973,7 @@ export default function App() {
           )}
           {detail && (
             <aside
-              className="inspector"
+              className="inspector t-panel-reveal"
               hidden={!!material}
               aria-label="工作详情"
               tabIndex={-1}
@@ -710,57 +997,22 @@ export default function App() {
                 {selected && <Badge value={selected.stage} />}
               </div>
               <div className="inspector-content" tabIndex={0}>
-                {selected ? (
-                  <>
-                    <section className="detail-section">
-                      <h3>工作目标</h3>
-                      <p>{selected.goal ?? "目标内容未记录"}</p>
-                    </section>
-                    <section className="detail-section">
-                      <h3>当前进展</h3>
-                      <p>
-                        {selected.reason ??
-                          selected.summary ??
-                          label(selected.stage)}
-                      </p>
-                    </section>
-                  </>
-                ) : (
-                  <p>选择工作查看进展；运行级调用独立于具体工作。</p>
-                )}
-                {selectedNo && (
-                  <Inspection
-                    run={runId}
-                    attempt={selectedNo}
-                    call={selectedCall}
-                    revision={`${refresh}:${
-                      scene?.workers
-                        .filter((item) => item.attempt_no === selectedNo)
-                        .map((item) => `${item.id}:${item.state}`)
-                        .join("|") ?? ""
-                    }`}
-                    onCall={(id) => change({ call: id })}
-                    onOpen={(item, opener) => {
-                      materialOpener.current = opener;
-                      setMaterial(item);
-                    }}
-                  />
-                )}
-                {worker && (
-                  <section className="detail-section">
-                    <h3>{label(worker.role)} · 本次调用</h3>
-                    <Badge value={worker.state} />
-                    {!selectedNo && worker.error && <p>{worker.error}</p>}
-                    <Activity worker={worker} expanded />
-                  </section>
-                )}
+                {worker && <Badge value={worker.state} />}
+                <section className="detail-section">
+                  <h3>详情</h3>
+                  <p>{worker?.task_summary ?? selected?.goal ?? ""}</p>
+                </section>
+                <section className="detail-section">
+                  <h3>返回结果</h3>
+                  <p>{worker?.result_summary ?? ""}</p>
+                </section>
               </div>
             </aside>
           )}
           <footer>
             {scene
               ? `最后观察 ${time(workbench.value?.source_observed_at)} · 仅读取已有内容`
-              : "ArcHa · 工作现场"}
+              : "未选择准备或运行"}
           </footer>
         </main>
       </div>

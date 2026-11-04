@@ -1030,3 +1030,198 @@ footer {
   gap: 12px;
   margin-top: 24px;
 }
+/* Shared by canvas and desk; polling leaves unchanged live text nodes intact. */
+
+/* Shared overview for canvas and desk. */
+
+/* Reading detail is optional; the scene keeps its viewport when selection changes. */
+.topbar .selectors {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  align-items: center;
+  gap: 10px;
+}
+.topbar .selectors label {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.topbar .selectors select {
+  width: clamp(110px, 14vw, 220px);
+  min-width: 0;
+}
+.canvas-mode .topbar {
+  gap: 10px;
+  padding: 0 12px;
+}
+@media (max-width: 760px) {
+  .topbar .brand,
+  .topbar .mode {
+    display: none;
+  }
+  .topbar .selectors select {
+    width: 110px;
+  }
+  .topbar .top-right {
+    flex-shrink: 0;
+  }
+}
+/* Keep reading controls on one compact row, including narrow screens. */
+@media (max-width: 760px) {
+  .canvas-mode .topbar .selectors select {
+    width: 110px;
+    max-width: 110px;
+  }
+}
+/* A short window must scroll instead of clipping the expanded timeline. */
+.canvas-mode .main {
+  overflow-y: auto;
+}
+.canvas-mode .research-canvas {
+  flex-shrink: 0;
+  min-height: 310px;
+}
+.canvas-mode .research-canvas:has(.cc-timeline.open) {
+  min-height: 500px;
+}
+.canvas-mode .cc-tracks {
+  overscroll-behavior-y: auto;
+}
+/* The canvas owns its optional information window; it reserves no layout row. */
+.canvas-info {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 6;
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 20px);
+  color: var(--ink);
+  user-select: text;
+  cursor: auto;
+}
+.canvas-info.expanded {
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 25px #0004;
+}
+.info-toggle {
+  align-self: flex-end;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+.canvas-info nav {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  margin: 6px 0;
+}
+.canvas-info nav button {
+  font-size: 12px;
+  padding: 5px 7px;
+}
+.canvas-info nav button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.info-copy {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+  font-size: 13px;
+}
+.info-copy p {
+  margin: 4px 0 10px;
+}
+.canvas-info small {
+  margin-left: 20px;
+  font-size: 10px;
+  opacity: 0.7;
+}
+.info-resize {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  padding: 4px;
+  cursor: nesw-resize;
+  touch-action: none;
+}
+.inspector .detail-section p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-height: 24px;
+}
+.canvas-mode .inspector {
+  position: fixed;
+  top: var(--inspector-top, 160px);
+  bottom: 24px;
+  right: 12px;
+  width: min(454px, calc(100vw - 24px));
+  margin: 0;
+  max-height: calc(100dvh - 170px);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+@media (max-width: 600px) {
+  .canvas-info.expanded {
+    width: calc(100% - 24px) !important;
+  }
+  .info-resize {
+    display: none;
+  }
+}
+
+.research-log-dialog {
+  width: min(820px, 94vw);
+  height: min(780px, 88dvh);
+  padding: 18px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.research-log-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.research-log-dialog::backdrop {
+  background: #0008;
+}
+.research-log-dialog header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.research-log-dialog h2 {
+  flex: 1;
+  font-size: 18px;
+}
+.research-log-copy {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
+.research-log-copy h2 {
+  font-size: 18px;
+  margin-top: 28px;
+}
+.research-log-copy h3 {
+  font-size: 15px;
+}

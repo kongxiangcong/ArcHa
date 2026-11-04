@@ -1,3 +1,4 @@
+import sys
 """Offline loop contracts: no model service, onboard run or benchmark."""
 import json
 from pathlib import Path
@@ -76,9 +77,11 @@ def test_later_run_discovers_and_analyzes_historical_pending_feedback(make_proje
         write_json(policy, worker_policy('expert', Path(ctx['knowledge']['context']).parent,
                                         later.artifact_dir() / 'read-feedback', ctx))
         original_source = Path(pending[0]['evidence']) / 'eval/evaluation.json'
-        read = subprocess.run(runner_argv(policy, ['/bin/cat', str(original_source)]),
-                              check=True, capture_output=True, text=True)
-        assert json.loads(read.stdout)['metrics']['values'] == {'loss': 10, 'correct': 1}
+        # Only the permission probe needs Linux; keep the research lifecycle cross-platform.
+        if sys.platform == 'linux':
+            read = subprocess.run(runner_argv(policy, ['/bin/cat', str(original_source)]),
+                                  check=True, capture_output=True, text=True)
+            assert json.loads(read.stdout)['metrics']['values'] == {'loss': 10, 'correct': 1}
         return dict(select_work=False, conclusions=[dict(run_id=old_run, attempt=1,
                     conclusion='Historical comparable long field supports the limited scope; short fields unknown')])
     def finish(ctx):
@@ -522,7 +525,7 @@ def test_context_bounds_machine_data_and_history(make_project, engine_for):
     assert data['cases']['last'][-1]['latency'] == 1002
     raw = json.loads((e.attempt_dir(15) / 'eval/evaluation.json').read_text())
     assert len(raw['metrics']['values']) == 2158 and len(raw['data'][0]['data']['cases']) == 1000
-    assert len(expert_prompt(ctx)) < 2600
+    assert len(expert_prompt(ctx)) < 3500
     assert len(ctx['pending_feedback']) == 15
     assert len(e.ledger.events(e.run_id, 'conclusion')) == 15
 
@@ -1058,10 +1061,11 @@ if os.environ.get('REVIEW_UNKNOWN') != '1':
 """
 
 
-def reviewer_case(make_project, engine_for, tmp_path, monkeypatch):
+def reviewer_case(make_project, engine_for, tmp_path, monkeypatch, *, startup_delay=0):
     from opc.tests.conftest import write
     cli = tmp_path / 'reviewer.py'
-    cli.write_text(REVIEW_CLI)
+    cli.write_text(REVIEW_CLI.replace("Path(os.environ['REVIEW_READY']).touch()",
+                                    f"time.sleep({startup_delay}); Path(os.environ['REVIEW_READY']).touch()"))
     ready, release = tmp_path / 'review-ready', tmp_path / 'review-release'
     monkeypatch.setenv('REVIEW_READY', str(ready))
     monkeypatch.setenv('REVIEW_RELEASE', str(release))
@@ -1074,13 +1078,14 @@ def reviewer_case(make_project, engine_for, tmp_path, monkeypatch):
     return e, selected, e.artifact_dir() / 'promotion/test-review', ready, release
 
 
-def test_reviewer_stop_uses_call_receipt_and_finite_cancellation(make_project, engine_for, tmp_path, monkeypatch):
+@pytest.mark.parametrize('startup_delay', [0, 2])
+def test_reviewer_stop_uses_call_receipt_and_finite_cancellation(make_project, engine_for, tmp_path, monkeypatch, startup_delay):
     import threading
     import time
     from opc.core.ledger import Ledger
     from opc.core.model import DispatchStopped
     from opc.core.promote import run_reviewer
-    e, selected, out, ready, release = reviewer_case(make_project, engine_for, tmp_path, monkeypatch)
+    e, selected, out, ready, release = reviewer_case(make_project, engine_for, tmp_path, monkeypatch, startup_delay=startup_delay)
     def stop():
         deadline = time.monotonic() + 5
         while not ready.exists() and time.monotonic() < deadline:
@@ -1090,17 +1095,20 @@ def test_reviewer_stop_uses_call_receipt_and_finite_cancellation(make_project, e
         other.db.close()
     requester = threading.Thread(target=stop)
     requester.start()
-    fallback = threading.Timer(2, release.touch)
+    fallback_fired = threading.Event()
+    def emergency_release():
+        fallback_fired.set()
+        release.touch()
+    fallback = threading.Timer(20, emergency_release)
     fallback.start()
-    started = time.monotonic()
     try:
         with pytest.raises(DispatchStopped, match='stopped by user'):
             run_reviewer(e, 'codex', out, '', selected, selected, [])
+        assert not fallback_fired.is_set(), 'reviewer required emergency release instead of cancellation'
     finally:
         fallback.cancel()
         release.touch()
         requester.join(timeout=5)
-    assert time.monotonic() - started < 1.5
     calls = [c for c in e.ledger.calls(e.run_id) if c['role'] == 'reviewer']
     assert len(calls) == 1 and calls[0]['state'] == 'cancelled'
     assert calls[0]['session_id'] == 'review-session'

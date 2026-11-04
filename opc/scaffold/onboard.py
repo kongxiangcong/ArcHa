@@ -85,6 +85,32 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
     ledger = Ledger(root / ".opc/local/ledger.sqlite3")
     with ledger.writer():
         rid = ledger.preparation_scope(task_id)
+        worker_progress, progress_call_id, processed_progress = None, None, None
+        def observed_call(worker, role, prompt, log, mode, provider):
+            nonlocal worker_progress, progress_call_id
+            from ..adapters.worker import PROGRESS_RULE, PROGRESS_SCHEMA
+            ident = 'preparation-call-' + role + '-' + log.parent.name + '-' + log.name
+            ledger.event(rid, 'call_dispatched', None, call_id=ident, role=role,
+                         inputs=dict(brief_input=brief_identity, task_id=task_id, revision=revision),
+                         activity_log=dict(provider=provider, path=str(log / (role + '-events.jsonl'))))
+            properties = ({'state': {'type': 'string', 'enum': ['ready', 'pending', 'external_blocked']},
+                           'reason': {'type': 'string'}, 'evidence': {'type': 'array', 'items': {'type': 'string'}}}
+                          if role == 'onboard' else {'verdict': {'type': 'string', 'enum': ['accept', 'reject']},
+                                                    'reason': {'type': 'string'}})
+            properties['progress_summary'] = PROGRESS_SCHEMA
+            schema = dict(type='object', additionalProperties=False, properties=properties, required=list(properties))
+            call, text = worker._run(role, prompt + '\n' + PROGRESS_RULE, root, log, mode, schema)
+            try:
+                reply = json.loads(text)
+            except ValueError:
+                reply = None
+            worker_progress = reply.get('progress_summary') if isinstance(reply, dict) else None
+            progress_call_id = ident
+            ledger.event(rid, 'worker_call', None, call_id=ident, role=role,
+                         ok=call.ok, state=call.extra.get('state'), error=call.error,
+                         worker_progress_summary=worker_progress,
+                         session_id=call.extra.get('session_id') or getattr(call, 'call_id', None), log_dir=str(log))
+            return call, text
         def finish(state, reason, **fields):
             owner = "external prerequisite owner" if state == "external_blocked" else "agent"
             if state in ("accounting_unknown", "budget_exhausted"):
@@ -93,6 +119,7 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                          else "resolve observed external prerequisite" if state == "external_blocked"
                          else "continue scoped preparation" if state == "pending" else "reconcile usage/budget before dispatch")
             ledger.event(rid, "preparation", None, state=state, reason=reason,
+                         worker_progress_summary=processed_progress, call_id=progress_call_id,
                          responsibility=owner, next=next_step, task_id=task_id, revision=revision, **fields)
             return {"responsibility": "external prerequisite owner" if state == "external_blocked" else
                     "accounting owner" if state == "accounting_unknown" else
@@ -161,6 +188,8 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                                  if e["body"].get("revision", revision) == revision]
             previous_receipt = previous_receipts[-1]["body"] if previous_receipts else {}
             state = previous_receipt.get("state", "pending")
+            processed_progress = previous_receipt.get('worker_progress_summary')
+            progress_call_id = previous_receipt.get('call_id')
             reason = "usage updated; " + previous_receipt.get("reason", "preparation remains")
             if state == "accounting_unknown" or (had_unknown and max_tokens is not None):
                 state = "pending"
@@ -189,6 +218,8 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             except OPCError:
                 pass
         if reuse:
+            processed_progress = candidate.get('worker_progress_summary')
+            progress_call_id = candidate.get('call_id')
             config = load_worker_config(root)
             import uuid
             log = root / ".opc/local/onboard" / uuid.uuid4().hex
@@ -240,7 +271,7 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                 prompt += ("\nChanged preparation inputs: " + json.dumps(changed_inputs) +
                            "\nRetain unaffected checks and evidence; rerun only checks affected by these changes. "
                            "Prior evidence: " + json.dumps(candidate["evidence"]))
-            call, text = worker._run("onboard", prompt, root, log, "workspace-write", None)
+            call, text = observed_call(worker, "onboard", prompt, log, "workspace-write", worker_spec.kind)
             ledger.charge(rid, None, "onboard", call.cost)
             ledger.charge(rid, None, "preparation overhead", Cost(max(0, time.monotonic()-started-call.cost.wall_seconds), 0, 0))
             if not call.extra.get("usage_complete", False):
@@ -260,6 +291,8 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                 result = json.loads(text)
             except ValueError:
                 return finish("pending", "preparation reply is not structured evidence")
+            if not isinstance(result, dict):
+                return finish("pending", "preparation reply is not structured evidence")
             evidence = result.get("evidence") or []
             paths = []
             for rel in evidence:
@@ -269,6 +302,7 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                 paths.append(path)
             if not paths:
                 return finish("pending", "preparation needs observed evidence, including negative controls")
+            processed_progress = worker_progress
             # Project-level registration belongs to the trusted host, not the
             # preparation worker's write authority. Validate the new candidate
             # before adding its component; leave every other project field intact.
@@ -299,6 +333,7 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
             return finish("pending", "current task evaluator files are missing", evidence=evidence)
         if not reuse:
             ledger.event(rid, "preparation_candidate", task_id=task_id, revision=revision, files=files, evidence=evidence, brief_input=brief_identity,
+                         worker_progress_summary=worker_progress, call_id=progress_call_id,
                          evidence_hashes={rel: hashlib.sha256((root / rel).read_bytes()).hexdigest() for rel in evidence})
         if not prepared_task.raw.get("preparation_review", False):
             return finish("ready", "necessary integration checks recorded; commit prepared files before execution",
@@ -311,12 +346,12 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
         ledger.event(rid, "worker_configuration", role="reviewer", backend=review_spec.kind,
                      options=review_spec.options, source=CONFIG_PATH)
         files = preparation_files(root, task_id, revision)
-        rc, reply = review._run("reviewer", "Review the task-required preparation checks and probe receipts. "
+        rc, reply = observed_call(review, "reviewer", "Review the task-required preparation checks and probe receipts. "
             "Verify against the confirmed brief without executing formal device experiments. "
             "Software checks prove tooling only. Accept only when independent acceptance is preserved. "
             "Return JSON {verdict: accept|reject, reason: text}. Evidence: " + json.dumps(evidence) +
             "\nBrief: " + (load_brief_text(root, brief) if brief else "read task contracts"),
-            root, log / "reviewer", "read-only", None)
+            log / "reviewer", "read-only", review_spec.kind)
         ledger.charge(rid, None, "reviewer", rc.cost)
         if not rc.extra.get("usage_complete", False):
             ledger.event(rid, "accounting_unknown", None, reason="review usage missing",
@@ -325,9 +360,15 @@ def onboard(project_root: Path, agent: str, brief: str | Path | None = None, *,
                 return finish("accounting_unknown", "review usage unavailable",
                               worker_error=rc.error, unresolved_accounting=ledger.unresolved_accounting(rid))
         try:
-            accepted = rc.ok and json.loads(reply).get("verdict") == "accept"
+            review_reply = json.loads(reply)
+            accepted = rc.ok and isinstance(review_reply, dict) and review_reply.get("verdict") == "accept"
+            processed_progress = worker_progress if rc.ok and isinstance(review_reply, dict) else None
         except ValueError:
             accepted = False
+            processed_progress = None
+        ledger.event(rid, 'review_processed', call_id=progress_call_id, ok=rc.ok, phase='preparation',
+                     accepted=accepted and files == preparation_files(root, task_id, revision),
+                     worker_progress_summary=worker_progress)
         if not accepted or files != preparation_files(root, task_id, revision):
             return finish("pending", "preparation review rejected or reviewed files changed", evidence=evidence)
         try:

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { poll } from "./poll";
 import type { Envelope } from "./types";
 export const base = "/api/observer/v1";
 export const enc = encodeURIComponent;
@@ -16,7 +17,9 @@ export async function get<T>(
   signal?: AbortSignal,
 ): Promise<Envelope<T>> {
   const response = await fetch(base + path, {
-    signal,
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(8000)])
+      : AbortSignal.timeout(8000),
     headers: { Accept: "application/json" },
   });
   return decode<T>(response);
@@ -87,14 +90,11 @@ export function useResource<T>(
         pending = false;
       }
     };
-    void read();
-    const timer = interval
-      ? setInterval(() => void read(), interval)
-      : undefined;
+    const stop = poll(read, interval);
     return () => {
       active = false;
       ctrl.abort();
-      clearInterval(timer);
+      stop();
     };
   }, [path, interval, refresh]);
   return state.path === path

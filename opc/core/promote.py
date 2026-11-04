@@ -385,6 +385,8 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
         finding("candidate", "block", "selected claim basis changed; Expert must reconsider before acceptance")
     primary_evaluation_failed = evidence['failure'] not in (None, 'broken') or any(g['status'] == 'infra' for g in evidence['gates'])
     evaluation_failed = primary_evaluation_failed or confirmation_failed
+    engine.ledger.event(engine.run_id, 'delivery_evaluated', failed=evaluation_failed or program_rejected,
+                        review_next=bool(review and not unreviewed_changes and not evaluation_failed))
     if review and not unreviewed_changes and not evaluation_failed:
         reviewer = run_reviewer(engine, review, out, patch, base, best, coverage, task_results)
         # Fail closed on every path that is not a positive verdict. A reviewer
@@ -395,6 +397,9 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
         except ValueError as exc:
             reviewer = {**reviewer, "ok": False, "error": "invalid reviewer output: " + str(exc)}
         verdict = reviewer.get("verdict")
+        engine.ledger.event(engine.run_id, 'review_processed', call_id=reviewer.get('call_id'),
+                            ok=reviewer.get('ok'), accepted=reviewer.get('ok') and verdict == 'accept',
+                            worker_progress_summary=reviewer.get('progress_summary'))
         if not reviewer.get("ok"):
             finding("review", "block", "reviewer unavailable: %s" % reviewer.get("error", ""))
         elif verdict == "reject":
@@ -496,6 +501,9 @@ def _promote(engine: Engine, confirm_repeats: int, review: str | None,
     report["report_dir"] = str(out)
     engine.ledger.event(engine.run_id, "promotion_report", promotion_id=pid,
                         report_path=str(out / "report.json"), selected_commit=selected, complete=not blocked,
+                        next_action=report.get('next_step', {}).get('action'),
+                        worker_progress_summary=(reviewer.get('progress_summary') if reviewer and reviewer.get('ok')
+                            and reviewer.get('verdict') in ('reject', 'accept_with_conditions') else None),
                         report_sha256=hashlib.sha256((out / "report.json").read_bytes()).hexdigest())
     engine.sync_results()
     return report
@@ -510,6 +518,7 @@ def run_reviewer(engine: Engine, kind: str, out: Path, patch: str, base: dict, b
                  coverage: list[dict], task_results: dict | None = None) -> dict[str, Any]:
     if kind not in ("codex", "dsh"):
         raise OPCError("the reviewer must be codex or dsh")
+    from ..adapters.worker import PROGRESS_SCHEMA, PROGRESS_RULE
     schema = {"type": "object", "additionalProperties": False,
               "required": ["verdict", "summary", "overreach", "requirement_findings"],
               "properties": {
@@ -524,6 +533,8 @@ def run_reviewer(engine: Engine, kind: str, out: Path, patch: str, base: dict, b
                           "status": {"type": "string", "enum": ["met", "not_met", "insufficient_evidence", "not_covered"]},
                           "evidence": {"type": "array", "items": {"type": "string"}},
                           "gap": {"type": "string"}}}}}}
+    schema['properties']['progress_summary'] = PROGRESS_SCHEMA
+    schema['required'].append('progress_summary')
     prompt = f"""You are an independent SPEC reviewer. You did not write this change.
 Judge whether the cumulative change below is worth promoting and whether any claim overreaches
 its evidence (single measurements, proxy metrics, skipped gates, scope creep).
@@ -559,7 +570,7 @@ Cumulative diff (baseline -> champion):
 ```
 {patch[:60000]}
 ```
-The working directory is a read-only checkout of the champion."""
+The working directory is a read-only checkout of the champion.""" + '\n' + PROGRESS_RULE
     from ..adapters.worker import make_worker
     from .config import WorkerSpec
     spec = engine.worker_spec("reviewer")

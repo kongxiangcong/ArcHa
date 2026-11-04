@@ -20,6 +20,20 @@ PLAN_FIELDS = ("title", "changes")
 #: on the other's module staying present.
 EXHAUSTED_SENTINEL = "NO_EXPERIMENT"
 
+PROGRESS_RULE = """Return progress_summary: at most 200 Chinese characters, in 2–3 short paragraphs separated by blank lines,
+describing actual progress/results/problems in plain language and one explicit 下一步.
+No paths, file lists, hashes, internal IDs, JSON field names, audit details or private
+reasoning. A plan is not execution; worker success is not experiment or task success.
+If undecided, next step is 由研究协调分析结果并确定方案. If blocked, explain the prerequisite;
+if paused wait for user resume; if budget exhausted stop pending new authorization.
+At incomplete closeout name gaps and grounded reopening conditions, never promise restart.
+Role focus: Expert explains the hypothesis, requirements or interpretation proposed and what
+remains unverified; Designer explains what experiment or implementation actually ran, observed
+results and limitations of the interpretation; reviewer states the verdict and concrete gaps;
+onboard states readiness achieved and missing prerequisites. Never invent missing results.
+Only confirmed final delivery may say 本任务已完成，暂无后续执行安排. This text is display only."""
+PROGRESS_SCHEMA = {"type": "string", "description": PROGRESS_RULE}
+
 PLAN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -56,7 +70,7 @@ PLAN_SCHEMA: dict[str, Any] = {
 PLAN_SCHEMA["properties"].update({
     "work_id": {"type": ["string", "null"], "description": "stable node identity independent of title; null lets Engine allocate it"},
     "directions": {"type": "array", "items": {"type": "string"}},
-    "deliverables": {"type": "array", "items": {"type": "string"}, "description": "relative editable/scratch file paths to preserve under Attempt outputs/"},
+    "deliverables": {"type": "array", "items": {"type": "string"}, "description": "concrete relative editable/scratch file paths to preserve under Attempt outputs/; no directories or globs; name planned new files explicitly (e.g. tools/check.py, manifests/run.json)"},
     "base_work_id": {"type": ["string", "null"], "description": "use this dependency's saved candidate as the code parent; null uses base_attempt"},
     "dependencies": {"type": "array", "items": {
         "type": "object", "additionalProperties": False, "required": ["work_id", "artifact"],
@@ -124,6 +138,8 @@ PLAN_SCHEMA["properties"]["delivery_basis_review"] = {"type": ["object", "null"]
                    "scope": {"type": "string"}, "reason": {"type": "string"},
                    "changes": {"type": "array", "items": _BASIS_CHANGE_SCHEMA}}}
 PLAN_SCHEMA["required"] += ["delivery_claims", "delivery_artifacts", "delivery_basis_review"]
+PLAN_SCHEMA["properties"]["progress_summary"] = PROGRESS_SCHEMA
+PLAN_SCHEMA["required"].append("progress_summary")
 
 
 

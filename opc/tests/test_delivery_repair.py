@@ -1,3 +1,4 @@
+import sys
 """Delivery recovery uses fixed candidates and durable calls, without model services."""
 import json
 from pathlib import Path
@@ -200,9 +201,11 @@ def test_development_continues_failed_work_and_recovers_one_linked_repair_run(ma
         policy_path = recovered.artifact_dir() / 'repair-report-policy.json'
         write_json(policy_path, worker_policy('expert', Path(ctx['knowledge']['context']).parent,
                                               recovered.artifact_dir(), ctx))
-        original = subprocess.run(runner_argv(policy_path, ['/bin/cat', str(path)]),
-                                  check=True, capture_output=True, text=True)
-        assert json.loads(original.stdout)['candidate'] == failed['candidate']
+        # Only the permission probe needs Linux; keep the research lifecycle cross-platform.
+        if sys.platform == 'linux':
+            original = subprocess.run(runner_argv(policy_path, ['/bin/cat', str(path)]),
+                                      check=True, capture_output=True, text=True)
+            assert json.loads(original.stdout)['candidate'] == failed['candidate']
         return plan(1)
     recovered_seq = Sequence([choose, request], [7])
     recovered = use_sequence(engine_for(root), recovered_seq)

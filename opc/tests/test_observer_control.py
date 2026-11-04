@@ -56,14 +56,39 @@ def request(origin, path, body=None, headers=None):
         return response.status, json.load(response)
 
 
-def until(predicate, seconds=10):
-    end = time.monotonic() + seconds
-    while time.monotonic() < end:
+def until(predicate, seconds=10, *, progress=None, max_seconds=None):
+    started = time.monotonic()
+    end = started + (max_seconds if max_seconds is not None else seconds)
+    idle_end = started + seconds
+    previous = None
+    while time.monotonic() < min(end, idle_end):
         value = predicate()
         if value:
             return value
+        if progress is not None:
+            current = progress()
+            if current != previous:
+                previous = current
+                idle_end = time.monotonic() + seconds
         time.sleep(.02)
-    raise AssertionError('bounded wait expired')
+    raise AssertionError('bounded wait expired; last execution progress: %r' % (previous,))
+
+
+@pytest.mark.parametrize('mode', ['progress', 'stalled', 'never_ready'])
+def test_bounded_wait_tracks_progress_but_still_limits_idle_and_total_time(monkeypatch, mode):
+    from types import SimpleNamespace
+    clock = [0.0]
+    monkeypatch.setattr(sys.modules[__name__], 'time', SimpleNamespace(
+        monotonic=lambda: clock[0], sleep=lambda interval: clock.__setitem__(0, clock[0] + interval)))
+    # Real milestones can take more than one idle window in total. A stalled
+    # milestone still fails after one window; even endless progress is bounded.
+    progress = lambda: min(int(clock[0] / .6), 1) if mode == 'stalled' else int(clock[0] / .6)
+    if mode == 'progress':
+        assert until(lambda: clock[0] >= 2, seconds=1, progress=progress, max_seconds=3)
+    else:
+        with pytest.raises(AssertionError, match='last execution progress'):
+            until(lambda: False, seconds=1, progress=progress, max_seconds=3)
+        assert 1.6 <= clock[0] < 1.7 if mode == 'stalled' else 3 <= clock[0] < 3.1
 
 
 def run_path(origin, rid):
@@ -267,6 +292,7 @@ def test_pause_browser_keeps_request_and_actual_state_separate(make_project, tmp
             errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(origin)
+            page.get_by_role("button", name="工作列表", exact=True).click()
             ident = run_path(origin, rid)
             from urllib.parse import unquote
             page.get_by_label('选择运行', exact=True).select_option(unquote(ident))
@@ -468,7 +494,22 @@ def test_resume_concurrent_services_and_already_running_do_not_duplicate_executi
             with ThreadPoolExecutor(max_workers=2) as pool:
                 replies = list(pool.map(lambda origin: request(origin, path, {'request_id': 'shared-resume', 'action': 'resume'}), [first, second]))
             assert sorted(code for code, _ in replies) == [200, 202]
-            until(ready.exists)
+
+            def execution_progress():
+                record = dict(engine.ledger.db.execute(
+                    'SELECT status,reason FROM control_requests WHERE request_id=?', ('shared-resume',)).fetchone())
+                run = dict(engine.ledger.run(rid))
+                events = [(event['seq'], event['kind']) for event in engine.ledger.events(rid)[-5:]]
+                calls = [(call['call_id'], call['role'], call['state']) for call in engine.ledger.calls(rid)]
+                state = dict(request=record, run=run['state'], reason=run['stop_reason'], events=events, calls=calls)
+                assert record['status'] not in ('failed', 'superseded'), state
+                assert run['state'] not in ('blocked', 'closed'), state
+                return state
+
+            # This handshake is after restoration, Git workspaces, design and
+            # evaluator startup, not just HTTP acceptance. Keep the original
+            # ten-second no-progress limit, with a sixty-second absolute cap.
+            until(ready.exists, progress=execution_progress, max_seconds=60)
             code, already = request(second, path, {'request_id': 'already-running', 'action': 'resume'})
             assert code == 202 and already['data']['status'] == 'applied'
             assert '未重复启动' in already['data']['reason']
@@ -549,6 +590,7 @@ def test_resume_browser_preserves_scene_through_pause_continue_and_failure(make_
             browser = driver.chromium.launch(headless=True, args=['--no-sandbox'])
             page = browser.new_page(viewport=dict(width=1440, height=1000), reduced_motion='reduce')
             page.goto(origin)
+            page.get_by_role("button", name="工作列表", exact=True).click()
             ident = run_path(origin, rid)
             from urllib.parse import unquote
             page.get_by_label('选择运行', exact=True).select_option(unquote(ident))
@@ -719,7 +761,7 @@ def test_stop_unconfirmed_execution_retains_saved_workspace_and_feedback(make_pr
         ident = run_path(origin, rid)
         path = '/api/control/v1/runs/' + ident + '/requests'
         assert request(origin, path, {'request_id': 'stop-unconfirmed', 'action': 'stop'})[0] == 202
-        _, result = until(lambda: (lambda value: value if value[1]['data']['status'] == 'unknown' else None)(request(origin, path + '/stop-unconfirmed')))
+        _, result = until(lambda: (lambda value: value if value[1]['data']['status'] == 'unknown' and value[1]['data']['run']['execution_unknown'] else None)(request(origin, path + '/stop-unconfirmed')))
         assert result['data']['run'] == {'state': 'blocked', 'execution_unknown': True}
         assert '待确认' in result['data']['reason']
         assert (tree / 'work.txt').read_text() == 'saved task progress'
@@ -754,6 +796,7 @@ def test_stop_browser_confirmation_focus_and_actual_or_unknown_result(make_proje
             page.set_default_timeout(5000)
             page.on('request', lambda req: posts.append(json.loads(req.post_data)) if req.method == 'POST' else None)
             page.goto(origin)
+            page.get_by_role("button", name="工作列表", exact=True).click()
             ident = run_path(origin, rid)
             from urllib.parse import unquote
             page.get_by_label('选择运行', exact=True).select_option(unquote(ident))
@@ -830,7 +873,7 @@ Engine(Path(sys.argv[1]),"t-toy",run_id=sys.argv[2],log=lambda _:None).run()
             ident = run_path(origin, rid)
             path = '/api/control/v1/runs/' + ident + '/requests'
             assert request(origin, path, {'request_id': 'unconfirmed-active-stop', 'action': 'stop'})[0] == 202
-            _, result = until(lambda: (lambda value: value if value[1]['data']['status'] == 'unknown' else None)(request(origin, path + '/unconfirmed-active-stop')), seconds=15)
+            _, result = until(lambda: (lambda value: value if value[1]['data']['status'] == 'unknown' and value[1]['data']['run']['execution_unknown'] else None)(request(origin, path + '/unconfirmed-active-stop')), seconds=15)
             assert result['data']['run'] == {'state': 'blocked', 'execution_unknown': True}
             designer = next(c for c in engine.ledger.calls(rid) if c['role'] == 'designer')
             assert designer['result'] is None and Path(designer['input']['tree']).is_dir()

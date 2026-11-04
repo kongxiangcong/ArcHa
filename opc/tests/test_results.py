@@ -1,3 +1,4 @@
+import sys
 """Task results acceptance: shared questions, independent executions and fixed review input."""
 import json
 from pathlib import Path
@@ -18,14 +19,14 @@ def test_host_summary_preserves_live_registration_and_suffix(tmp_path):
     register(tmp_path, ENTRY, [dict(key='existing/a1', status='failed',
                                   question='Preserve failed observation', refs={}, issues=['unresolved'])])
     entry = tmp_path / ENTRY
-    entry.write_text(entry.read_text() + '\nHost follow-up.\n', encoding='utf-8')
-    suffix = entry.read_text().split(START, 1)[1]
+    entry.write_text(entry.read_text(encoding='utf-8') + '\nHost follow-up.\n', encoding='utf-8')
+    suffix = entry.read_text(encoding='utf-8').split(START, 1)[1]
     summary = tmp_path / 'proposed.md'
     summary.write_text('# Supported result\n\n[original](../raw.json)\n', encoding='utf-8')
     apply_summary(tmp_path, ENTRY, summary)
-    assert entry.read_text().startswith('# Supported result\n')
-    assert entry.read_text().split(START, 1)[1] == suffix
-    assert split(entry.read_text())[1][0]['status'] == 'failed'
+    assert entry.read_text(encoding='utf-8').startswith('# Supported result\n')
+    assert entry.read_text(encoding='utf-8').split(START, 1)[1] == suffix
+    assert split(entry.read_text(encoding='utf-8'))[1][0]['status'] == 'failed'
     summary.write_text(START, encoding='utf-8')
     original = entry.read_bytes()
     with pytest.raises(OPCError, match='registration markers'):
@@ -114,7 +115,7 @@ def test_registration_failure_retries_without_running_experiment(make_project, e
     assert rows[0]['status'] == e.attempt_records()[0]['outcome']
     evidence = ((root / ENTRY).parent / rows[0]['refs']['evidence']).resolve()
     assert evidence == e.attempt_dir(1) / 'eval/evaluation.json'
-    assert json.loads(evidence.read_text())['commit'] == candidate
+    assert json.loads(evidence.read_text(encoding='utf-8'))['commit'] == candidate
     assert e.ledger.totals(e.run_id) == cost
     assert [c['call_id'] for c in e.ledger.calls(e.run_id)] == calls
     assert len(seq.contexts) == 2
@@ -230,12 +231,14 @@ def test_invalid_worker_plan_cannot_corrupt_results(make_project, engine_for):
     register(root, ENTRY, [dict(key='external/control', experiment_id='E0', question='existing control',
                                 status='completed', refs={}, issues=[])])
     previous = split((root / ENTRY).read_text(encoding="utf-8"))[1]
-    e = use_sequence(engine_for(root), Sequence([plan(1, experiment_id=['not', 'an', 'ID']), stop]))
+    e = use_sequence(engine_for(root), Sequence([plan(1, experiment_id=['not', 'an', 'ID']) for _ in range(3)]))
     result = e.run()
     assert result['state'] == 'blocked' and e.attempt_records() == []
     call = next(c for c in e.ledger.calls(e.run_id) if c['role'] == 'expert')
     assert call['attempt_no'] is None and call['result']['output']['experiment_id'] == ['not', 'an', 'ID']
-    rejection = e.ledger.events(e.run_id, 'expert_rejected')[-1]['body']
+    rejections = e.ledger.events(e.run_id, 'expert_rejected')
+    assert len(rejections) == 3
+    rejection = rejections[0]['body']
     assert rejection['call_id'] == call['call_id'] and 'experiment_id' in rejection['reason']
     assert split((root / ENTRY).read_text(encoding="utf-8"))[1] == previous
 
@@ -303,6 +306,7 @@ def test_external_cli_respects_controller_lock(make_project):
     assert not (root / ENTRY).exists()
 
 
+@pytest.mark.skipif(sys.platform != 'linux', reason='executes real Linux Landlock permission probes; unsupported-platform refusal covered separately')
 def test_worker_claim_query_preserves_counterevidence_and_reads_scoped_sources(make_project, engine_for):
     import subprocess
     from opc.core.tool_boundary import worker_policy, runner_argv
@@ -451,11 +455,11 @@ def test_designer_discovered_originals_survive_cleanup_and_candidate_rejection(m
     result = e.run()
     assert result['state'] == 'closed'
     assert e.attempt_records()[0]['outcome'] == ('no_gain' if worker_ok and not invalid_adoption else 'worker_failed')
-    assert json.loads((root / 'params.json').read_text()) == {'x': 3}
+    assert json.loads((root / 'params.json').read_text(encoding='utf-8')) == {'x': 3}
     assert not trees[0].exists()
     original = e.attempt_dir(1) / 'outputs/measurements/long.json'
     trace = e.attempt_dir(1) / 'outputs/measurements/trace.bin'
-    assert original.read_text() == '{"field":"long","latency":17}'
+    assert original.read_text(encoding='utf-8') == '{"field":"long","latency":17}'
     assert trace.read_bytes() == b'\x00\xffnative-trace'
     assert sorted(p.name for p in original.parent.iterdir()) == ['long.json', 'trace.bin']
     old_stat = original.stat().st_mtime_ns
@@ -680,3 +684,10 @@ def test_snapshot_reports_changed_sources_of_historical_review(tmp_path):
     current = snapshot(tmp_path, tmp_path / 'artifacts', ENTRY)
     assert any('older source versions' in issue for issue in current['issues'])
     assert 'Revised claim' in json.dumps(current)
+
+
+def test_atomic_text_writer_preserves_existing_crlf_bytes(tmp_path):
+    from opc.core.model import write_text
+    target = tmp_path / 'mixed-newlines.md'
+    write_text(target, 'new\nexisting\r\n')
+    assert target.read_bytes() == b'new\nexisting\r\n'
