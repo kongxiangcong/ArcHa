@@ -34,7 +34,10 @@ with tempfile.TemporaryDirectory() as temp:
             dialog = page.get_by_role('dialog', name='研究日志')
             expect(dialog).to_be_visible()
             expect(dialog).to_contain_text('已追加')
-            expect(dialog.get_by_role('heading', name='当时的问题').first).to_be_visible()
+            expect(dialog.get_by_role('heading', name='当前问题').first).to_be_visible()
+            expect(dialog).to_contain_text('本轮检查容量边界')
+            for label in ('假设', '实验', '结论', '下一步'):
+                expect(dialog.get_by_role('heading', name=label, exact=True).first).to_be_visible()
             assert 'archa-log {' not in dialog.inner_text()
             first = (case['topic']/'tasks/r01-dma/PROGRESS_LOG.md').read_bytes()
             page.get_by_role('button',name='更新日志',exact=True).click()
