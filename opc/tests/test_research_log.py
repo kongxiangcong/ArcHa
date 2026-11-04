@@ -75,9 +75,10 @@ def test_output_boundaries_and_missing_source(tmp_path):
     assert not (tmp_path.parent / 'elsewhere.md').exists()
 
 
-def test_observer_reads_and_launches_only_explicit_write(tmp_path, monkeypatch):
+@pytest.mark.parametrize('control', [False, True])
+def test_observer_reads_and_launches_only_explicit_write(tmp_path, monkeypatch, control):
     case = source(tmp_path)
-    app = create_app(tmp_path, control=True, topics=case['topic'])
+    app = create_app(tmp_path, control=control, topics=case['topic'])
     ident = app.state.adapter._id('run', 'run-dma-r1')
     called = []
     def launch(argv, **kwargs):
@@ -86,14 +87,16 @@ def test_observer_reads_and_launches_only_explicit_write(tmp_path, monkeypatch):
         return subprocess.CompletedProcess(argv, 0, json.dumps(update(tmp_path, 'run-dma-r1', generator=prose)), '')
     monkeypatch.setattr(subprocess, 'run', launch)
     with TestClient(app, base_url='http://127.0.0.1') as client:
-        assert client.get('/api/observer/v1/runs/' + ident + '/research-log').json()['data']['content'] == ''
+        data = client.get('/api/observer/v1/runs/' + ident + '/research-log').json()['data']
+        assert data['content'] == '' and data['can_update']
+        assert app.state.adapter.control_enabled == control
         assert not called
         url = '/api/control/v1/runs/' + ident + '/research-log'
         assert client.post(url, json={}).status_code == 403
         response = client.post(url, json={}, headers={'Origin': 'http://127.0.0.1'})
         assert response.status_code == 200 and response.json()['data']['added'] > 0
         assert len(called) == 1
-    app = create_app(tmp_path, control=False, topics=case['topic'])
+    app = create_app(tmp_path, demo=True, topics=case['topic'])
     with TestClient(app, base_url='http://127.0.0.1') as client:
         assert not client.get('/api/observer/v1/runs/' + ident + '/research-log').json()['data']['can_update']
         assert client.post(url, json={}, headers={'Origin': 'http://127.0.0.1'}).status_code == 403

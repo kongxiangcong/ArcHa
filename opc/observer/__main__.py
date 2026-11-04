@@ -8,11 +8,11 @@ from pathlib import Path
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='ArcHa 工作台（默认只读，--control 显式启用运行控制）')
+    parser = argparse.ArgumentParser(description='ArcHa 工作台（默认可更新研究日志，--control 显式启用运行控制）')
     parser.add_argument('directory', nargs='?', type=Path, help='topics 集合或单个专题目录，相对当前目录')
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--topics', '--topic', dest='topics', type=Path, help='topics 集合或单个专题目录')
-    mode.add_argument('--project', type=Path, help='已有项目目录；只读访问')
+    mode.add_argument('--project', type=Path, help='已有项目目录')
     mode.add_argument('--demo', action='store_true', help='在临时目录创建明确标记的离线演示材料')
     parser.add_argument('--control', action='store_true', help='为已有项目显式启用运行控制')
     parser.add_argument('--host', default='127.0.0.1', help='只允许 loopback 地址')

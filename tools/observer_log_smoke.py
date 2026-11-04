@@ -15,7 +15,7 @@ from tools.observer_canvas_smoke import serve
 
 with tempfile.TemporaryDirectory() as temp:
     root = Path(temp);case = source(root)
-    app = create_app(root, control=True, topics=case['topic'])
+    app = create_app(root, topics=case['topic'])
     run = app.state.adapter._id('run', 'run-dma-r1')
     failed = [False]; calls = []
     def launch(argv, **kwargs):
@@ -49,13 +49,14 @@ with tempfile.TemporaryDirectory() as temp:
             assert dialog.bounding_box()['width'] <= 390
             page.keyboard.press('Escape');expect(dialog).to_have_count(0)
             expect(page.get_by_role('button',name='研究日志',exact=True)).to_be_focused()
-            app.state.adapter.control_enabled = False
+            assert not app.state.adapter.control_enabled
+            app.state.adapter.demo = True
             count = len(calls)
             page.get_by_role('button',name='研究日志',exact=True).click()
             expect(dialog).to_contain_text('只读模式')
             expect(dialog.get_by_role('button',name='更新日志',exact=True)).to_be_disabled()
             assert len(calls) == count
-            print('PASS explicit update / Markdown display / no duplicate append / failure retains old log / narrow dialog / Escape focus / read-only mode')
+            print('PASS explicit update / Markdown display / no duplicate append / failure retains old log / narrow dialog / Escape focus / default log updates without run control / demo read-only mode')
             browser.close()
     finally:
         server.should_exit = True;thread.join(timeout=5)

@@ -143,7 +143,7 @@ def create_app(root: Path | str, demo=False, *, control=False, topics=None):
         from ..log import read
         import sqlite3
         row = adapter._find_run(ident)
-        enabled = bool(adapter.control_enabled and not adapter.demo and not row.get('_preparation') and not row.get('_snapshot'))
+        enabled = bool(not adapter.demo and not row.get('_preparation') and not row.get('_snapshot'))
         try:
             value = read(adapter.root, row['run_id'])
         except (ValueError, OSError, sqlite3.Error) as exc:
@@ -157,8 +157,8 @@ def create_app(root: Path | str, demo=False, *, control=False, topics=None):
         import os
         import subprocess
         import sys
-        if not adapter.control_enabled or adapter.demo:
-            raise ObserverError(403, 'log_read_only', '当前工作台仅可查看日志，未启用写入')
+        if adapter.demo:
+            raise ObserverError(403, 'log_read_only', '演示模式仅可查看日志')
         row = adapter._find_run(ident)
         if row.get('_preparation') or row.get('_snapshot'):
             raise ObserverError(409, 'log_unavailable', '请先选择已有账本记录的正式 Run')
