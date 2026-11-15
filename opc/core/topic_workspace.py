@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 
 from .platform import lock_writer, unlock_writer
 from ..scaffold.templates import GOAL, STATE
@@ -121,6 +122,45 @@ class TopicWorkspace:
                     completed_rounds=completed, next_action=action,
                     current_round=len(rounds) if action == 'executor' else completed + 1,
                     publishing=any((self.path / 'steps').glob('step-*/.staging.commit')))
+
+    def commit_expert(self, directory, max_rounds, *, finalize=False):
+        """Validate the complete draft before entering recoverable publication."""
+        stage = directory / '.staging.expert'
+        text = (stage / 'STATE.md').read_text(encoding='utf-8')
+        state, budget = parse_state(text)
+        if not finalize and state not in {'IN_PROGRESS', 'COMPLETED', 'BLOCKED'}:
+            raise ValueError('Expert returned invalid normal-turn STATUS')
+        if budget != max_rounds:
+            raise ValueError('Expert cannot change MAX_ROUNDS')
+        probe = stage / 'probe.md'
+        if finalize:
+            state = 'COMPLETED' if state == 'COMPLETED' else 'BUDGET_EXHAUSTED'
+        if state == 'IN_PROGRESS':
+            if not probe.is_file() or not probe.read_text(encoding='utf-8').strip():
+                raise ValueError('Expert probe is missing or empty')
+        else:
+            probe.unlink(missing_ok=True)
+        # Normalize only the metadata header, retaining the complete cognitive body.
+        lines = text.splitlines(keepends=True)
+        end = next((i for i, line in enumerate(lines[1:], 1) if not line.strip()), len(lines))
+        body = ''.join(lines[end:])
+        (stage / 'STATE.md').write_text(
+            f'# Exploration State\nSTATUS: {state}\nMAX_ROUNDS: {max_rounds}\n' + body,
+            encoding='utf-8')
+        stage.rename(directory / '.staging.commit')
+        self.publish_expert(directory)
+
+    def recover(self):
+        """Under the writer lock, after owned processes have ended, finish publication."""
+        for directory in sorted((self.path / "steps").glob("step-*")):
+            if (directory / ".staging.commit").exists():
+                self.publish_expert(directory)
+            stage = directory / ".staging.expert"
+            if stage.exists():
+                shutil.rmtree(stage)
+            for name in (".staging.result.md", ".expert.prompt.md",
+                         ".executor.prompt.md", ".expert_finalize.prompt.md"):
+                (directory / name).unlink(missing_ok=True)
 
     def publish_expert(self, directory):
         commit = directory / '.staging.commit'
