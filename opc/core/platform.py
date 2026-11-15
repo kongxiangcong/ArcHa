@@ -7,7 +7,6 @@ Neither mechanism is an OS sandbox against hostile code (e.g. POSIX setsid).
 from __future__ import annotations
 
 import errno
-import json
 import os
 import shutil
 import signal
@@ -47,40 +46,25 @@ def unlock_writer(fd: int) -> None:
         fcntl.flock(fd, fcntl.LOCK_UN)
 
 
-def command_prefix(binary: str | list[str]) -> list[str]:
-    """Explicit argv prefix supports Python/Node CLIs without shell wrappers."""
-    if isinstance(binary, str):
-        if binary.startswith("["):
-            return command_prefix(json.loads(binary))
-        if binary.lower().endswith(".py"):
-            return [sys.executable, binary]
-        return [binary]
-    if isinstance(binary, list) and binary and all(isinstance(x, str) and x for x in binary):
-        return list(binary)
-    raise ValueError("worker binary must be a nonempty string or argv list")
-
-
 @dataclass
 class ExecutionControl:
     """One call's process boundary; each concurrent worker installs its own scope."""
     check: Callable[[], str | None]
-    log_dir: Path
+    recorder: Callable
     cancelled: str | None = None
     unknown: str | None = None
+    env: dict | None = None
 
     def record(self, process, state: str) -> None:
-        from .model import write_json
-        write_json(self.log_dir / "process.json", {
-            "pid": process.pid, "state": state, "returncode": process.returncode,
-            "cancel_reason": process.cancel_reason, "termination_error": self.unknown})
+        self.recorder(process, state)
 
 
 _EXECUTION: ContextVar[ExecutionControl | None] = ContextVar("opc_execution", default=None)
 
 
 @contextmanager
-def execution_control(check: Callable[[], str | None], log_dir: Path):
-    scope = ExecutionControl(check, log_dir)
+def execution_control(check: Callable[[], str | None], *, recorder, env=None):
+    scope = ExecutionControl(check, recorder=recorder, env=env)
     token = _EXECUTION.set(scope)
     try:
         yield scope
@@ -111,17 +95,27 @@ class Process(subprocess.Popen):
         else:
             kwargs["start_new_session"] = True
         try:
+            if self._control is not None:
+                self._control.record(self, "starting")
+                kwargs["env"] = {**kwargs.get("env", os.environ), **(self._control.env or {})}
             super().__init__(argv, **kwargs)
             if self._job is not None:
                 self._job.attach_and_resume(self)
             if self._control is not None:
                 self._control.record(self, "running")
         except BaseException:
-            if getattr(self, "pid", None) is not None:
-                self.kill()
-                self.wait()
-            if self._job is not None:
-                self._job.close()
+            try:
+                if getattr(self, "pid", None) is not None:
+                    # Registration can fail after descendants have started.
+                    self._control = None
+                    self.kill()  # Also handles a Windows child not yet assigned.
+                    self.kill_tree()
+            finally:
+                if self._job is not None:
+                    self._job.close()
+            control = _EXECUTION.get()
+            if control is not None:
+                control.record(self, "ended")
             raise
 
     def wait(self, timeout=None):
@@ -185,13 +179,39 @@ class Process(subprocess.Popen):
             # A bounded wait leaves an unverifiable termination without a Call
             # receipt, so recovery keeps its workspace and blocks redispatch.
             super().wait(timeout=2)
+            deadline = time.monotonic() + 2
+            while self.tree_alive():
+                if time.monotonic() >= deadline:
+                    raise OSError("cannot confirm owned process tree has ended")
+                time.sleep(.01)
         except (OSError, subprocess.TimeoutExpired) as exc:
             if self._control is not None:
                 self._control.unknown = str(exc)
                 self._control.record(self, "unknown")
             raise
         if self._control is not None:
-            self._control.record(self, "cancelled" if self.cancel_reason else "completed")
+            self._control.record(self, "ended")
+
+    def tree_alive(self):
+        if self._job is not None:
+            return self._job.active_processes() != 0
+        if sys.platform.startswith("linux"):
+            # Zombies cannot write; orphan reaping belongs to the host's init.
+            for entry in Path("/proc").iterdir():
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+                except (FileNotFoundError, ProcessLookupError):
+                    continue
+                if int(fields[2]) == self.pid and fields[0] not in {"Z", "X"}:
+                    return True
+            return False
+        try:
+            os.killpg(self.pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
 
     def __exit__(self, *args):
         try:
@@ -200,24 +220,3 @@ class Process(subprocess.Popen):
             if self._job is not None:
                 self._job.close()
             super().__exit__(*args)
-
-
-def portable_path(path: str) -> bool:
-    """Contract paths are Git-style relative names on every host."""
-    if not path or path.startswith("/") or "\\" in path or ":" in path:
-        return False
-    parts = path.rstrip("/").split("/")
-    reserved = {"con", "prn", "aux", "nul", *('com%d' % i for i in range(1, 10)),
-                *('lpt%d' % i for i in range(1, 10))}
-    return all(p not in ("", ".", "..") and not p.endswith((" ", "."))
-               and p.split(".", 1)[0].casefold() not in reserved for p in parts)
-
-
-def is_link(path: Path) -> bool:
-    """Include Windows junctions/reparse points, also on Python 3.10."""
-    import stat
-    try:
-        st = path.lstat()
-    except FileNotFoundError:
-        return False
-    return stat.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & 0x400)

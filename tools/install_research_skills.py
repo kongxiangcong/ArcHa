@@ -13,14 +13,27 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-NAMES = ("archa-map", "archa-task", "archa-loop", "archa-log")
+NAMES = ("archa-discuss", "archa-run")
+RETIRED = ("archa-map", "archa-task", "archa-loop", "archa-log")
+
+
+def backup_skill(target: Path) -> Path | None:
+    if not (target.exists() or target.is_symlink()):
+        return None
+    backup_root = target.parent.parent / "skill-backups"
+    backup_root.mkdir(exist_ok=True)
+    backup = Path(tempfile.mkdtemp(
+        prefix=target.name + "-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-",
+        dir=backup_root)) / target.name
+    target.rename(backup)
+    return backup
 
 
 def install(destination: Path) -> dict:
     destination = destination.expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
     spec = importlib.util.spec_from_file_location(
-        "archa_initialize", ROOT / "skills/archa-map/scripts/initialize.py")
+        "archa_initialize", ROOT / "skills/archa-discuss/scripts/initialize.py")
     module = importlib.util.module_from_spec(spec)
     previous = sys.dont_write_bytecode
     try:
@@ -41,22 +54,21 @@ def install(destination: Path) -> dict:
         module.verify(runtime)
         for name in NAMES:
             target = destination / name
-            if target.exists() or target.is_symlink():
-                backup_root = destination.parent / "skill-backups"
-                backup_root.mkdir(exist_ok=True)
-                backup = Path(tempfile.mkdtemp(
-                    prefix=name + "-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-",
-                    dir=backup_root)) / name
-                target.rename(backup)
+            backup = backup_skill(target)
+            if backup is not None:
                 backups.append(str(backup))
             try:
                 shutil.copytree(stage / name, target)
             except OSError:
                 if target.exists():
                     shutil.rmtree(target)
-                if backups and Path(backups[-1]).name == name:
-                    Path(backups[-1]).rename(target)
+                if backup is not None:
+                    backup.rename(target)
                 raise
+        for name in RETIRED:
+            backup = backup_skill(destination / name)
+            if backup is not None:
+                backups.append(str(backup))
     return {"installed": [str(destination / name) for name in NAMES], "backups": backups}
 
 

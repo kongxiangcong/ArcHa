@@ -1,5 +1,6 @@
 # 讨论索引
 
+> 历史讨论：以下状态与操作描述属于当时版本，旧 Run／账本／四技能流程已退役。当前使用见[两入口流程](../../README.md)；已清理的 S1–S5 规格与工单按原路径通过 Git 查找，原始实验材料保留。
 | 分组 | 专题 | 范围 | 状态 | 白板 |
 | --- | --- | --- | --- | --- |
 | 整体与历史 | OPC / ArcHa 历史讨论 | 架构、工作流与实现的历史混合记录，沿原路径保留 | 持续 | [原白板](opc/winson-whiteboard.md) |
@@ -10,4 +11,4 @@
 | 评测 | S0 共同边界与四题测试方法 | 执行粒度、Worker/DAG、轻量记录；开发、调优、探索与独立端到端考题 | 需求已收束；四题材料及环境准备，正式考试未运行 | [专题白板](evaluation/s0-modeling-exploration/winson-whiteboard.md) |
 | 评测 | 自我进化框架的测试案例 | 真实工程/探索五候选、ArcHa与自主Codex对照、两项实验卡 | 实验卡待审；只读WSL检查完成，未安装或实验 | [专题白板](evaluation/benchmark-cases/winson-whiteboard.md) |
 
-S1 交付入口：[任务契约与准备流程](../architecture-and-task-policies/01-task-contracts-and-onboarding/README.md)；沿规格查看实现、最终验证与原始证据。[S2 Attempt 与 Worker 交接](../architecture-and-task-policies/02-attempts-and-worker-handoffs/README.md)的核心流程、最小交接、重试及暂停/停止规则已确认；代码与 CLI 能力只读核查完成，grill-with-docs 需求澄清已收敛，[实现规格](../../.scratch/s2-attempts-and-worker-handoffs/spec.md)及 [7 张事项](../../.scratch/s2-attempts-and-worker-handoffs/issues/)已发布为 ready-for-agent；DSH 当前仅实现的验证例外见规格，尚未实现。
+S1 交付入口：[任务契约与准备流程](../architecture-and-task-policies/01-task-contracts-and-onboarding/README.md)；沿规格查看实现、最终验证与原始证据。[S2 Attempt 与 Worker 交接](../architecture-and-task-policies/02-attempts-and-worker-handoffs/README.md)的核心流程、最小交接、重试及暂停/停止规则已确认；代码与 CLI 能力只读核查完成，grill-with-docs 需求澄清已收敛，实现规格（Git 历史：`.scratch/s2-attempts-and-worker-handoffs/spec.md`）及 7 张事项（Git 历史：`.scratch/s2-attempts-and-worker-handoffs/issues/`）已发布为 ready-for-agent；DSH 当前仅实现的验证例外见规格，尚未实现。

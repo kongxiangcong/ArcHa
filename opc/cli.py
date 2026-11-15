@@ -1,337 +1,62 @@
-"""opc: the command-line entry to the engine.
-
-    opc init      -p DIR --project-id ID --name NAME [--component C] [--task T] [--apply]
-    opc onboard   -p DIR [--agent codex]          draft .opc contracts with an agent
-    opc check     -p DIR --task T                 validate contracts, run nothing
-    opc preflight -p DIR --task T                 evaluate the base commit with every gate
-    opc run       -p DIR --task T [--direction TEXT] [--new-run] [--base REF] [--max-now N]
-    opc status    -p DIR [--task T]
-    opc pause|stop -p DIR --task T                takes effect at the next attempt boundary
-    opc report    -p DIR --task T
-    opc promote   -p DIR --task T [--confirm N] [--review codex] [--apply BRANCH]
-"""
-from __future__ import annotations
-
+"""Project-local topic commands."""
 import argparse
 import json
-import sys
 from pathlib import Path
-
-from .core.model import BudgetExhausted, OPCError
-
-
-def _print(obj) -> None:
-    print(json.dumps(obj, ensure_ascii=False, indent=2, default=str))
+import sys
+from .core.workspace import TopicWorkspace
+from .core.engine import TopicEngine
 
 
-def _engine(a, log=print):
-    from .core.engine import Engine
-    return Engine(Path(a.project), a.task, a.revision, log=log, run_id=getattr(a, "run_id", None))
-
-
-def cmd_init(a) -> int:
-    from .scaffold import init
-    _print(init(Path(a.project), a.project_id, a.name, a.component, a.task or "t-main", a.apply))
-    return 0
-
-
-def cmd_check(a) -> int:
-    e = _engine(a)
-    rep = e.static_check()
-    rep["task_digest"] = e.task.digest
-    _print(rep)
-    return 0 if rep["ok"] else 1
-
-
-def cmd_preflight(a) -> int:
-    rep = _engine(a).preflight()
-    _print(rep)
-    return 0 if rep["ok"] else 1
-
-
-def cmd_run(a) -> int:
-    e = _engine(a, log=lambda s: print("[opc] " + s, flush=True))
-    if a.deliver:
-        e.enable_delivery()
-    if a.repair_promotion:
-        s = e.repair_delivery(a.repair_promotion)
-    else:
-        s = e.run(new_run=a.new_run, direction=a.direction, max_attempts_now=a.max_now,
-                  base_ref=a.base, switch_backend=a.switch_backend, material_source_run=a.source_run)
-    if a.deliver:
-        s["complete"] = False
-        reports = e.ledger.events(e.run_id, "promotion_report")
-        if s.get('delivery'):
-            s['complete'] = s['delivery']['complete']
-        elif getattr(e, "_returned_closed", False) and reports:
-            s["delivery"] = reports[-1]["body"]
-            s["complete"] = s["delivery"].get("complete", False)
-        elif (s["state"] == "closed" and (s.get("closure") or {}).get("finish") == "request_acceptance"
-              and (s["stop_reason"] or "").startswith("acceptance_requested:")
-              and e.ledger.control(e.run_id) not in ("pause", "stop")):
-            from .core.promote import promote
-            review = a.review
-            if review is None and any(r.get("verification", "automated") != "automated" and r.get("required", True) for r in e.task.requirements):
-                review = e.worker_spec("reviewer").kind
-            try:
-                s["delivery"] = promote(e, review=review, source_run=s["run_id"])
-                s["complete"] = s["delivery"]["complete"]
-            except OPCError as exc:
-                s["delivery_error"] = str(exc)
-    _print(s)
-    return (0 if s.get("complete") else 1) if a.deliver else (0 if s["state"] in ("closed", "paused") else 2)
-
-
-def cmd_status(a) -> int:
-    from .core.config import Bindings, ProjectConfig
-    from .core.ledger import Ledger
-    project = ProjectConfig.load(Path(a.project))
-    bindings = Bindings.load(project)
-    ledger = Ledger(project.root / ".opc" / "local" / "ledger.sqlite3")
-    runs = ledger.runs()
-    candidates_by_task = {}
-    for run in runs:
-        if run["revision"] != "preparation" and run["state"] != "closed":
-            candidates_by_task.setdefault(run["task_id"], []).append(run["run_id"])
-    totals_by_task = {}
-
-    def task_totals(task_id):
-        if task_id not in totals_by_task:
-            totals_by_task[task_id] = ledger.task_totals(task_id)
-        return totals_by_task[task_id]
-
-    rows = []
-    for r in runs:
-        if ((a.task and r["task_id"] != a.task) or
-                (a.revision and r["revision"] != a.revision) or
-                (a.run_id and r["run_id"] != a.run_id)):
-            continue
-        snapshot_path = (bindings.artifact_root / project.project_id / r["task_id"] /
-                         r["run_id"] / "frozen/baseline.json")
-        from .core.engine import run_compatibility
-        source = {"configuration_source": str(snapshot_path),
-                  "compatibility": run_compatibility(snapshot_path.parent, r)}
-        if a.details:
-            try:
-                snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-                source.update({"execution": snapshot.get("execution"), "sources": snapshot.get("sources"),
-                               "startpoint": snapshot.get("startpoint")})
-            except (OSError, ValueError) as exc:
-                source["source_unavailable"] = str(exc)
-        candidates = candidates_by_task.get(r["task_id"], [])
-        source["resume_selection"] = {"requires_run_id": len(candidates) > 1,
-                                      "candidates": candidates}
-        champ = ledger.champion(r["run_id"])
-        attempts = ledger.attempts(r["run_id"])
-        work = ledger.events(r["run_id"], "working_version")
-        selected = ledger.events(r["run_id"], "selected_version")
-        closure = ledger.events(r["run_id"], "expert_stop")
-        default_commit = champ[0] if champ else work[-1]["body"]["commit"] if work else r["base_commit"]
-        preparation = [x["body"] for x in ledger.events(r["run_id"], "preparation")][-1:]
-        if preparation and not a.details:
-            preparation = [{k: preparation[0].get(k) for k in ("task_id", "revision", "state", "reason")} |
-                           {"source": ".opc/local/ledger.sqlite3", "details": "opc status --details"}]
-        from .core.results import delivery_status
-        delivery = delivery_status(ledger.events(r['run_id'], 'promotion_report'), r['task_digest'],
-                                   selected[-1]['body'] if selected else dict(commit=default_commit, claims=[], artifacts=[], basis=[]))
-        rows.append({**source, "delivery": delivery, "complete": bool(delivery and delivery['complete']), "run_id": r["run_id"], "task": r["task_id"], "revision": r["revision"],
-                     "state": r["state"], "stop_reason": r["stop_reason"],
-                     "closure": closure[-1]["body"] if closure else None,
-                     "preparation": preparation,
-                     "control": ledger.control(r["run_id"]), "attempts": len(attempts),
-                     "inflight_calls": [c["call_id"] for c in ledger.calls(r["run_id"]) if c["result"] is None],
-                     "last": [{"n": x["attempt_no"], "outcome": x["outcome"] or x["state"],
-                               "reason": (x["reason"] or "")[:100]} for x in attempts[-5:]],
-                     "champion": champ[0][:12] if champ else None,
-                     "champion_metrics": champ[1].values if champ else None,
-                     "working_version": work[-1]["body"]["commit"] if work else None,
-                     "selected_version": selected[-1]["body"]["commit"] if selected else default_commit,
-                     "spent": task_totals(r["task_id"]), "accounting_scope": "task"})
-    task_ids = {r["task_id"] for r in runs}
-    task_ids.update(r[0].removeprefix("preparation:") for r in ledger.db.execute(
-        "SELECT DISTINCT run_id FROM events WHERE run_id LIKE 'preparation:%'"))
-    for task_id in sorted(task_ids):
-        if a.run_id or (a.task and a.task != task_id):
-            continue
-        scope = ledger.preparation_scope(task_id, create=False)
-        if not scope or not scope.startswith("preparation:"):
-            continue  # Legacy preparation rows were included above.
-        receipts = {}
-        for event in ledger.events(scope, "preparation"):
-            receipts[event["body"].get("revision")] = event["body"]
-        limits = ledger.events(scope, "preparation_budget")
-        budget = {"scope": "task", "limits": limits[-1]["body"] if limits else {},
-                  "used": task_totals(task_id)}
-        for revision, receipt in receipts.items():
-            if a.revision and revision != a.revision:
-                continue
-            summary = receipt if a.details else {k: receipt.get(k) for k in ("task_id", "revision", "state", "reason")}
-            rows.append({"task": task_id, "revision": revision, "run_id": None,
-                         "state": receipt["state"], "preparation": [summary], "budget": budget,
-                         "source": ".opc/local/ledger.sqlite3", "details": "opc status --details"})
-    _print(rows)
-    return 0
-
-
-def cmd_control(a) -> int:
-    from .core.ledger import Ledger
-    ledger = Ledger(Path(a.project).resolve() / ".opc/local/ledger.sqlite3")
-    run = ledger.select_run(a.task, a.revision, a.run_id)
-    if run is None:
-        raise OPCError("task %s has no run" % a.task)
-    ledger.set_control(run["run_id"], a.command)
-    _print({"run_id": run["run_id"], "control": a.command,
-            "note": "applies at the next attempt boundary"})
-    return 0
-
-
-def cmd_report(a) -> int:
-    e = _engine(a)
-    run = e.ledger.select_run(a.task, a.revision, a.run_id)
-    if run is None:
-        raise OPCError("task %s has no run" % a.task)
-    e.restore_run(run["run_id"])
-    e.write_views()
-    s = e.summary()
-    s["views"] = str(e.artifact_dir() / "views")
-    _print(s)
-    return 0
-
-
-def cmd_promote(a) -> int:
-    from .core.promote import promote
-    rep = promote(_engine(a), confirm_repeats=a.confirm, review=a.review, apply_to=a.apply, source_run=a.source_run, standards_confirmation=a.standards_confirmation)
-    _print({k: v for k, v in rep.items() if k not in ("reviewer",)} |
-           {"reviewer": (rep.get("reviewer") or {}).get("verdict")})
-    return 0 if rep["promotable"] else 1
-
-
-def cmd_results(a) -> int:
-    from .core.config import TaskSpec, Bindings, ProjectConfig
-    from .core.results import register, external_batch, snapshot, writer, apply_summary
-    root = Path(a.project).resolve()
-    task = TaskSpec.load(root, a.task, a.revision)
-    value = task.raw.get('results_path')
-    if not value:
-        raise OPCError('task has no results_path; bind it in a new revision before enabling results')
-    bindings = Bindings.load(ProjectConfig.load(root))
-    if a.batch:
-        with writer(root):
-            external_batch(root, bindings.artifact_root, value, a.batch, a.experiment_id,
-                           a.question, a.status, {k:getattr(a, k) for k in ('plan', 'evidence', 'analysis', 'review')})
-    elif a.summary:
-        with writer(root):
-            apply_summary(root, value, Path(a.summary))
-    elif a.initialize:
-        with writer(root):
-            register(root, value, [], task.goal)
-    elif a.sync_run:
-        e = _engine(a)
-        run = e.ledger.run(a.sync_run)
-        if not run or run['task_id'] != a.task or run['revision'] != e.task.revision:
-            raise OPCError('sync-run must belong to the selected task revision')
-        e.run_id = a.sync_run
-        with e.ledger.writer():
-            error = e.write_views()
-            if error:
-                raise OPCError('results registration pending: ' + error)
-    _print(snapshot(root, bindings.artifact_root, value))
-    return 0
-
-
-def cmd_brief_check(a) -> int:
-    from .scaffold.brief import load_brief
-    report, _ = load_brief(Path(a.project), a.brief)
-    _print(report)
-    return 0 if report["ok"] else 1
-
-
-def cmd_onboard(a) -> int:
-    from .scaffold.onboard import onboard
-    report = onboard(Path(a.project), a.agent, brief=a.brief, prepare=a.prepare, task_id=a.task, revision=a.revision,
-                     max_tokens=a.max_tokens, max_wall_seconds=a.max_wall_seconds, prior_tokens=a.prior_tokens, prior_wall_seconds=a.prior_wall_seconds, record_usage_only=a.record_usage, reconcile_usage=a.reconcile_usage)
-    _print(report)
-    return 0 if report["ok"] else 1
-
-
-def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="opc", description=__doc__.split("\n")[0])
-    sub = ap.add_subparsers(dest="cmd", required=True)
-
-    def add(name, fn, task=True, task_required=True):
-        p = sub.add_parser(name)
-        p.add_argument("-p", "--project", required=True, help="target project root")
-        if task:
-            p.add_argument("--task", required=task_required)
-            p.add_argument("--revision", default=None)
-            if name in ("run", "status", "pause", "stop", "report"):
-                p.add_argument("--run-id", help="explicit existing execution Run")
-        p.set_defaults(fn=fn)
-        return p
-
-    p = add("init", cmd_init, task=False)
-    p.add_argument("--project-id", required=True)
-    p.add_argument("--name", required=True)
-    p.add_argument("--component", default="main")
-    p.add_argument("--task", default="t-main")
-    p.add_argument("--apply", action="store_true")
-    p = add("onboard", cmd_onboard, task=False)
-    p.add_argument("--agent", default="codex", choices=["codex", "dsh"])
-    p.add_argument("--brief", help="project-relative task-brief.md from discussion")
-    p.add_argument("--prepare", action="store_true", default=True, help="complete scoped preparation and read-only review; never start formal experiments")
-    p.add_argument("--reconcile-usage", help="evidence-backed JSON missing-usage receipt; record only, no worker dispatch")
-    p.add_argument("--record-usage", action="store_true", help="update cumulative host usage without dispatching workers")
-    p.add_argument("--task", default="t-main")
-    p.add_argument("--revision", help="candidate revision to prepare (resolved once if omitted)")
-    p.add_argument("--max-tokens", type=int, help="explicit token cap, saved in local workers.json; default unlimited")
-    p.add_argument("--max-wall-seconds", type=float, help="authorized Task time cap, saved in local workers.json; default 7200 seconds")
-    p.add_argument("--prior-wall-seconds", type=float)
-    p.add_argument("--prior-tokens", type=int, help="cumulative host/nested input+output including cached input, excluding metered worker receipts")
-    p = add("brief-check", cmd_brief_check, task=False)
-    p.add_argument("--brief", required=True)
-    add("check", cmd_check)
-    p = add("results", cmd_results)
-    mode = p.add_mutually_exclusive_group()
-    mode.add_argument('--initialize', action='store_true', help='create minimal entry if absent')
-    mode.add_argument('--summary', help='host applies this Markdown body, preserving live registration')
-    mode.add_argument('--sync-run', help='retry registration from existing run; never execute experiments')
-    mode.add_argument('--batch', help='stable external batch ID; no synthetic run')
-    p.add_argument('--experiment-id')
-    p.add_argument('--question', default='')
-    p.add_argument('--status', choices=['planned', 'running', 'completed', 'failed', 'aborted', 'cached'])
-    for key in ('plan', 'evidence', 'analysis', 'review'):
-        p.add_argument('--' + key, help='reference relative to results README; preserve original location')
-    add("preflight", cmd_preflight)
-    p = add("run", cmd_run)
-    p.add_argument("--direction", default=None)
-    p.add_argument("--new-run", action="store_true")
-    p.add_argument("--source-run", help="explicit closed same-Task Run whose original materials accompany a new Run")
-    p.add_argument("--switch-backend", action="store_true",
-                   help="acknowledge a Codex/DSH change for a new Run; start a fresh execution allowance")
-    p.add_argument("--base", default=None, help="start a new run from this ref")
-    p.add_argument("--deliver", action="store_true", help="terminal delivery check; never apply")
-    p.add_argument("--repair-promotion", help="registered failed report to continue from selected candidate")
-    p.add_argument("--review", choices=["codex", "dsh"])
-    p.add_argument("--max-now", type=int, default=None, help="attempts in this session")
-    p = add("status", cmd_status, task_required=False)
-    p.add_argument("--details", action="store_true", help="include preparation evidence and sources")
-    for c in ("pause", "stop"):
-        p = add(c, cmd_control)
-        p.set_defaults(command=c)
-    add("report", cmd_report)
-    p = add("promote", cmd_promote)
-    p.add_argument("--standards-confirmation", help="explicit user-approved old/new standards JSON for reassessment")
-    p.add_argument("--source-run", help="explicit execution run for delivery")
-    p.add_argument("--confirm", type=int, default=0, help="repeat baseline and selected delivery N times for numeric comparison")
-    p.add_argument("--review", default=None, choices=[None, "codex", "dsh"])
-    p.add_argument("--apply", default=None, metavar="BRANCH")
-    a = ap.parse_args(argv)
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog='opc')
+    sub = parser.add_subparsers(dest='command', required=True)
+    for command in ('init', 'step', 'run', 'resume', 'revise', 'status', 'stop', 'report', 'check'):
+        p = sub.add_parser(command)
+        p.add_argument('-p', '--project', required=True)
+        p.add_argument('--topic', required=True)
+        if command in {'run', 'resume'}:
+            p.add_argument('--debug-probes', action=argparse.BooleanOptionalAction, default=None,
+                           help='pause before each probe; selection persists for this topic')
+        if command == 'revise':
+            p.add_argument('--feedback', required=True)
+        if command == 'resume':
+            p.add_argument('--add-rounds', type=int)
+        if command == 'init':
+            goal = p.add_mutually_exclusive_group()
+            goal.add_argument('--goal', default='')
+            goal.add_argument('--goal-file', type=Path)
+            p.add_argument('--template', choices=('default', 'pim'), default='default')
+            p.add_argument('--max-rounds', type=int, default=10)
+    args = parser.parse_args(argv)
     try:
-        return a.fn(a)
-    except (OPCError, BudgetExhausted) as exc:
-        print("opc: error: %s" % exc, file=sys.stderr)
+        workspace = TopicWorkspace(args.project, args.topic)
+        if args.command == 'init':
+            result = workspace.initialize(args.goal_file.read_text() if args.goal_file else args.goal, args.max_rounds, args.template)
+        elif args.command == 'check':
+            from .adapters.worker import configuration
+            result = {'roles': list(configuration(workspace))}
+        elif args.command == 'report':
+            from .log import generate_report
+            result = {'report': str(generate_report(Path(args.project), args.topic))}
+        elif args.command == 'step':
+            result = TopicEngine(args.project, args.topic).step()
+        elif args.command == 'stop':
+            from .core.topic_control import stop
+            result = stop(workspace)
+        elif args.command == 'run':
+            result = TopicEngine(args.project, args.topic).run(args.debug_probes)
+        elif args.command == 'revise':
+            result = TopicEngine(args.project, args.topic).revise(args.feedback)
+        elif args.command == 'resume':
+            result = TopicEngine(args.project, args.topic).resume(args.add_rounds, args.debug_probes)
+        else:
+            result = workspace.status()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.command in {'run', 'resume'}:
+            if result['probe_breakpoint']:
+                return 0
+            return {'COMPLETED': 0, 'IN_PROGRESS': 3, 'BLOCKED': 4, 'BUDGET_EXHAUSTED': 5}[result['status']]
+        return 0
+    except (ValueError, OSError, KeyError) as exc:
+        print('opc: error: ' + str(exc), file=sys.stderr)
         return 2
-
-
-if __name__ == "__main__":
-    sys.exit(main())

@@ -1,99 +1,103 @@
-# opc：通用自动迭代引擎
+# opc：专题研究引擎
 
-把一个“能跑通基线”的项目接进来，给一个方向，引擎就会循环：专家提假设 → 设计者改代码 → 冻结的评测门打分 → 确定性接纳 → 反馈下一轮，由专家判断继续或停止探索，或在资源耗尽、执行故障、用户暂停时结束。核心代码不含任何领域知识；领域只通过 `.opc/` 下的配置和脚本接入。
+安装及工作台启动见 [仓库入口](../README.md)。本地部署入口 `python PROJECT/.archa/archa.py` 与安装后的 `opc` 使用同一 CLI。
 
-## 使用
+所有命令都要求 `-p PROJECT --topic SLUG`：
 
-支持原生 Windows 与 Linux，要求 Python ≥ 3.10 和 Git。Windows 安装后使用 `python -m opc` 或 `opc`；平台配置、进程清理和限制见 [跨平台运行](../docs/cross-platform.md)。
+| 命令 | 行为 |
+| --- | --- |
+| `init [--goal TEXT 或 --goal-file PATH] [--max-rounds N] [--template default或pim]` | 初始化专题，不覆盖已有目标、状态或配置；空目标不能运行 |
+| `check` | 只读校验 Worker 配置 |
+| `step` | 执行一次 Expert、Executor 或收尾调用 |
+| `run [--debug-probes / --no-debug-probes]` | 执行到领域终态、探针断点或调用失败 |
+| `stop` | 停止当前调用并等待归属进程结束 |
+| `revise --feedback "方向意见"` | 在调试断点由 Expert 重拟当前探针，保持轮次和预算；失败保留正式提案 |
+| `resume [--add-rounds N] [--debug-probes / --no-debug-probes]` | 恢复提交，显式解除已处理阻塞，按需追加预算并继续 |
+| `status` | 只读查看状态、轮数、下一动作、当前执行和错误 |
+| `report` | 从已有材料生成专题内 `PROGRESS_LOG.md`，不调用 Worker |
 
-```bash
-export PYTHONPATH=/path/to/ArcHa          # 或 pip install -e ArcHa，得到 `opc` 命令
-cd your-project                           # 必须是 git 仓库，基线已提交
-python3 -m opc init -p . --apply          # 生成 .opc/ 模板与 ONBOARDING.md（只写 .opc/）
-python3 -m opc onboard -p .               # 可选：codex 按指南起草合同，越界改动即失败
-# 人工审合同 → git add .opc && git commit → project.json 里 execution_enabled=true
-python3 -m opc check     -p . --task t-xxx   # 静态检查：合同、评价器是否已提交、可改范围
-python3 -m opc preflight -p . --task t-xxx   # 在基线上真跑一遍门，确认能出数字
-python3 -m opc run       -p . --task t-xxx --direction "先压延迟，面积不许涨"
-python3 -m opc status|pause|stop|report -p . --task t-xxx
-python3 -m opc promote   -p . --task t-xxx --confirm 2 [--review codex] [--apply main]
+退出码：一般成功为 0，输入或执行错误为 2；`run`/`resume` 分别以 0、3、4、5 表示 `COMPLETED`、`IN_PROGRESS`、`BLOCKED`、`BUDGET_EXHAUSTED`。正常探针断点等待返回 0（专题仍为 `IN_PROGRESS`）。预算耗尽不是调用失败，也不表示目标已完成。
+
+`--debug-probes` 在专家提交探针后、Executor 派发前正常结束并释放锁。设置保存在专题 `.debug-probes` 标记中；后续 `run`/`resume` 执行当前探针，到下一探针再次停下。首次启用时已有待执行探针也会先停下供检查。`--no-debug-probes` 显式恢复自动运行；`step` 仍只派发一次角色。`status` 的 `debug_probes` 表示选项，`probe_breakpoint` 表示无错误且空闲的探针等待。
+
+工程 `.archa/workers.json` 优先；缺省使用 [分发配置](scaffold/workers.json)。角色为 `expert`、`executor`，可选显式 preset 或命令数组。例如自定义 Executor：
+
+```json
+{
+  "roles": {
+    "expert": {"preset": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "medium"},
+    "executor": {
+      "command": ["python", "investigate.py", "{prompt_file}"],
+      "input_mode": "file", "output_mode": "stdout", "timeout_seconds": 300
+    }
+  }
+}
 ```
 
-准备与审核不冻结候选；首次执行绑定后，同一 revision 的合同不可覆盖。执行明确的新 revision 会创建新 Run；同 revision 的独立执行使用 `--new-run`。新 Run 默认从任务基线开始，只有显式 `--base <commit/ref>` 才继承指定成果；实际起点和解析配置保存在 Run 的 frozen 快照中。champion 在分支 `opc/<task>`；用户检出的分支只有 `promote --apply` 才会快进。
+Expert 必须使用文件输出。Executor 可使用文件或纯 stdout 正文；stderr 只进入日志。非零退出、超时或空输出均不发布结果。命令不隐式经过 shell。具体配置与恢复协议见下文。
 
-接入写法见 [scaffold/ONBOARDING.md](scaffold/ONBOARDING.md)（`opc init` 会把它拷进项目）。
+运行模块职责：`core/engine.py` 调度与预算，`core/workspace.py` 状态及成果发布，`core/topic_control.py` 工程执行身份与停止，`adapters/worker.py` 通用配置和调用，`adapters/prompts.py` 角色上下文，`log.py` 按需报告。OS 进程树与独占锁由 `core/platform.py` 和 `core/windows.py` 提供。
 
-四个模型角色的本机配置在 `.opc/local/workers.json`，由 init 生成，Git 忽略。
-每个角色独立填写 `model`、`reasoning_effort`，优先于该角色的任务合同；null/省略表示继承。
-reviewer 不再继承 expert，onboard 也会读取独立设置。DSH 覆盖需同时提供 provider 和 model。
-新项目默认 expert、designer、reviewer、onboard 全部使用 `gpt-6.1-sol / medium`；
-已有配置不覆盖。
-详见 [worker 环境配置](scaffold/ONBOARDING.md#独立的-worker-环境配置)。
+历史数据不迁移；旧契约、Run、账本、Reviewer、晋升、工具拦截及暂停接口已退役。研究完成不意味着独立审核通过、合并或发布。
 
-## 结构与接缝
+## Worker 协议
 
-| 模块 | 职责 | 替换点 |
-| --- | --- | --- |
-| `core/engine.py` | 主循环、停止条件、预算、恢复、视图 | 无（唯一控制者） |
-| `core/ledger.py` | SQLite 唯一权威记录，跨平台单写入锁，intent 先写 | — |
-| `core/platform.py` / `core/windows.py` | 文件锁、进程树生命周期、可移植路径 | POSIX / Windows |
-| `core/workspace.py` | 从专家选定的 parent 切 worktree、sandbox、补丁、CAS 移 ref | — |
-| `core/accept.py` | 缺指标即拒、约束、噪声下限、冻结规则文件 | 任务里 `acceptance.rule` |
-| `core/promote.py` | 证据链、复测、需求 check、可选独立审核、快进 | — |
-| `domain.py` + `domains/command.py` | 领域接口；默认实现＝命令门 + metrics.json | 组件里 `adapter: path.py:Class` |
-| `adapters/codex.py` / `dsh.py` / `scripted.py` | worker：codex CLI、DeepSeek Harness headless，或确定性策略 | 任务里 `workers` |
+配置只接受 `roles.expert` 与 `roles.executor`；每个角色在 `command` 和 `preset` 中选择一个，另可指定 `input_mode`、`output_mode`、正数 `timeout_seconds`、字符串映射 `env`、`model`、`reasoning_effort`。输入模式为 `stdin` 或 `file`；文件模式通过命令变量传入提示路径。未知 preset、旧字段、错误类型和不可用变量直接报错，不切换后端或输出模式兜底。`check` 只校验配置，不调用模型，也不证明任务环境就绪。
 
-依赖单向：`core` 只经 `domain.load_domain` 和 `adapters.worker.make_worker` 两个工厂拿到领域与 worker（promotion 的可选审核直接用同一套 worker 适配器），不出现任何指标名、工具名或领域路径；领域差异全在项目的 `.opc/` 里。
-
-## openTPU 的教训落在哪里
-
-| openTPU 踩过的坑 | 引擎里的机制 |
+| 命令模板变量 | 含义 |
 | --- | --- |
-| 候选改了测试/评分脚本拿高分 | 只取 editable 范围内的补丁，套到干净的 champion 树上跑冻结门；越界即 `sandbox_violation` |
-| 缓存/软链/构建产物污染评测 | 每次评测新切 worktree，scratch 路径不进补丁与 digest；缓存仅 `deterministic: true` 且按内容+评价器+工具链 key |
-| 评价器或工具版本悄悄变了，新旧数字混比 | 测量带 evaluator/toolchain digest，不一致不比较；工具链变化当场重测 champion |
-| 指标缺失被当成“没变坏”放行 | 缺指标、空 metrics 一律拒绝（openTPU 自己的 accept 对空 dict 返回接受，包装规则补上） |
-| 环境故障被算成候选失败（或反过来） | 退出码约定 0/75/77/其他，由项目脚本自己分类；INFRA 不计搜索次数，连续 INFRA 即 blocked |
-| 进程崩溃后 champion 与记录不一致 | ledger 先写 intent 再 CAS 移 ref，恢复时按 intent 对账；ref 被外部移动则拒绝运行 |
-| 额度耗尽后空转烧预算 | 先申请后花费，codex 必须设 `max_tokens`；usage limit 判 INFRA 立即 blocked |
-| 噪声里的“提升” | 收益须超过 `max(min_rel_gain, noise_k×极差/|champion|)`；promote 可 `--confirm N` 复测 |
+| `{workdir}` | 目标工程目录，也是进程工作目录 |
+| `{topic_dir}` | 专题目录 |
+| `{prompt_file}` | 本次调用提示文件 |
+| `{output_file}` | Expert 临时探针、Executor 临时结果；收尾时为临时状态 |
+| `{state_file}` | Expert 临时状态；Executor 读取的正式状态 |
+| `{model}`、`{reasoning_effort}` | 角色配置明确提供的参数；自定义命令不使用时无需填写 |
 
-## 已验证
+模板按 argv 元素渲染，不提供 shell 转义；显式调用 shell 时由配置者负责引用。preset 是命令模板，不解析 CLI 私有日志。默认 Codex 需要本机 CLI 与授权；自定义 Codex 命令中的 `-o {output_file}` 会用最终聊天摘要覆盖协议文件，应显式移除，让 Worker 按提示写文件。
 
-- 单元/失败注入测试 56 个（`python3 -m pytest opc/tests`），含假 codex 与假 dsh：正常、作弊越界、额度耗尽、token 预算、onboard 越界、合同未知字段、审核缺 verdict 即阻塞。
-- **真实 dsh 闭环已跑**（与 codex 相反，dsh 不需要等额度恢复）：在玩具项目上专家提出 x=7、设计者改 `params.json`、冻结门打分，loss 17→1，一轮 `target_met`，72556 token 计费，`promote` 走通。
-- PIM 模拟器（[examples/pim-emulator](../examples/pim-emulator/README.md)）：参数搜索，延迟 96048→54596 ns（r0002 续跑到 45497），溢出候选判 broken，约束违反被拒，目标 40 µs 未达成如实报告。
-- openTPU（[examples/opentpu-otpu-coll](../examples/opentpu-otpu-coll/README.md)）：真实 Verilator lint + Yosys 综合，openTPU 自己的 accept 规则；只加注释判 no_gain，语法错误判 broken。两个领域都没有改核心代码。
+Expert 写完整临时状态，继续探索时还写探针；完成或阻塞时不要求新探针。Worker 不删除调用方准备的状态草稿。输出只有在退出码零、未超时、必需内容非空且归属后代进程结束后才允许发布。创建、登记、等待和异常都在进程生命周期内；登记失败也收回已启动进程。stdout/stderr 持续写日志，中断保留已有内容；stdout 结果仅取 stdout 正文。重试可覆盖同轮同角色日志，收尾单独写 `.expert_finalize.log`，不承诺完整调用审计。失败即停，无自动重试。
 
-## 尚未完成
+## 专题材料与状态约束
 
-- 真实 codex 闭环未跑：本机额度到 10-27 才恢复，codex 路径目前只由假 codex 验证。
-- 真实 dsh 闭环已验证，但样本只有一个玩具任务；它还没有在 RTL/模拟器上跑过。
-- dsh 审核常回一份 markdown 评审而不是 JSON。适配器只接受带 `verdict` 键的 JSON，散文回答判为「审核不可用」并阻塞晋升——宁可挡住，不可放行。要稳定 verdict 需在冻结的审核提示词里强化输出格式。
-- 隔离只靠 git worktree + codex 沙箱 + 事后 sandbox 检查，没有 OS 级隔离（容器/用户）。
-- 串行执行（每次一个候选）。
-- 内置 `param_search` 是坐标搜索，会停在局部最优；更强的搜索应作为策略插件接入。
-- Ge 统一入口未实现；`onboard` 只起草合同，不替代人工审核。
+`.archa/topics/<topic>/` 中 `GOAL.md` 保存目标、范围、环境入口和完成判据；`STATE.md` 保存当前认知；`steps/step-01/` 起逐轮保存 `probe.md`、`result.md` 和角色日志。必要原件与脚本可以留存；`PROGRESS_LOG.md` 是按需衍生展示，不参与调度。模板由 [templates.py](scaffold/templates.py) 定义，默认领域中立，PIM 为可选模板。
 
+状态文件以 `# Exploration State` 开头，紧随唯一的 `STATUS:` 和 `MAX_ROUNDS:` 元数据行，再以空行分隔正文。缺失、重复、非法头直接报错。预算为正整数，由引擎保留授权值，Expert 不能修改。认知正文按事实与边界、机制模型、条件化关闭分支、待解问题与阻塞、最近认知演进组织。
 
-## 实验反馈与候选续用
+| 状态 | 含义及继续条件 |
+| --- | --- |
+| `IN_PROGRESS` | 目标未完成，按正式轮次文件派发；不表示进程正在运行 |
+| `COMPLETED` | Expert 判断目标达成；只读返回，拒绝追加预算和重开 |
+| `BLOCKED` | Expert 判断缺少条件且无可行替代；补齐条件后显式 `resume` |
+| `BUDGET_EXHAUSTED` | 末轮已消化但目标未完成；显式追加授权轮数后继续 |
 
-专家只读取任务相关的 `.opc/context/*.md`、目标/完成标准/约束、逐轮设计、执行摘要、结构化实验数据和结论。源码、完整门判决和原始日志留在实现/证据侧。`context_files` 中的源码路径不再注入专家；旧接入应把必要背景迁到 `.opc/context/`，无需修改可改范围。
+只有已提交 `result.md` 才计为完成一轮；只有日志或临时材料的步骤可复用。正式轮次须规范编号、连续，最多最后一轮有探针无结果；破坏结构的编辑直接报错。进程失败不自动写为 `BLOCKED`，否定结果仍是可吸收的证据。
 
-计划的 `changes` 表达方法与实验，不必提供 `files`。`base_attempt: null`（省略同义）从当前工作版本继续（数值任务默认冠军），`0` 从初始基线继续，正整数选择本 run 已保存的候选。候选由 Git 引用 `refs/opc-candidates/<task>/<run>/a<N>` 保留，`candidate.patch` 相对实际 parent；账本事件记录 parent、候选与冠军比较基线。未涨分也可选用，冠军仍走冻结的接纳规则。不会自动合并不同候选；若选定交付版本不是目标分支的后代，promote 仍要求人工合并。
+先恢复提交，再推导下一动作：无轮次由 Expert 出题；有探针无结果由 Executor 执行；结果已提交且预算尚有余量由 Expert 消化并决定下一问；达到上限后只做收尾消化，不派发实验。普通 Expert 只提交 `IN_PROGRESS`、`COMPLETED` 或 `BLOCKED`；收尾先判断目标，达成则完成，否则为预算耗尽并保留阻塞条件。
 
-下一次已有专家调用可按需返回 `conclusions: [{"attempt": N, "conclusion": "..."}]` 复盘相关轮次，无需清空全部 pending，再规划或通过 `exhausted: true` 与 `stop_reason` 结束。结论挂回原轮次；资源/暂停/故障不触发补调，报告的 `pending_conclusions` 如实列出待复盘。阈值、`max_stagnation` 只作为专家进展信号；预算上限、基础设施故障和用户控制继续约束执行。`result=exploration_stopped` 表示专家结束探索，`result=target_met` 与独立的 `target_met` 布尔字段表示测量达到目标，停止理由单独保留，任务终验使用 promote 检查选定版本。
+追加预算在持锁下原子更新累计上限，保留历史用量；耗尽可转回 `IN_PROGRESS`，阻塞仍需显式恢复。预算检查先于派发，人工降低预算至已用量以下或无法覆盖待执行探针时报告具体错误并保留现场。
 
-默认命令领域从 metrics 文件保留数值指标及 `conditions`、`controls`、`cases`、`samples`、`results` 实验字段和各次重复输出，不透传嵌入的日志/判决全文，标记缓存来源。明确请求正式测量且无补丁时运行冻结门，跳过缓存获取新数据；未执行不写成有测量。自定义领域可通过 `Evaluation.data` 返回必要数据，原标量 `values` 接口继续可用。没有数据的旧记录不补造测量或解释。
+Expert 默认读取目标、当前状态与上一轮探针/结果；Executor 读取目标、状态与当前探针，历史按需读取，不注入全量日志。Expert 再读末轮结果时避免重复累加事实。选题、授权优化及工程改动保留边界见 [ADR](../docs/adr/0001-topic-workspace.md#讨论定锚与执行循环)，实际角色提示维护在 [prompts.py](adapters/prompts.py)。
 
-Codex/DSH 计划接口使用上述字段；旧 `NO_EXPERIMENT` 仍识别，但有待复盘时模型须返回 JSON 结论再结束。确定性 scripted 策略的 `propose(ctx, tree)` 中 tree 也成为材料目录，应从 ctx 读取状态；旧策略若依赖源码路径需迁移。内置参数搜索已适配。旧 scripted 策略省略结论时保留待复盘，不冒充模型解释。
+## 独占、提交与恢复
 
-## 工作成果与交付
+同一工程（含不同专题）最多一个执行者。运行、单步、恢复、追加预算和恢复清理持有稳定 `.archa/.run.lock` 文件上的 OS 独占锁；文件存在不表示持锁，不能用 PID 检查替代锁，也不在持锁期间删除或替换锁文件。`status` 只读，不清理或派发。
 
-acceptance.objective 可省略/null。默认工作版本累积已成功保存的授权修改，不创建数值冠军；有 objective 时保持原排名语义。base_attempt（含停止回复）可选择已有候选或 0 基线。普通步骤默认局部验证，evaluate=true 请求冻结评价；数值任务默认正式评价，evaluate=false 可暂不测量。
-requirements[].gates 可声明已有冻结门对需求的覆盖；check 使用真实指标，review 需要独立审阅。未验证、未满足及有未满足条件的 review 都阻止完整交付。promote 检查 selected_version，run 停止本身不是任务完成。
-默认模型上下文只含必要指标、有界近期实验与证据位置，完整事实留已有 ledger/评价文件。已知无有效执行的请求拒绝会 blocked，不会原样重试。
+当前执行描述记录专题、角色、轮次、时间、归属进程及停止状态，完整发布；它不是锁。引擎负责正常停止及清理，`stop` 与工作台只请求并等待归属进程树结束、恢复完成和锁释放。重复停止不影响后续新运行。崩溃恢复先取得独占权再处理可确认归属的残留进程；无法确认旧执行结束时明确报错并禁止派发，不按裸 PID 盲目终止进程。停止是中断当前调用，不是等本轮结束后暂停。
 
-## 任务成果与实验接续
+Expert 发布采用以下协议，保证进程中断恢复，不承诺机器掉电持久事务或工程副作用回滚：
 
-需要跨 run 累计研究成果时，使用可选 `task.results_path` 和 `opc results`。入口组织现有计划、原件、规格与审核，原生 run 自动登记执行事实；主流程更新累计研究判断。详见[使用说明](../docs/design/task-results/usage.md)和[实施 tickets](../docs/design/task-results/tickets.md)。
+1. Worker 向当前步骤的 `.staging.expert/` 写完整状态及需要的探针，正式文件不变。
+2. 调用成功且输出检查通过后，引擎规范化状态头、保留授权预算；完成或阻塞时不发布探针。
+3. 同文件系统原子重命名准备目录为 `.staging.commit/`，标记已验证、必须完成发布的提交。
+4. 用 `os.replace` 依次移动状态及探针到正式位置；恢复继续移动提交目录中的剩余文件，空目录删除。两次文件替换不是跨文件瞬时原子操作，只读视图可显示“提交中”。
+5. 仅有 `.staging.expert/` 时清理后可重试；有 `.staging.commit/` 时必须先完成发布，不能删除或重跑 Worker。提前完成、阻塞与收尾沿用此协议，仅发布状态。
+
+Executor 写 `.staging.result.md`，成功检查后原子替换为 `result.md`。未发布调用可能重跑，已提交结果直接复用，不承诺外部实验恰好执行一次。清理恢复均在持锁且旧进程已结束后进行；临时材料不作为第二份认知账本，过期且无用途时清理。
+
+人工修改须在正常停止并完成提交恢复后进行。普通恢复沿用待执行探针；明确纠偏的步骤以 [讨论技能](../skills/archa-discuss/SKILL.md) 为准。保留已完成轮次、状态头和授权预算；删除待执行探针不会撤销已提交认知或工程副作用，实质换题新建专题。报告要求无活跃执行或待发布提交，离线读取材料，不调用 Worker、不改变权威内容。
+
+## 部署与观察边界
+
+项目本地部署、固定运行时显式升级及配置保留见 [仓库入口](../README.md)。部署文件清单只维护在 [initialize.py](../skills/archa-discuss/scripts/initialize.py) 的 `RUNTIME_FILES`，安装器复用；包含传递依赖与模板资源。
+
+工作台只显示 Expert、Executor 和收尾的活动、流式日志与已有材料，不推断模型私有活动；当前认知不冒充历史状态快照。控制提供停止、继续、追加预算和探针断点调试（HTTP `resume` 的可选布尔字段 `debug_probes`），请求与实际状态分开展示，服务端独占锁防止重复启动。HTTP `revise` 接收 `feedback` 字符串，共用 CLI 重拟控制；当前轮只保留最近一次 `feedback.md` 与重拟日志。主屏可提交方向意见并查看调整状态，直接读取当前探针，输入与认知状态、历史日志按需展开；专题详情的 `current_probe` 引用权威探针材料。材料读取限制在明确允许的根目录，禁止越界或执行原始 HTML；demo 使用同一专题接口。

@@ -1,1021 +1,503 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { enc, get, useResource } from "./api";
-import { useRunControl } from "./useRunControl";
-import { ResearchDesk } from "./ResearchDesk";
-import { ResearchCanvas } from "./ResearchCanvas";
-import logo from "../../docs/assets/archa-aha-orange.svg";
+import { useEffect, useState } from "react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { api } from "./api";
 import { poll } from "./poll";
-import { ResearchLog } from "./ResearchLog";
-import { Activity } from "./Activity";
-import { MaterialReader } from "./Inspection";
-import type { Material } from "./types";
-import { CanvasInfo, type InfoTab } from "./CanvasInfo";
-import { Alert, Badge, label, time, preparationLabel } from "./components";
-import type {
-  Envelope,
-  Overview,
-  Ref,
-  TaskDetail,
-  Workbench,
-  WorkItem,
-  WorkItemsPage,
-  WorkerSummary,
-} from "./types";
+import type { Content, Overview, TopicDetail, Role } from "./types";
 
-export function useSelection() {
-  const [query, setQuery] = useState(
-    () => new URLSearchParams(location.search),
-  );
+const roles: Record<Role, string> = {
+  expert: "Expert",
+  executor: "Executor",
+  expert_finalize: "Expert · 收尾消化",
+  expert_revise: "Expert · 调整探针",
+};
+const activities = {
+  idle: "空闲",
+  running: "运行中",
+  stopping: "停止中",
+  unknown: "未知执行",
+};
+function Reader({
+  path,
+  onOpen,
+  live = false,
+}: {
+  path: string;
+  onOpen: (path: string) => void;
+  live?: boolean;
+}) {
+  const [content, setContent] = useState<Content>();
+  const [error, setError] = useState("");
+  const log = path.endsWith(".log");
   useEffect(() => {
-    const pop = () => setQuery(new URLSearchParams(location.search));
-    addEventListener("popstate", pop);
-    return () => removeEventListener("popstate", pop);
-  }, []);
-  const change = useCallback(
-    (values: Record<string, string | null>, replace = false) => {
-      setQuery((old) => {
-        const next = new URLSearchParams(old);
-        Object.entries(values).forEach(([key, value]) =>
-          value ? next.set(key, value) : next.delete(key),
-        );
-        const url =
-          location.pathname + (next.size ? "?" + next.toString() : "");
-        if (url !== location.pathname + location.search)
-          history[replace ? "replaceState" : "pushState"](null, "", url);
-        return next;
-      });
-    },
-    [],
-  );
-  return [query, change] as const;
-}
-
-function useWorkItems(
-  run: string,
-  scope: string,
-  refresh: number,
-  target: number | null,
-) {
-  const [revision, setRevision] = useState(0);
-  const pages = useRef({ key: "", count: 1 });
-  const [state, setState] = useState<{
-    key: string;
-    items: WorkItem[];
-    total: number;
-    more: boolean;
-    error?: string;
-  }>({ key: "", items: [], total: 0, more: false });
-  const key = run + "/" + scope;
-  if (pages.current.key !== key) pages.current = { key, count: 1 };
-  useEffect(() => {
-    if (!run) return;
-    let active = true,
-      pending = false;
-    const controller = new AbortController();
-    async function read() {
-      if (pending) return;
-      pending = true;
-      try {
-        let cursor: string | null = null,
-          total = 0;
-        const items: WorkItem[] = [];
-        let count = 0;
-        do {
-          const value: Envelope<WorkItemsPage> = await get(
-            `/runs/${enc(run)}/work-items?scope=${scope}&limit=100${cursor ? "&cursor=" + enc(cursor) : ""}`,
-            controller.signal,
-          );
-          items.push(...value.data.items);
-          total = value.data.total;
-          cursor = value.next_cursor;
-          count++;
-        } while (
-          cursor &&
-          (count < pages.current.count ||
-            (scope === "all" &&
-              target !== null &&
-              !items.some((item) => item.attempt_no === target)))
-        );
-        if (active) {
-          pages.current.count = count;
-          setState({ key, items, total, more: !!cursor });
+    let active = true;
+    let offset = 0;
+    setContent(undefined);
+    setError("");
+    const cancel = poll(
+      async () => {
+        try {
+          const value = await api.material(path, log && live ? offset : 0);
+          if (active) {
+            offset = value.next_offset;
+            setContent((previous) =>
+              log && live && value.offset > 0 && previous
+                ? { ...value, text: previous.text + value.text }
+                : value,
+            );
+            setError("");
+          }
+        } catch (error) {
+          if (active) setError(String(error));
         }
-      } catch (error) {
-        if (active && !controller.signal.aborted)
-          setState((old) => ({
-            ...(old.key === key
-              ? old
-              : { key, items: [], total: 0, more: false }),
-            error: (error as Error).message,
-          }));
-      } finally {
-        pending = false;
-      }
-    }
-    const stop = poll(read, 1500);
+      },
+      live ? 700 : 0,
+    );
     return () => {
       active = false;
-      controller.abort();
-      stop();
+      cancel();
     };
-  }, [run, scope, key, revision, refresh, target]);
-  return {
-    ...(state.key === key
-      ? state
-      : { items: [], total: 0, more: false, error: undefined }),
-    loadMore: () => {
-      pages.current.count++;
-      setRevision((n) => n + 1);
-    },
+  }, [path, live, log]);
+  const more = async () => {
+    if (!content) return;
+    try {
+      const next = await api.material(path, content.next_offset);
+      setContent({ ...next, text: content.text + next.text });
+    } catch (error) {
+      setError(String(error));
+    }
   };
-}
-
-export default function App() {
-  const [query, change] = useSelection();
-  const [refresh, setRefresh] = useState(0);
-  const [layout, setLayout] = useState(
-    () => sessionStorage.getItem("archa-layout") ?? "canvas",
-  );
-  function chooseLayout(value: string) {
-    setLayout(value);
-    sessionStorage.setItem("archa-layout", value);
-  }
-
-  const topicViews = useRef(
-    new Map<
-      string,
-      {
-        task: string;
-        run: string;
-        attempt: string | null;
-        call: string | null;
-        detail: boolean;
-        scroll: number;
-      }
-    >(),
-  );
-  const restoreScroll = useRef<number | null>(null);
-  const [navExpanded, setNavExpanded] = useState(false);
-  const [theme, setTheme] = useState(
-    () => localStorage.getItem("archa-theme") ?? "light",
-  );
-  const [detail, setDetail] = useState(
-    () => !!query.get("attempt") && !query.get("call"),
-  );
-  const [logOpen, setLogOpen] = useState(false);
-  const [infoOpen, setInfoOpen] = useState(false);
-  const [infoTab, setInfoTabState] = useState<InfoTab>("progress");
-  function setInfoTab(tab: InfoTab) {
-    setInfoTabState(tab);
-    sessionStorage.setItem(`archa-info-tab:${taskId}:${runId}`, tab);
-  }
-  const [material, setMaterial] = useState<Material | null>(null);
-  const materialOpener = useRef<HTMLElement | null>(null);
-  const materialPositions = useRef<
-    { element: Element; top: number; left: number }[]
-  >([]);
-  const closeMaterial = useCallback(() => {
-    setMaterial(null);
-    requestAnimationFrame(() => {
-      for (const { element, top, left } of materialPositions.current) {
-        element.scrollTop = top;
-        element.scrollLeft = left;
-      }
-      materialOpener.current?.focus({ preventScroll: true });
-    });
-  }, []);
-  const origin = useRef<HTMLElement | null>(null);
-  const detailRef = useRef<HTMLElement>(null);
-  const overview = useResource<Overview>("/overview", 5000, refresh);
-  const o = overview.value?.data;
-  const topic = query.get("topic") ?? o?.tasks[0]?.topic ?? "legacy";
-  const topics = [...new Set(o?.tasks.map((item) => item.topic) ?? [])];
-  const visibleTasks = o?.tasks.filter((item) => item.topic === topic) ?? [];
-  const taskId = query.get("task") ?? visibleTasks[0]?.id ?? "history";
-  const runId = query.get("run") ?? "";
-  const scope = query.get("filter") === "attention" ? "attention" : "all";
-  const task = useResource<TaskDetail>(
-    taskId !== "history" ? `/research-tasks/${enc(taskId)}` : null,
-    5000,
-    refresh,
-  );
-  const t = task.value?.data;
-  const workbench = useResource<Workbench>(
-    runId ? `/runs/${enc(runId)}/workbench` : null,
-    1500,
-    refresh,
-  );
-  const scene = workbench.value?.data;
-  const control = useRunControl(runId, scene?.control_request);
-  const stopDialog = useRef<HTMLDialogElement>(null);
-  const stopButton = useRef<HTMLButtonElement>(null);
-  const cancelStop = useRef<HTMLButtonElement>(null);
-  const [stopRun, setStopRun] = useState<string | null>(null);
-  useEffect(() => {
-    const dialog = stopDialog.current;
-    if (!dialog) return;
-    if (stopRun && stopRun === runId) {
-      if (!dialog.open) dialog.showModal();
-      cancelStop.current?.focus();
-    } else if (dialog.open) dialog.close();
-  }, [stopRun, runId]);
-  function closeStop() {
-    stopDialog.current?.close();
-    setStopRun(null);
-    stopButton.current?.focus();
-  }
-  const stopping = control.busy && control.action === "stop";
-  const resuming = control.busy && control.action === "resume";
-  const controlAction =
-    !resuming &&
-    (scene?.execution === "paused" || scene?.execution === "blocked")
-      ? "resume"
-      : "pause";
-  const selectedNo = Number(query.get("attempt")) || null;
-  const work = useWorkItems(runId, scope, refresh, selectedNo);
-  useEffect(() => {
-    if (restoreScroll.current !== null && (work.items.length || !runId)) {
-      const element = document.querySelector(".work-scroll");
-      if (element) element.scrollTop = restoreScroll.current;
-      restoreScroll.current = null;
-    }
-  }, [topic, work.items.length, runId]);
-  const selectedCall = query.get("call");
-  const selectedItems = useRef<{ run: string; items: Map<number, WorkItem> }>({
-    run: runId,
-    items: new Map(),
-  });
-  if (selectedItems.current.run !== runId)
-    selectedItems.current = { run: runId, items: new Map() };
-  work.items.forEach((item) =>
-    selectedItems.current.items.set(item.attempt_no, item),
-  );
-  const selected = selectedNo
-    ? selectedItems.current.items.get(selectedNo)
-    : undefined;
-  const worker = scene?.workers.find((w) => w.id === selectedCall);
-  useEffect(() => {
-    setInfoOpen(false);
-    const saved = sessionStorage.getItem(`archa-info-tab:${taskId}:${runId}`);
-    setInfoTabState(
-      saved === "task" || saved === "worker" || saved === "progress"
-        ? saved
-        : selectedCall
-          ? "worker"
-          : "progress",
-    );
-  }, [taskId, runId]);
-  useEffect(() => {
-    if (detail || material) setInfoOpen(false);
-  }, [detail, material]);
-  const located = useRef<string | null>(null);
-  useEffect(() => {
-    if (layout !== "list") {
-      located.current = null;
-      return;
-    }
-    const key = selectedNo ? runId + "/" + selectedNo : null;
-    if (!key) {
-      located.current = null;
-      return;
-    }
-    if (located.current === key) return;
-    const target = document.querySelector<HTMLElement>(
-      `[data-attempt="${selectedNo}"]`,
-    );
-    if (target) {
-      target.scrollIntoView({ block: "nearest" });
-      located.current = key;
-    }
-  }, [runId, selectedNo, work.items, layout]);
-  const runs: Ref[] =
-    taskId === "history" ? (o?.unlinked_runs ?? []) : (t?.runs ?? []);
-  const following = query.get("follow") === "1";
-  const activeRuns = runs.filter(
-    (item) => item.kind === "execution" && item.recorded_state === "active",
-  );
-  const followTarget = activeRuns.length === 1 ? activeRuns[0] : null;
-  useEffect(() => {
-    if (following && followTarget && followTarget.id !== runId) {
-      change({ run: followTarget.id, attempt: null, call: null }, true);
-      setMaterial(null);
-      setDetail(false);
-    }
-  }, [following, followTarget?.id, runId, change]);
-  useEffect(() => {
-    if (layout !== "canvas" || runId) return;
-    const initial = followTarget ?? (runs.length === 1 ? runs[0] : null);
-    if (initial) change({ run: initial.id }, true);
-  }, [
-    layout,
-    runId,
-    followTarget?.id,
-    runs.map((item) => item.id).join("|"),
-    change,
-  ]);
-  const title =
-    t?.task.title ?? (taskId === "history" ? "运行历史" : "工作现场");
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem("archa-theme", theme);
-  }, [theme]);
-  useEffect(() => {
-    if (detail) detailRef.current?.focus({ preventScroll: true });
-  }, [detail]);
-  useEffect(() => {
-    if (!detail) return;
-    const update = () => {
-      const bottom = document
-        .querySelector(".cc-viewport,.topbar")
-        ?.getBoundingClientRect().bottom;
-      if (bottom !== undefined)
-        detailRef.current?.style.setProperty(
-          "--inspector-top",
-          `${Math.ceil((document.querySelector(".cc-viewport")?.getBoundingClientRect().top ?? bottom) + 52)}px`,
-        );
-    };
-    const observer = new ResizeObserver(update);
-    document
-      .querySelectorAll(".topbar")
-      .forEach((element) => observer.observe(element));
-    update();
-    return () => observer.disconnect();
-  }, [detail, material]);
-  const closeDetail = useCallback(() => {
-    setDetail(false);
-    origin.current?.focus({ preventScroll: true });
-  }, []);
-  useEffect(() => {
-    const key = (event: KeyboardEvent) => {
-      if (stopDialog.current?.open) return;
-      if (event.key === "Escape" && material) {
-        event.preventDefault();
-        closeMaterial();
-        return;
-      }
-      if (event.key === "Escape" && infoOpen) {
-        event.preventDefault();
-        setInfoOpen(false);
-        return;
-      }
-      if (event.key === "Escape" && detail) {
-        event.preventDefault();
-        closeDetail();
-      }
-    };
-    addEventListener("keydown", key);
-    return () => removeEventListener("keydown", key);
-  }, [detail, closeDetail, material, closeMaterial, infoOpen]);
-  function chooseWork(item: WorkItem, target: HTMLElement) {
-    origin.current = target;
-    change({
-      attempt: String(item.attempt_no),
-      call: item.calls.at(-1) ?? null,
-    });
-    setDetail(true);
-    requestAnimationFrame(() => {
-      const targetCall = item.calls.at(-1);
-      Array.from(document.querySelectorAll<HTMLElement>("[data-call]"))
-        .find((element) => element.dataset.call === targetCall)
-        ?.scrollIntoView({ block: "nearest" });
-    });
-  }
-  function chooseWorker(item: WorkerSummary, target: HTMLElement) {
-    origin.current = target;
-    change({
-      attempt: item.attempt_no ? String(item.attempt_no) : null,
-      call: item.id,
-      filter: null,
-    });
-    setDetail(false);
-    setMaterial(null);
-    setInfoTab("worker");
-    setInfoOpen(true);
-    if (layout === "canvas") return;
-    requestAnimationFrame(() =>
-      document
-        .querySelector<HTMLElement>(`[data-attempt="${item.attempt_no}"]`)
-        ?.scrollIntoView({ block: "nearest" }),
-    );
-  }
-  function selectTask(value: string) {
-    change({ task: value, run: null, attempt: null, call: null, follow: null });
-    setDetail(false);
-    setMaterial(null);
-  }
-  useEffect(() => {
-    setLogOpen(false);
-  }, [runId, taskId]);
-  const infoPanel = (
-    <CanvasInfo
-      key={`${taskId}:${runId}`}
-      open={infoOpen && !detail && !material}
-      tab={infoTab}
-      onTab={setInfoTab}
-      onOpen={() => {
-        setDetail(false);
-        setMaterial(null);
-        setInfoOpen(true);
-      }}
-      onClose={() => setInfoOpen(false)}
-      title={title}
-      scene={scene}
-      worker={worker}
-    />
-  );
   return (
-    <div className={`app${layout === "canvas" ? " canvas-mode" : ""}`}>
-      <dialog
-        ref={stopDialog}
-        className="stop-dialog"
-        aria-labelledby="stop-heading"
-        aria-describedby="stop-description"
-        onKeyDown={(event) => {
-          if (event.key !== "Tab") return;
-          const buttons =
-            event.currentTarget.querySelectorAll<HTMLButtonElement>("button");
-          const first = buttons[0],
-            last = buttons[buttons.length - 1];
-          if (event.shiftKey && document.activeElement === first) {
-            event.preventDefault();
-            last.focus();
-          } else if (!event.shiftKey && document.activeElement === last) {
-            event.preventDefault();
-            first.focus();
-          }
-        }}
-        onCancel={(event) => {
-          event.preventDefault();
-          closeStop();
-        }}
-      >
-        <h2 id="stop-heading">停止当前运行？</h2>
-        <p id="stop-description">
-          停止会取消当前调用并阻止后续派发。已有工作和结果保留；停止不代表任务完成。
-        </p>
-        <div className="dialog-actions">
-          <button className="btn" ref={cancelStop} onClick={closeStop}>
-            取消
-          </button>
-          <button
-            className="btn primary"
-            onClick={() => {
-              const target = stopRun;
-              closeStop();
-              if (target === runId && scene?.control.stop.enabled)
-                void control.submit("stop");
-            }}
-          >
-            确认停止
-          </button>
-        </div>
-      </dialog>
-      {logOpen && (
-        <ResearchLog
-          key={runId}
-          run={runId}
-          onClose={() => setLogOpen(false)}
-        />
+    <>
+      {error && <p role="alert">{error}</p>}
+      {!content && !error && <p role="status">读取材料…</p>}
+      {content && (
+        <>
+          {log || !/\.md$/i.test(path) ? (
+            <pre className="plain-output">{content.text || "尚无输出"}</pre>
+          ) : (
+            <div className="markdown">
+              <Markdown
+                remarkPlugins={[remarkGfm]}
+                skipHtml
+                components={{
+                  img: ({ alt }) => <span>[图片：{alt}]</span>,
+                  a: ({ href, children }) => {
+                    if (!href) return <span>{children}</span>;
+                    if (/^https?:\/\//i.test(href))
+                      return (
+                        <a href={href} target="_blank" rel="noreferrer">
+                          {children}
+                        </a>
+                      );
+                    if (/^[a-z]+:/i.test(href) || href.startsWith("//"))
+                      return <span>{children}</span>;
+                    return (
+                      <button
+                        className="text-link"
+                        onClick={() => {
+                          const parent = path.slice(
+                            0,
+                            path.lastIndexOf("/") + 1,
+                          );
+                          onOpen(
+                            decodeURIComponent(
+                              href.startsWith("/")
+                                ? href
+                                : parent + href.split("#")[0],
+                            ),
+                          );
+                        }}
+                      >
+                        {children}
+                      </button>
+                    );
+                  },
+                }}
+              >
+                {content.text}
+              </Markdown>
+            </div>
+          )}
+          {content.more && !live && <button onClick={more}>读取更多</button>}
+        </>
       )}
-      <header className="topbar">
-        <a className="brand" href="/" aria-label="ArcHa 工作现场">
-          <img className="brand-logo" src={logo} alt="ArcHa" />
-        </a>
-        <div className="selectors">
+    </>
+  );
+}
+function Controls({ detail }: { detail: TopicDetail }) {
+  const [pending, setPending] = useState("");
+  const [message, setMessage] = useState("");
+  const [failure, setFailure] = useState("");
+  const [rounds, setRounds] = useState("");
+  const [feedback, setFeedback] = useState("");
+  useEffect(() => setFeedback(""), [detail.current_round]);
+  const [debug, setDebug] = useState(detail.debug_probes || false);
+  useEffect(
+    () => setDebug(detail.debug_probes || false),
+    [detail.debug_probes],
+  );
+  const active =
+    detail.activity === "running" || detail.activity === "stopping";
+  const exhausted = detail.status === "BUDGET_EXHAUSTED";
+  const submit = async (action: "stop" | "resume" | "revise") => {
+    setPending(action);
+    setFailure("");
+    setMessage("");
+    try {
+      if (action === "stop" && detail.execution) {
+        await api.stop(detail.topic, detail.execution.id);
+        setMessage("停止请求已处理；执行活动以服务端状态为准。");
+      } else if (action === "revise") {
+        await api.revise(detail.topic, feedback);
+        setFeedback("");
+        setMessage("重拟请求已接收；专家调整后会再次停下。");
+      } else {
+        await api.resume(
+          detail.topic,
+          rounds ? Number(rounds) : undefined,
+          debug,
+        );
+        setMessage("继续请求已接收；请查看执行活动和结果。");
+      }
+    } catch (error) {
+      setFailure(String(error));
+    } finally {
+      setPending("");
+    }
+  };
+  return (
+    <section aria-label="专题控制">
+      {detail.status !== "COMPLETED" && (
+        <>
           <label>
-            专题
+            <input
+              type="checkbox"
+              aria-label="探针断点调试"
+              checked={debug}
+              onChange={(event) => setDebug(event.target.checked)}
+              disabled={active || !!pending}
+            />
+            探针断点调试
+          </label>
+          <label>
+            追加轮数{" "}
+            <input
+              aria-label="追加轮数"
+              type="number"
+              min="1"
+              step="1"
+              value={rounds}
+              onChange={(event) => setRounds(event.target.value)}
+              disabled={active || !!pending}
+            />
+          </label>
+          <button
+            disabled={
+              active ||
+              !!pending ||
+              (exhausted && !rounds) ||
+              (!!rounds &&
+                (!Number.isInteger(Number(rounds)) || Number(rounds) <= 0))
+            }
+            onClick={() => submit("resume")}
+          >
+            {rounds
+              ? "追加并继续"
+              : detail.status === "BLOCKED"
+                ? "条件已补齐，继续"
+                : debug && !detail.debug_probes
+                  ? "启用调试并继续"
+                  : !debug && detail.debug_probes
+                    ? "关闭调试并自动继续"
+                    : detail.probe_breakpoint
+                      ? "执行当前探针并继续"
+                      : "继续"}
+          </button>
+          {detail.debug_probes && detail.next_action === "executor" && (
+            <div>
+              <label>
+                当前探针方向意见
+                <textarea
+                  aria-label="当前探针方向意见"
+                  value={feedback}
+                  onChange={(event) => setFeedback(event.target.value)}
+                  disabled={active || !!pending}
+                />
+              </label>
+              <button
+                disabled={active || !!pending || !feedback.trim()}
+                onClick={() => submit("revise")}
+              >
+                提交意见并重拟
+              </button>
+              <p className="muted">
+                只调整当前探针，由专家设计具体方案；修改专题目标请使用讨论入口。
+              </p>
+            </div>
+          )}
+          {exhausted && <p>轮数已耗尽，请追加预算后继续。</p>}
+        </>
+      )}
+      {detail.execution && (
+        <button
+          disabled={!!pending || detail.activity === "stopping"}
+          onClick={() => submit("stop")}
+        >
+          停止
+        </button>
+      )}
+      {detail.status === "COMPLETED" && <p>研究已完成，不能自动重开。</p>}
+      {pending && (
+        <p role="status">
+          {pending === "stop"
+            ? "停止请求处理中，等待确认进程树结束…"
+            : pending === "revise"
+              ? "重拟请求处理中，等待工程执行权…"
+              : "继续请求处理中，等待工程执行权…"}
+        </p>
+      )}
+      {message && <p role="status">{message}</p>}
+      {failure && <p role="alert">{failure}</p>}
+    </section>
+  );
+}
+export default function App() {
+  const [overview, setOverview] = useState<Overview>();
+  const [topic, setTopic] = useState(
+    new URLSearchParams(location.search).get("topic") || "",
+  );
+  const [detail, setDetail] = useState<TopicDetail>();
+  const [round, setRound] = useState<number>();
+  const [material, setMaterial] = useState("");
+  const [error, setError] = useState("");
+  const [now, setNow] = useState(Date.now());
+  const [theme, setTheme] = useState(
+    localStorage.getItem("archa-theme") || "system",
+  );
+  useEffect(() => {
+    const media = matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      document.documentElement.dataset.theme =
+        theme === "system" ? (media.matches ? "dark" : "light") : theme;
+    };
+    apply();
+    media.addEventListener("change", apply);
+    localStorage.setItem("archa-theme", theme);
+    return () => media.removeEventListener("change", apply);
+  }, [theme]);
+  useEffect(
+    () =>
+      poll(async () => {
+        try {
+          const value = await api.topics();
+          setOverview(value);
+          setTopic((current) => current || value.topics[0]?.topic || "");
+        } catch (error) {
+          setError(String(error));
+        }
+      }, 2000),
+    [],
+  );
+  useEffect(() => {
+    setDetail(undefined);
+    setMaterial("");
+    setRound(undefined);
+    if (!topic) return;
+    history.replaceState(null, "", "?" + new URLSearchParams({ topic }));
+    let active = true;
+    const cancel = poll(async () => {
+      try {
+        const value = await api.topic(topic);
+        if (active) {
+          setDetail(value);
+          setError("");
+        }
+      } catch (error) {
+        if (active) setError(String(error));
+      }
+    }, 700);
+    return () => {
+      active = false;
+      cancel();
+    };
+  }, [topic]);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const selected =
+    detail?.rounds.find((item) => item.number === round) ||
+    detail?.rounds.at(-1);
+  const execution = detail?.execution;
+  const currentState = detail?.materials.find(
+    (item) => item.name === "STATE.md",
+  );
+  const open = (path: string) => {
+    setMaterial(path);
+    document.getElementById("material-reader")?.focus();
+  };
+  return (
+    <>
+      <a className="skip-link" href="#main">
+        跳至内容
+      </a>
+      <header>
+        <div>
+          <strong>ArcHa</strong> <span>探索工作台</span>{" "}
+          {overview?.demo && <span className="badge">离线演示</span>}
+        </div>
+        <label>
+          主题{" "}
+          <select
+            aria-label="主题"
+            value={theme}
+            onChange={(event) => setTheme(event.target.value)}
+          >
+            <option value="system">跟随系统</option>
+            <option value="light">浅色</option>
+            <option value="dark">深色</option>
+          </select>
+        </label>
+      </header>
+      <main id="main">
+        <div className="heading">
+          <div>
+            <p>{overview?.project}</p>
+            <h1>{topic || "探索专题"}</h1>
+          </div>
+          <label>
+            选择专题{" "}
             <select
               aria-label="选择专题"
               value={topic}
-              onChange={(e) => {
-                topicViews.current.set(topic, {
-                  task: taskId,
-                  run: runId,
-                  attempt: query.get("attempt"),
-                  call: query.get("call"),
-                  detail,
-                  scroll:
-                    document.querySelector(".work-scroll")?.scrollTop ?? 0,
-                });
-                const saved = topicViews.current.get(e.target.value);
-                restoreScroll.current = saved?.scroll ?? 0;
-                change({
-                  topic: e.target.value,
-                  task: saved?.task ?? null,
-                  run: saved?.run ?? null,
-                  attempt: saved?.attempt ?? null,
-                  call: saved?.call ?? null,
-                  follow: null,
-                });
-                setDetail(saved?.detail ?? false);
-                setMaterial(null);
-              }}
+              onChange={(event) => setTopic(event.target.value)}
             >
-              {topics.map((name) => (
-                <option key={name} value={name}>
-                  {name === "legacy" ? "原有研究" : name}
+              {overview?.topics.map((item) => (
+                <option key={item.topic} value={item.topic}>
+                  {item.topic}
+                  {item.error ? " · 读取错误" : ""}
                 </option>
               ))}
             </select>
           </label>
-          <label>
-            任务
-            <select
-              aria-label="选择任务"
-              value={taskId}
-              onChange={(e) => selectTask(e.target.value)}
-            >
-              {visibleTasks.map((x) => (
-                <option key={x.id} value={x.id}>
-                  {x.title}
-                </option>
-              ))}
-              <option value="history">未关联运行与准备历史</option>
-            </select>
-          </label>
-          <label>
-            运行
-            <select
-              aria-label="选择运行"
-              value={runId}
-              onChange={(e) => {
-                change({
-                  run: e.target.value,
-                  attempt: null,
-                  call: null,
-                  follow: null,
-                });
-                setMaterial(null);
-                setDetail(false);
-              }}
-            >
-              <option value="">请选择运行</option>
-              {runs.map((x) => (
-                <option key={x.id} value={x.id}>
-                  {x.display_label ?? "运行记录"}
-                  {x.recorded_state === "closed" ? " · 已结束" : ""}
-                </option>
-              ))}
-              {runId && !runs.some((x) => x.id === runId) && (
-                <option value={runId}>
-                  显式链接 · {scene?.display_label ?? "读取中"}
-                </option>
+        </div>
+        {error && <p role="alert">{error}</p>}
+        {overview?.topics.length === 0 && (
+          <p>尚无专题。请先使用 CLI 初始化专题。</p>
+        )}
+        {detail && (
+          <>
+            <section aria-label="专题与执行状态" className="status-panel">
+              <p>
+                专题状态 <strong>{detail.status}</strong> · 已完成{" "}
+                {detail.completed_rounds} / {detail.max_rounds} 轮
+              </p>
+              <p>
+                执行活动{" "}
+                <strong>
+                  {detail.probe_breakpoint
+                    ? "探针断点等待"
+                    : activities[detail.activity || "unknown"]}
+                </strong>
+                {detail.publishing && " · 成果提交中"}
+              </p>
+              {execution && (
+                <p>
+                  {roles[execution.role]} · 第 {execution.round} 轮 · 开始{" "}
+                  <time dateTime={execution.started_at}>
+                    {new Date(execution.started_at).toLocaleString()}
+                  </time>{" "}
+                  · 持续{" "}
+                  {Math.max(
+                    0,
+                    Math.floor((now - Date.parse(execution.started_at)) / 1000),
+                  )}{" "}
+                  秒
+                </p>
               )}
-            </select>
-          </label>
-          <button className="btn" onClick={() => setRefresh((n) => n + 1)}>
-            刷新
-          </button>
-        </div>
-        <div className="top-right">
-          <button
-            className="btn"
-            disabled={!runId}
-            onClick={() => {
-              setInfoOpen(false);
-              setDetail(false);
-              setLogOpen(true);
-            }}
-          >
-            研究日志
-          </button>
-          <div className="layout-switch" aria-label="工作台视图">
-            <button
-              aria-pressed={layout === "canvas"}
-              onClick={() => chooseLayout("canvas")}
-            >
-              画布
-            </button>
-            <button
-              aria-pressed={layout === "list"}
-              onClick={() => chooseLayout("list")}
-            >
-              工作列表
-            </button>
-          </div>
-          {o?.project.source_mode === "demo" && (
-            <span className="mode">演示数据 · 只读</span>
-          )}
-          <button
-            className="icon-button"
-            aria-label={theme === "light" ? "切换深色主题" : "切换浅色主题"}
-            onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-          >
-            {theme === "light" ? "◐" : "◑"}
-          </button>
-        </div>
-      </header>
-      <div className={`workspace${navExpanded ? " nav-expanded" : ""}`}>
-        <nav className="navrail" aria-label="工作台导航">
-          <button
-            className="icon-button"
-            aria-label={navExpanded ? "收起导航" : "展开导航"}
-            aria-expanded={navExpanded}
-            onClick={() => setNavExpanded(!navExpanded)}
-          >
-            ☰<span className="nav-label">收起导航</span>
-          </button>
-          <button
-            className="icon-button current"
-            aria-label="工作现场"
-            onClick={closeDetail}
-          >
-            ≡<span className="nav-label">工作现场</span>
-          </button>
-        </nav>
-        <main className="main">
-          <div
-            className="follow-bar"
-            hidden={
-              layout === "canvas" &&
-              activeRuns.length <= 1 &&
-              (!followTarget || following || followTarget.id === runId)
-            }
-          >
-            <label>
-              <input
-                type="checkbox"
-                checked={following}
-                onChange={(e) =>
-                  change({ follow: e.target.checked ? "1" : null })
-                }
-              />{" "}
-              跟随此任务的当前运行
-            </label>
-            {activeRuns.length > 1 && <span>有多个当前运行，请明确选择</span>}
-            {!following && followTarget && followTarget.id !== runId && (
-              <button
-                className="link-button"
-                onClick={() =>
-                  change({ run: followTarget.id, attempt: null, call: null })
-                }
-              >
-                有当前运行 · 前往查看
-              </button>
-            )}
-          </div>
-          <div className="runbar">
-            <div className="run-status" role="status">
-              <span className={`status-dot ${scene?.execution ?? ""}`} />
-              <strong>
-                {scene
-                  ? scene.kind === "preparation"
-                    ? preparationLabel(scene.execution)
-                    : label(scene.execution)
-                  : runId
-                    ? "读取运行中"
-                    : "未选择运行"}
-              </strong>
-              <span className="run-message">
-                {control.sending
-                  ? control.action === "resume"
-                    ? "正在提交继续请求"
-                    : control.action === "stop"
-                      ? "正在提交停止请求"
-                      : "正在提交暂停请求"
-                  : (control.record?.reason ??
-                    scene?.control[controlAction].reason ??
-                    "选择已有运行查看工作现场")}
-              </span>
-            </div>
-            <div className="run-actions">
-              <button
-                className="btn primary"
-                disabled={
-                  stopping ||
-                  !scene?.control[controlAction].enabled ||
-                  (control.busy && !resuming)
-                }
-                onClick={() => void control.submit(controlAction)}
-              >
-                {stopping
-                  ? controlAction === "resume"
-                    ? "继续"
-                    : "暂停"
-                  : control.sending
-                    ? "提交中"
-                    : resuming
-                      ? "暂停"
-                      : control.busy
-                        ? "等待暂停"
-                        : controlAction === "resume"
-                          ? "继续"
-                          : "暂停"}
-              </button>
-              <button
-                className="btn"
-                ref={stopButton}
-                disabled={!scene?.control.stop.enabled || stopping}
-                onClick={() => setStopRun(runId)}
-              >
-                {stopping ? "等待停止" : "停止"}
-              </button>
-            </div>
-          </div>
-          <Alert error={control.error} />
-          {control.record?.run.execution_unknown && (
-            <div className="notice" role="status">
-              仍有执行结果待确认，未将其视为已结束。
-            </div>
-          )}
-          <Alert error={overview.error} stale={!!o} />
-          <Alert error={task.error} stale={!!t} />
-          <Alert error={workbench.error} stale={!!scene} />
-          <Alert error={work.error} stale={!!work.items.length} />
-          {layout !== "canvas" && infoPanel}
-          {layout === "canvas" ? (
-            <ResearchCanvas
-              key={runId}
-              scope={runId || taskId}
-              infoPanel={infoPanel}
-              infoOpen={infoOpen && !detail}
-              scene={scene}
-              task={t}
-              hidden={!!material}
-              selectedNo={selectedNo}
-              selectedCall={selectedCall}
-              onInspect={() => {
-                if (following) change({ follow: null });
-              }}
-              onFollow={() => change({ follow: "1" })}
-              onWork={(attempt, opener) => {
-                origin.current = opener;
-                change({ attempt: String(attempt), call: null });
-                setDetail(false);
-                setInfoTab("worker");
-                setInfoOpen(true);
-              }}
-              onFactOpen={() => {
-                setDetail(false);
-                setInfoOpen(false);
-              }}
-              onWorker={chooseWorker}
-              onOpen={(item, opener) => {
-                materialPositions.current = [
-                  ...document.querySelectorAll(
-                    ".main,.inspector-content,.work-scroll,.worker-scroll",
-                  ),
-                ].map((element) => ({
-                  element,
-                  top: element.scrollTop,
-                  left: element.scrollLeft,
-                }));
-                materialOpener.current = opener;
-                setMaterial(item);
-              }}
-            />
-          ) : (
-            <ResearchDesk
-              key={runId}
-              scene={scene}
-              hidden={!!material}
-              onOpen={(item, opener) => {
-                materialPositions.current = [
-                  ...document.querySelectorAll(
-                    ".main,.inspector-content,.work-scroll,.worker-scroll",
-                  ),
-                ].map((element) => ({
-                  element,
-                  top: element.scrollTop,
-                  left: element.scrollLeft,
-                }));
-                materialOpener.current = opener;
-                setMaterial(item);
-              }}
-              onChoose={(attempt) => {
-                change({ attempt: String(attempt), call: null });
-                setDetail(true);
-              }}
-            />
-          )}
-          <div className="content" hidden={!!material || layout === "canvas"}>
-            <section className="work-pane" aria-label="工作进展">
-              <div className="panel-heading">
-                <h2>
-                  工作进展 <span className="count">{work.total}</span>
-                </h2>
-                <div className="segmented" aria-label="工作筛选">
-                  <button
-                    aria-pressed={scope === "all"}
-                    onClick={() => change({ filter: null })}
-                  >
-                    全部
-                  </button>
-                  <button
-                    aria-pressed={scope === "attention"}
-                    onClick={() => change({ filter: "attention" })}
-                  >
-                    需关注
-                  </button>
-                </div>
-              </div>
-              <div className="work-scroll" tabIndex={0} aria-label="工作时间线">
-                {work.items.map((item, i) => (
-                  <div className="work-row" key={item.id}>
-                    <button
-                      className="work-button t-resize"
-                      aria-pressed={selectedNo === item.attempt_no}
-                      data-attempt={item.attempt_no}
-                      onClick={(e) => chooseWork(item, e.currentTarget)}
-                    >
-                      <span className={`step-icon ${item.stage}`}>
-                        {item.stage === "completed"
-                          ? "✓"
-                          : item.needs_attention
-                            ? "!"
-                            : String(i + 1).padStart(2, "0")}
-                      </span>
-                      <span className="work-copy">
-                        <span className="work-title-line">
-                          <strong className="work-title">{item.title}</strong>
-                          <Badge value={item.stage} />
-                        </span>
-                        <span className="work-description">
-                          {item.goal ?? "目标内容未记录"}
-                        </span>
-                        <span className="work-meta">
-                          {item.reason ?? item.summary ?? "查看工作与调用"}
-                          {item.calls.length > 0 &&
-                            ` · ${item.calls.length} 次调用`}
-                        </span>
-                      </span>
-                    </button>
-                    {item.dependencies.length > 0 && (
-                      <div className="dependencies">
-                        前序工作：
-                        {item.dependencies.map((d, index) => (
-                          <button
-                            key={index}
-                            className="link-button"
-                            disabled={!d.attempt_no}
-                            onClick={(e) => {
-                              origin.current = e.currentTarget;
-                              change({
-                                attempt: d.attempt_no
-                                  ? String(d.attempt_no)
-                                  : null,
-                                filter: null,
-                                call: null,
-                              });
-                              setDetail(true);
-                            }}
-                          >
-                            {d.title ?? "工作记录不可用"}
-                            {item.blocked_by.some(
-                              (b) =>
-                                b === d.work_id ||
-                                b.startsWith(d.work_id + ":"),
-                            )
-                              ? " · 等待"
-                              : ""}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-                {work.more && (
-                  <button className="btn" onClick={work.loadMore}>
-                    加载更多工作
-                  </button>
-                )}
-                {!work.items.length && (
-                  <div className="empty">
-                    <h3>
-                      {runId
-                        ? scope === "attention"
-                          ? "暂无需要关注的工作"
-                          : "暂无工作记录"
-                        : "选择一个运行"}
-                    </h3>
-                    <p>
-                      {runId
-                        ? "已有内容将随实际记录更新。"
-                        : "运行选择不会启动或修改任务。"}
-                    </p>
-                  </div>
-                )}
-              </div>
+              {detail.error && <p role="alert">{detail.error}</p>}
             </section>
-            <section className="workers-pane" aria-label="Worker 活动">
-              <div className="panel-heading">
-                <h2>
-                  Worker 活动{" "}
-                  <span className="count">{scene?.workers.length ?? 0}</span>
-                </h2>
-              </div>
-              <div
-                className="worker-scroll"
-                tabIndex={0}
-                aria-label="Worker 列表"
-              >
-                {scene?.workers
-                  .slice()
-                  .sort(
-                    (a, b) =>
-                      Number(b.state === "pending") -
-                      Number(a.state === "pending"),
-                  )
-                  .map((w, index) => (
-                    <button
-                      className={`worker${w.id === selectedCall || (w.attempt_no === selectedNo && selectedNo !== null) ? " selected" : ""}`}
-                      key={w.id}
-                      data-call={w.id}
-                      onClick={(e) => chooseWorker(w, e.currentTarget)}
-                    >
-                      <span className="worker-top">
-                        <span className="avatar">
-                          {w.role[0]?.toUpperCase()}
-                        </span>
-                        <span>
-                          <strong className="worker-name">
-                            {label(w.role)}
-                          </strong>
-                          <span className="worker-purpose">
-                            调用 {index + 1}
-                          </span>
-                        </span>
-                        <Badge value={w.state} />
-                      </span>
-                      <span className="worker-task">
-                        {w.attempt_no === null
-                          ? "运行级协调"
-                          : `工作 ${w.attempt_no}`}
-                      </span>
-                      {w.error && (
-                        <span className="activity-line">{w.error}</span>
-                      )}
-                      <Activity worker={w} />
-                      <span className="activity-time">
-                        {time(w.ended_at ?? w.started_at)}
-                      </span>
+            {overview?.control && <Controls key={topic} detail={detail} />}
+            {detail.current_probe && (
+              <section aria-label="当前探针">
+                <h2>第 {detail.current_round} 轮 · 待执行探针</h2>
+                <Reader path={detail.current_probe.path} onOpen={open} live />
+              </section>
+            )}
+            <details>
+              <summary>输入与认知状态</summary>
+              <p className="muted">STATE.md 是当前认知，不是历史轮次快照。</p>
+              <div className="material-buttons">
+                {detail.materials
+                  .filter((item) => item.name !== "STATE.md")
+                  .map((item) => (
+                    <button key={item.path} onClick={() => open(item.path)}>
+                      {item.name}
                     </button>
                   ))}
-                {!scene?.workers.length && (
-                  <p className="empty">暂无调用记录</p>
-                )}
-                {scene?.workers_truncated && (
-                  <p className="muted">仅展示最近 200 次调用。</p>
-                )}
               </div>
-              <p className="worker-note">
-                {scene?.observation_note ?? "选择 Worker 查看相关工作。"}
-              </p>
-            </section>
-          </div>
-          {material && (
-            <MaterialReader
-              key={material.id}
-              material={material}
-              onClose={closeMaterial}
-            />
-          )}
-          {detail && (
-            <aside
-              className="inspector t-panel-reveal"
-              hidden={!!material}
-              aria-label="工作详情"
-              tabIndex={-1}
-              ref={detailRef}
-            >
-              <div className="inspector-header">
-                <div className="inspector-top">
-                  <span className="eyebrow">工作详情</span>
+              {currentState && (
+                <Reader path={currentState.path} onOpen={open} live />
+              )}
+            </details>
+            <details>
+              <summary>轮次历史与日志</summary>
+              <nav aria-label="轮次">
+                {detail.rounds.map((item) => (
                   <button
-                    className="icon-button"
-                    aria-label="关闭详情"
-                    onClick={closeDetail}
+                    key={item.number}
+                    aria-pressed={selected?.number === item.number}
+                    onClick={() => setRound(item.number)}
                   >
-                    ×
+                    第 {item.number} 轮{item.completed ? " · 已完成" : ""}
                   </button>
-                </div>
-                <h2>
-                  {selected?.title ??
-                    (worker?.attempt_no === null ? "协调当前工作" : "所选工作")}
-                </h2>
-                {selected && <Badge value={selected.stage} />}
-              </div>
-              <div className="inspector-content" tabIndex={0}>
-                {worker && <Badge value={worker.state} />}
-                <section className="detail-section">
-                  <h3>详情</h3>
-                  <p>{worker?.task_summary ?? selected?.goal ?? ""}</p>
-                </section>
-                <section className="detail-section">
-                  <h3>返回结果</h3>
-                  <p>{worker?.result_summary ?? ""}</p>
-                </section>
-              </div>
-            </aside>
-          )}
-          <footer>
-            {scene
-              ? `最后观察 ${time(workbench.value?.source_observed_at)} · 仅读取已有内容`
-              : "未选择准备或运行"}
-          </footer>
-        </main>
-      </div>
-    </div>
+                ))}
+              </nav>
+              {selected ? (
+                <>
+                  <h3>第 {selected.number} 轮</h3>
+                  <div className="material-buttons">
+                    {selected.materials
+                      .filter(
+                        (item) => item.path !== detail.current_probe?.path,
+                      )
+                      .map((item) => (
+                        <button key={item.path} onClick={() => open(item.path)}>
+                          {item.name}
+                        </button>
+                      ))}
+                  </div>
+                  {selected.logs.map((log) => (
+                    <details key={log.path}>
+                      <summary>{roles[log.role]} · stdout / stderr</summary>
+                      <Reader
+                        key={execution?.id || "idle"}
+                        path={log.path}
+                        onOpen={open}
+                        live
+                      />
+                    </details>
+                  ))}
+                </>
+              ) : (
+                <p>尚无轮次材料</p>
+              )}
+            </details>
+            <section id="material-reader" tabIndex={-1} aria-label="材料阅读">
+              <h2>材料阅读</h2>
+              {material ? (
+                <>
+                  <p className="material-path">{material}</p>
+                  <Reader key={material} path={material} onOpen={open} />
+                </>
+              ) : (
+                <p>选择轮次材料或专题材料查看原件。</p>
+              )}
+            </section>
+          </>
+        )}
+      </main>
+    </>
   );
 }

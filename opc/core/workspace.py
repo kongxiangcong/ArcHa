@@ -1,194 +1,208 @@
-"""Git operations: isolated trees, the sandbox, candidate patches and the champion ref.
-
-The evaluated object is a patch restricted to editable paths, applied to a fresh
-tree cut from the champion *commit*. Consequences, each learned on openTPU:
-
-  * a candidate cannot influence evaluation through ignored caches, symlinked
-    build dirs or leftover files, because none of them survive into the clean tree;
-  * a slot is cut from a commit, never a branch (a branch moved mid-round and
-    the next patch no longer applied);
-  * the evaluator in the clean tree is the champion's, which equals the frozen
-    baseline's because no accepted patch may touch evaluator files.
-"""
-from __future__ import annotations
-
-import hashlib
-import shutil
-import subprocess
-from dataclasses import dataclass, field
+"""Topic authoritative documents and prepared-output publication."""
+from contextlib import contextmanager
+import json
+import os
 from pathlib import Path
+import re
+import shutil
 
-from .config import ComponentConfig, matches, denied
-from .model import OPCError
-from .platform import is_link
+from .platform import lock_writer, unlock_writer
+from ..scaffold.templates import STATE, goal_template
 
-ZERO = "0" * 40
-GIT_ID = ["-c", "user.name=opc", "-c", "user.email=opc@localhost", "-c", "commit.gpgsign=false"]
-
-
-def git(*args: str, cwd: Path, check: bool = True, input: str | bytes | None = None,
-        binary: bool = False) -> str | bytes:
-    """Raw stdout. Never strip it: porcelain lines start with a status column and
-    stripping the first line shifted every path by one character on openTPU."""
-    # Text-mode pipes rewrite LF/CRLF on Windows and corrupt patches (including
-    # no-final-newline files). Git's patch protocol must remain byte-exact.
-    payload = input.encode("utf-8") if isinstance(input, str) else input
-    r = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, input=payload)
-    if check and r.returncode != 0:
-        err = r.stderr if isinstance(r.stderr, str) else r.stderr.decode(errors="replace")
-        raise OPCError("git %s failed in %s: %s" % (" ".join(args[:3]), cwd, err.strip()[-500:]))
-    return r.stdout if binary else r.stdout.decode("utf-8")
+STATUSES = {'IN_PROGRESS', 'COMPLETED', 'BLOCKED', 'BUDGET_EXHAUSTED'}
 
 
-def rev_parse(repo: Path, ref: str) -> str:
-    return str(git("rev-parse", "--verify", ref + "^{commit}", cwd=repo)).strip()
+def parse_state(text):
+    lines = text.splitlines()
+    if not lines or lines[0] != '# Exploration State':
+        raise ValueError('STATE.md: missing # Exploration State header')
+    header = []
+    for line in lines[1:]:
+        if not line.strip():
+            break
+        header.append(line)
+    values = {}
+    for line in header:
+        key, separator, value = line.partition(':')
+        if not separator or key not in {'STATUS', 'MAX_ROUNDS'}:
+            raise ValueError('STATE.md: invalid metadata: ' + line)
+        if key in values:
+            raise ValueError('STATE.md: duplicate ' + key)
+        values[key] = value.strip()
+    for key in ('STATUS', 'MAX_ROUNDS'):
+        if key not in values:
+            raise ValueError('STATE.md: missing ' + key)
+    if values['STATUS'] not in STATUSES:
+        raise ValueError('STATE.md: invalid STATUS')
+    if not re.fullmatch('[1-9][0-9]*', values['MAX_ROUNDS']):
+        raise ValueError('STATE.md: MAX_ROUNDS must be a positive integer')
+    return values['STATUS'], int(values['MAX_ROUNDS'])
 
 
-def read_ref(repo: Path, ref: str) -> str | None:
-    r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", ref], cwd=str(repo),
-                       capture_output=True, text=True)
-    return r.stdout.strip() or None
+def replace_state_header(text, state, budget):
+    """Replace validated metadata while retaining the cognitive body verbatim."""
+    lines = text.splitlines(keepends=True)
+    end = next((i for i, line in enumerate(lines[1:], 1) if not line.strip()), len(lines))
+    return f'# Exploration State\nSTATUS: {state}\nMAX_ROUNDS: {budget}\n' + ''.join(lines[end:])
 
 
-def cas_update_ref(repo: Path, ref: str, new: str, old: str | None) -> None:
-    """Compare-and-swap: fails if someone else moved the ref since we read it."""
-    git("update-ref", "-m", "opc champion", ref, new, old or ZERO, cwd=repo)
+class TopicWorkspace:
+    def __init__(self, project, topic):
+        self.project = Path(project).resolve()
+        if not self.project.is_dir():
+            raise ValueError('project must be an existing directory')
+        if not re.fullmatch('[a-z0-9][a-z0-9-]{0,63}', topic):
+            raise ValueError('topic must be a lowercase portable slug')
+        self.topic = topic
+        self.control = self.project / '.archa'
+        self.path = self.control / 'topics' / topic
+        if self.path.resolve() != self.path:
+            raise ValueError('topic path must not be redirected')
 
+    @contextmanager
+    def writer(self):
+        self.control.mkdir(exist_ok=True)
+        fd = os.open(self.control / '.run.lock', os.O_CREAT | os.O_RDWR, 0o644)
+        locked = False
+        try:
+            try:
+                lock_writer(fd)
+                locked = True
+            except BlockingIOError:
+                raise ValueError('project execution lock is held') from None
+            yield
+        finally:
+            if locked:
+                unlock_writer(fd)
+            os.close(fd)
 
-def tracked_digest(repo: Path, commit: str, patterns: list[str],
-                   exclude: list[str] | None = None) -> tuple[str, list[str]]:
-    """Digest of the tracked files matching `patterns` at `commit` (path + blob id).
-    `exclude` drops scratch files (caches someone committed) from the evaluator."""
-    out = str(git("ls-tree", "-r", "-z", "--full-tree", commit, cwd=repo))
-    entries = []
-    for item in out.split("\0"):
-        if not item:
-            continue
-        meta, path = item.split("\t", 1)
-        if denied(path, patterns) and not (exclude and matches(path, exclude)):
-            entries.append((path, meta.split()[2]))
-    entries.sort()
-    h = hashlib.sha256()
-    for path, blob in entries:
-        h.update(("%s\0%s\n" % (path, blob)).encode())
-    return h.hexdigest(), [p for p, _ in entries]
+    def initialize(self, goal='', max_rounds=10, template='default'):
+        if max_rounds <= 0:
+            raise ValueError('MAX_ROUNDS must be a positive integer')
+        goal_text = goal_template(template).format(goal=goal)
+        with self.writer():
+            self.path.mkdir(parents=True, exist_ok=True)
+            (self.path / 'steps').mkdir(exist_ok=True)
+            defaults = json.loads((Path(__file__).parents[1] / 'scaffold/workers.json').read_text())
+            files = {self.path / 'GOAL.md': goal_text,
+                     self.path / 'STATE.md': STATE.format(max_rounds=max_rounds),
+                     self.control / 'workers.json': json.dumps(defaults, indent=2) + '\n'}
+            for path, text in files.items():
+                if not path.exists():
+                    path.write_text(text, encoding='utf-8')
+        return self.status()
 
+    def state(self):
+        return parse_state((self.path / 'STATE.md').read_text(encoding='utf-8'))
 
-def dirty_paths(repo: Path) -> list[str]:
-    out = str(git("status", "--porcelain=v1", "-z", "--untracked-files=all", cwd=repo))
-    paths, items, i = [], out.split("\0"), 0
-    while i < len(items):
-        item = items[i]
-        if not item:
-            i += 1
-            continue
-        status, path = item[:2], item[3:]
-        paths.append(path)
-        if status[0] in "RC":
-            i += 1            # -z puts the rename source in the next field
-        i += 1
-    return paths
+    def rounds(self):
+        committed = []
+        for directory in sorted((self.path / 'steps').iterdir()):
+            if not directory.is_dir() or not directory.name.startswith('step-'):
+                raise ValueError('invalid round directory: ' + directory.name)
+            suffix = directory.name[5:]
+            if not suffix.isdigit() or int(suffix) <= 0 or suffix != f'{int(suffix):02d}':
+                raise ValueError('noncanonical round: ' + directory.name)
+            probe, result = directory / 'probe.md', directory / 'result.md'
+            if result.exists() and not probe.exists():
+                raise ValueError('result without probe: ' + directory.name)
+            if probe.exists():
+                for file in (probe, result):
+                    if file.exists() and not file.read_text(encoding='utf-8').strip():
+                        raise ValueError('empty committed document: ' + str(file))
+                committed.append((int(suffix), result.exists()))
+        committed.sort()
+        for index, (number, complete) in enumerate(committed, 1):
+            if number != index or (index < len(committed) and not complete):
+                raise ValueError('rounds must be contiguous with at most one pending probe')
+        return committed
 
+    def status(self):
+        state, budget = self.state()
+        rounds = self.rounds()
+        completed = sum(complete for _, complete in rounds)
+        if completed > budget or (rounds and not rounds[-1][1] and len(rounds) > budget):
+            raise ValueError('MAX_ROUNDS does not cover committed rounds and pending probe')
+        action = state.lower() if state != 'IN_PROGRESS' else (
+            'executor' if rounds and not rounds[-1][1] else
+            'expert_finalize' if completed == budget else 'expert')
+        from .topic_control import activity
+        error_path = self.path / '.last-error'
+        try:
+            error = error_path.read_text(encoding='utf-8')
+        except FileNotFoundError:
+            error = None
+        runtime = activity(self)
+        debug = (self.path / '.debug-probes').exists()
+        return dict(**runtime, debug_probes=debug,
+                    probe_breakpoint=debug and action == 'executor' and runtime['activity'] == 'idle' and not error,
+                    topic=self.topic, status=state, max_rounds=budget, error=error,
+                    completed_rounds=completed, next_action=action,
+                    current_round=(len(rounds) if action in {'executor', 'expert_finalize'} or state != 'IN_PROGRESS'
+                                   else completed + 1),
+                    publishing=any((self.path / 'steps').glob('step-*/.staging.commit')))
 
-@dataclass
-class SandboxReport:
-    editable: list[str] = field(default_factory=list)
-    violations: list[str] = field(default_factory=list)
-    scratch: list[str] = field(default_factory=list)
-    ignored: list[str] = field(default_factory=list)
+    def resume(self, add_rounds=None):
+        """Update user authorization under the caller's execution lifecycle lock."""
+        if add_rounds is not None and (type(add_rounds) is not int or add_rounds <= 0):
+            raise ValueError('add-rounds must be a positive integer')
+        status = self.status()
+        if status['status'] == 'COMPLETED':
+            if add_rounds is not None:
+                raise ValueError('COMPLETED topic cannot accept additional rounds')
+            return
+        state = status['status']
+        if state == 'BLOCKED' or (state == 'BUDGET_EXHAUSTED' and add_rounds is not None):
+            state = 'IN_PROGRESS'
+        budget = status['max_rounds'] + (add_rounds or 0)
+        if state == status['status'] and budget == status['max_rounds']:
+            return
+        path = self.path / 'STATE.md'
+        temporary = self.path / '.STATE.resume.md'
+        temporary.write_text(replace_state_header(path.read_text(encoding='utf-8'), state, budget),
+                             encoding='utf-8')
+        os.replace(temporary, path)
 
-    @property
-    def ok(self) -> bool:
-        return not self.violations
-
-    def as_dict(self) -> dict:
-        return {"editable": self.editable, "violations": self.violations,
-                "scratch": self.scratch[:50], "ignored": self.ignored[:50]}
-
-
-class Workspaces:
-    """Trees for one run under `<workspace_root>/<project>/<task>/<run>/`."""
-
-    def __init__(self, repo: Path, root: Path):
-        self.repo = repo
-        self.root = root
-
-    def checkout(self, name: str, commit: str) -> Path:
-        wt = self.root / name
-        if wt.exists():
-            self.drop(wt)
-        wt.parent.mkdir(parents=True, exist_ok=True)
-        git("worktree", "add", "--detach", "--force", str(wt), commit, cwd=self.repo)
-        return wt
-
-    def drop(self, wt: Path) -> None:
-        git("worktree", "remove", "--force", str(wt), cwd=self.repo, check=False)
-        if wt.exists():
-            shutil.rmtree(wt, ignore_errors=True)
-        git("worktree", "prune", cwd=self.repo, check=False)
-
-    def drop_all(self) -> None:
-        if self.root.exists():
-            for p in sorted(self.root.rglob(".git"), reverse=True):
-                self.drop(p.parent)
-            shutil.rmtree(self.root, ignore_errors=True)
-
-
-def stage_all(wt: Path) -> None:
-    git("add", "-A", cwd=wt)
-
-
-def sandbox(comp: ComponentConfig, wt: Path, base: str) -> SandboxReport:
-    """Classify every change the worker left relative to `base`.
-
-    Committed, staged, modified and untracked changes all count (a worker that
-    runs `git commit` cannot hide its edits). Ignored files are reported but
-    cannot reach evaluation, which runs on a clean tree.
-    """
-    stage_all(wt)
-    # The contract, rather than a broad generated-output ignore rule, identifies
-    # durable candidate files. Never force-stage scratch or frozen paths.
-    ignored = str(git('ls-files', '--others', '--ignored', '--exclude-standard', '-z',
-                      '--', *comp.editable, cwd=wt))
-    deliverables = [path for path in ignored.split('\0') if path and comp.is_editable(path) and not comp.is_scratch(path)]
-    if deliverables:
-        git('add', '-f', '--', *deliverables, cwd=wt)
-    names = str(git("diff", "--cached", "--name-only", "-z", "--no-renames", base, cwd=wt))
-    rep = SandboxReport()
-    for path in sorted(p for p in names.split("\0") if p):
-        target = wt / path
-        redirected = any(is_link(p) for p in (target, *target.parents) if p != wt and wt in p.parents)
-        if redirected:
-            rep.violations.append(path)
-        elif comp.is_editable(path):
-            rep.editable.append(path)
-        elif comp.is_scratch(path):
-            rep.scratch.append(path)
+    def commit_expert(self, directory, max_rounds, *, finalize=False, revise=False):
+        """Validate the complete draft before entering recoverable publication."""
+        stage = directory / '.staging.expert'
+        text = (stage / 'STATE.md').read_text(encoding='utf-8')
+        state, budget = parse_state(text)
+        if revise and state != 'IN_PROGRESS':
+            raise ValueError('Revised probe must retain IN_PROGRESS status')
+        if not finalize and state not in {'IN_PROGRESS', 'COMPLETED', 'BLOCKED'}:
+            raise ValueError('Expert returned invalid normal-turn STATUS')
+        if budget != max_rounds:
+            raise ValueError('Expert cannot change MAX_ROUNDS')
+        probe = stage / 'probe.md'
+        if finalize:
+            state = 'COMPLETED' if state == 'COMPLETED' else 'BUDGET_EXHAUSTED'
+        if state == 'IN_PROGRESS':
+            if not probe.is_file() or not probe.read_text(encoding='utf-8').strip():
+                raise ValueError('Expert probe is missing or empty')
         else:
-            rep.violations.append(path)
-    ignored = str(git("status", "--porcelain=v1", "-z", "--ignored=matching",
-                      "--untracked-files=all", cwd=wt))
-    for item in ignored.split("\0"):
-        if item.startswith("!! "):
-            rep.ignored.append(item[3:])
-    return rep
+            probe.unlink(missing_ok=True)
+        (stage / 'STATE.md').write_text(replace_state_header(text, state, max_rounds),
+                                       encoding='utf-8')
+        stage.rename(directory / '.staging.commit')
+        self.publish_expert(directory)
 
+    def recover(self):
+        """Under the writer lock, after owned processes have ended, finish publication."""
+        for directory in sorted((self.path / "steps").glob("step-*")):
+            if (directory / ".staging.commit").exists():
+                self.publish_expert(directory)
+            stage = directory / ".staging.expert"
+            if stage.exists():
+                shutil.rmtree(stage)
+            for name in (".staging.result.md", ".expert.prompt.md",
+                         ".executor.prompt.md", ".expert_finalize.prompt.md", ".expert_revise.prompt.md"):
+                (directory / name).unlink(missing_ok=True)
 
-def extract_patch(wt: Path, base: str, paths: list[str]) -> str:
-    if not paths:
-        return ""
-    return str(git("diff", "--cached", "--binary", "--no-renames", base, "--", *paths, cwd=wt))
-
-
-def apply_patch(wt: Path, patch: str) -> None:
-    if patch.strip():
-        git("apply", "--index", "--binary", "--whitespace=nowarn", "-", cwd=wt, input=patch)
-
-
-def commit_tree(wt: Path, message: str) -> str:
-    git(*GIT_ID, "commit", "-q", "--no-verify", "-m", message, cwd=wt)
-    return str(git("rev-parse", "HEAD", cwd=wt)).strip()
-
-
-def patch_digest(patch: str) -> str:
-    return hashlib.sha256(patch.encode()).hexdigest()
+    def publish_expert(self, directory):
+        commit = directory / '.staging.commit'
+        for name, target in [('STATE.md', self.path / 'STATE.md'), ('probe.md', directory / 'probe.md')]:
+            source = commit / name
+            if source.exists():
+                os.replace(source, target)
+        commit.rmdir()

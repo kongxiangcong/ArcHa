@@ -1,228 +1,146 @@
-"""The worker seam. Roles belong to OPC; a worker is only how a role gets executed.
-
-An expert reads research material and results and returns a plan or stops exploration;
-a designer locates and edits code. Acceptance and resource limits belong to the core.
-"""
-from __future__ import annotations
-
-from dataclasses import dataclass, field
+"""Stateless argv Workers with streamed diagnostics and owned process lifetimes."""
 import json
+import math
+import os
 from pathlib import Path
-from typing import Any, Protocol
+import string
+import subprocess
+import threading
 
-from ..core.config import WorkerSpec
-from ..core.model import Cost, OPCError
+from ..core.platform import Process
 
-PLAN_FIELDS = ("title", "changes")
-
-#: The one reply every model worker may give instead of a plan, meaning "no further
-#: experiment is worth its budget". Shared so neither worker's termination depends
-#: on the other's module staying present.
-EXHAUSTED_SENTINEL = "NO_EXPERIMENT"
-
-PROGRESS_RULE = """Return progress_summary: at most 200 Chinese characters, in 2–3 short paragraphs separated by blank lines,
-describing actual progress/results/problems in plain language and one explicit 下一步.
-No paths, file lists, hashes, internal IDs, JSON field names, audit details or private
-reasoning. A plan is not execution; worker success is not experiment or task success.
-If undecided, next step is 由研究协调分析结果并确定方案. If blocked, explain the prerequisite;
-if paused wait for user resume; if budget exhausted stop pending new authorization.
-At incomplete closeout name gaps and grounded reopening conditions, never promise restart.
-Role focus: Expert explains the hypothesis, requirements or interpretation proposed and what
-remains unverified; Designer explains what experiment or implementation actually ran, observed
-results and limitations of the interpretation; reviewer states the verdict and concrete gaps;
-onboard states readiness achieved and missing prerequisites. Never invent missing results.
-Only confirmed final delivery may say 本任务已完成，暂无后续执行安排. This text is display only."""
-PROGRESS_SCHEMA = {"type": "string", "description": PROGRESS_RULE}
-
-PLAN_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": [*PLAN_FIELDS, "hypothesis", "expected", "falsifier", "evaluate",
-                 "exhausted", "base_attempt", "conclusions", "stop_reason", "experiment_id", "designer", "select_work"],
-    "properties": {
-        "designer": {"type": ["boolean", "null"], "description": "false skips implementation for a pure measurement; null uses a designer"},
-        "select_work": {"type": ["boolean", "null"], "description": "false records only interpretation/planning, without creating work; null selects the plan"},
-        "title": {"type": "string", "description": "short name of the experiment"},
-        "hypothesis": {"type": "string", "description": "research question and competing explanations, or engineering rationale"},
-        "experiment_id": {"type": ["string", "null"], "description": "stable question ID within this task, reused across runs; null for ordinary engineering work"},
-        "changes": {"type": "string", "description": "method and experiment for the designer to implement"},
-        "evaluate": {"type": ["boolean", "null"], "description": "formal evaluation: null uses objective-dependent default"},
-        "base_attempt": {"type": ["integer", "null"],
-                         "description": "null: champion; 0: initial baseline; positive: saved candidate attempt"},
-        "conclusions": {"type": "array", "items": {
-            "type": "object", "additionalProperties": False,
-            "required": ["attempt", "conclusion", "run_id"], "properties": {
-                "run_id": {"type": ["string", "null"]},
-                "attempt": {"type": "integer"}, "conclusion": {"type": "string"}}}},
-        "stop_reason": {"type": "string", "description": "why exploration should end; empty while continuing"},
-        "expected": {"type": "string", "description": "distinguishing predictions under stated inputs and controls, not a mandatory result"},
-        "falsifier": {"type": "string", "description": "observation that would refute it"},
-        # codex's --output-schema admits only an object, so a worker with nothing
-        # left to try has no way to say so in text. Strict structured output
-        # requires every property: normal plans return false, exhausted ones true.
-        "exhausted": {"type": "boolean",
-                      "description": "true when no worthwhile work remains for the task within budget"},
-    },
+# Workers write protocol files themselves; Codex -o would overwrite them with its final chat message.
+PRESETS = {
+    'codex': {'command': ['codex', 'exec', '--ephemeral', '--skip-git-repo-check', '-C', '{workdir}',
+                          '-s', 'workspace-write', '-'],
+              'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 1800},
+    'scripted': {},
 }
-
-# A decision selects one plan or a list of ordinary Attempt plans, never an
-# executable subgraph inside an Attempt.
-PLAN_SCHEMA["properties"].update({
-    "work_id": {"type": ["string", "null"], "description": "stable node identity independent of title; null lets Engine allocate it"},
-    "directions": {"type": "array", "items": {"type": "string"}},
-    "deliverables": {"type": "array", "items": {"type": "string"}, "description": "concrete relative editable/scratch file paths to preserve under Attempt outputs/; no directories or globs; name planned new files explicitly (e.g. tools/check.py, manifests/run.json)"},
-    "base_work_id": {"type": ["string", "null"], "description": "use this dependency's saved candidate as the code parent; null uses base_attempt"},
-    "dependencies": {"type": "array", "items": {
-        "type": "object", "additionalProperties": False, "required": ["work_id", "artifact"],
-        "properties": {"work_id": {"type": "string"}, "artifact": {"type": "string", "description": "candidate, result, or path relative to that Attempt's artifacts"}}}},
-})
-PLAN_SCHEMA["required"] += ["work_id", "directions", "dependencies", "base_work_id", "deliverables"]
-_ADOPTION_SCHEMA = {"type": "array", "items": {
-    "type": "object", "additionalProperties": False,
-    "required": ["task_id", "claim_id", "version"], "properties": {
-        "task_id": {"type": "string"}, "claim_id": {"type": "string"}, "version": {"type": "integer"}}}}
-PLAN_SCHEMA["properties"]["adopted_claims"] = _ADOPTION_SCHEMA
-PLAN_SCHEMA["required"].append("adopted_claims")
-_work_fields = {k: v for k, v in PLAN_SCHEMA["properties"].items()
-                if k not in {"select_work", "exhausted", "stop_reason", "conclusions"}}
-PLAN_SCHEMA["properties"]["works"] = {"type": ["array", "null"], "items": {
-    "type": "object", "additionalProperties": False, "required": list(_work_fields), "properties": _work_fields}}
-PLAN_SCHEMA["required"].append("works")
+FIELDS = {'command', 'preset', 'input_mode', 'output_mode', 'timeout_seconds',
+          'env', 'model', 'reasoning_effort'}
+VARIABLES = {'workdir', 'topic_dir', 'prompt_file', 'output_file', 'state_file',
+             'model', 'reasoning_effort'}
 
 
-PLAN_SCHEMA["properties"].update({
-    "finish": {"type": ["string", "null"], "enum": [None, "request_acceptance", "close_incomplete"],
-               "description": "null continues; request_acceptance selects a candidate for contract checks; close_incomplete stops without acceptance"},
-    "gaps": {"type": "array", "items": {"type": "string"}, "description": "remaining requirements or evidence gaps at incomplete closeout"},
-    "reopen_conditions": {"type": "array", "items": {"type": "string"}, "description": "grounded conditions for resuming; empty when none is known"},
-})
-PLAN_SCHEMA["required"] += ["finish", "gaps", "reopen_conditions"]
+def configuration(workspace):
+    path = workspace.control / 'workers.json'
+    if not path.exists():
+        path = Path(__file__).parents[1] / 'scaffold/workers.json'
+    config = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(config, dict) or set(config) != {'roles'}:
+        raise ValueError('workers.json must contain only roles')
+    roles = config['roles']
+    if not isinstance(roles, dict) or set(roles) != {'expert', 'executor'}:
+        raise ValueError('roles must contain expert and executor')
+    result = {}
+    for role, raw in roles.items():
+        if not isinstance(raw, dict) or set(raw) - FIELDS:
+            raise ValueError(role + ': unknown fields or invalid role object')
+        if ('preset' in raw) == ('command' in raw):
+            raise ValueError(role + ': supply exactly one command or preset')
+        preset = raw.get('preset')
+        if preset is not None and (not isinstance(preset, str) or preset not in PRESETS):
+            raise ValueError(role + ': unknown preset')
+        if preset == 'scripted':
+            if raw != {'preset': 'scripted'}:
+                raise ValueError(role + ': scripted preset takes no options')
+            result[role] = raw
+            continue
+        spec = {**PRESETS[preset], 'command': list(PRESETS[preset]['command'])} if preset else {}
+        spec.update(raw)
+        command = spec.get('command')
+        if not isinstance(command, list) or not command or not all(isinstance(x, str) and x.strip() for x in command):
+            raise ValueError(role + ': command must be a nonempty string argv array')
+        if spec.get('input_mode') not in ('stdin', 'file'):
+            raise ValueError(role + ': invalid input_mode')
+        if spec.get('output_mode') not in (('file',) if role == 'expert' else ('file', 'stdout')):
+            raise ValueError(role + ': invalid output_mode')
+        timeout = spec.get('timeout_seconds')
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError(role + ': timeout_seconds must be positive')
+        env = spec.get('env', {})
+        if not isinstance(env, dict) or not all(isinstance(k, str) and k and '=' not in k and '\0' not in k and isinstance(v, str) and '\0' not in v for k, v in env.items()):
+            raise ValueError(role + ': env must map strings to strings')
+        for name in ('model', 'reasoning_effort'):
+            if name in spec and (not isinstance(spec[name], str) or not spec[name].strip()):
+                raise ValueError(role + ': ' + name + ' must be a nonempty string')
+        if preset == 'codex':
+            if 'model' in spec:
+                command.extend(['--model', '{model}'])
+            if 'reasoning_effort' in spec:
+                command.extend(['-c', 'model_reasoning_effort=\"{reasoning_effort}\"'])
+        for argument in command:
+            for _, field, format_spec, conversion in string.Formatter().parse(argument):
+                if field is not None and (field not in VARIABLES or format_spec or conversion or (field in {'model', 'reasoning_effort'} and field not in spec)):
+                    raise ValueError(role + ': unavailable template variable: ' + field)
+        result[role] = spec
+    return result
 
 
-_SOURCE_SCHEMA = {"type": "object", "additionalProperties": False,
-                  "required": ["run_id", "attempt", "artifact"], "properties": {
-                      "run_id": {"type": "string"}, "attempt": {"type": "integer"},
-                      "artifact": {"type": "string"}}}
-PLAN_SCHEMA["properties"]["claims"] = {"type": "array", "items": {
-    "type": "object", "additionalProperties": False,
-    "required": ["claim_id", "statement", "scope", "status", "reason", "evidence",
-                 "counterevidence", "unresolved", "related_claims", "base_version"],
-    "properties": {
-        "claim_id": {"type": "string"}, "statement": {"type": "string"},
-        "base_version": {"type": ["integer", "null"]},
-        "scope": {"type": "string"}, "reason": {"type": "string"},
-        "status": {"type": "string", "enum": ["unresolved", "supported", "refuted"]},
-        "evidence": {"type": "array", "items": _SOURCE_SCHEMA},
-        "counterevidence": {"type": "array", "items": _SOURCE_SCHEMA},
-        "unresolved": {"type": "array", "items": {"type": "string"}},
-        "related_claims": {"type": "array", "items": {"type": "string"}},
-    }}}
-PLAN_SCHEMA["required"].append("claims")
-_BASIS_CHANGE_SCHEMA = {"type": "object", "additionalProperties": False,
-    "required": ["task_id", "claim_id", "version", "current_version", "current_status", "reason"],
-    "properties": {"task_id": {"type": "string"}, "claim_id": {"type": "string"},
-                   "version": {"type": "integer"}, "current_version": {"type": "integer"},
-                   "current_status": {"type": "string"}, "reason": {"type": "string"}}}
-PLAN_SCHEMA["properties"]["basis_review"] = {"type": ["object", "null"], "additionalProperties": False,
-    "required": ["attempt", "action", "scope", "reason", "changes"],
-    "properties": {"attempt": {"type": "integer"},
-                   "action": {"type": "string", "enum": ["continue", "adjust", "supplement"]},
-                   "scope": {"type": "string"}, "reason": {"type": "string"},
-                   "changes": {"type": "array", "items": _BASIS_CHANGE_SCHEMA}}}
-PLAN_SCHEMA["required"].append("basis_review")
-PLAN_SCHEMA["properties"]["delivery_claims"] = _ADOPTION_SCHEMA
-PLAN_SCHEMA["properties"]["delivery_artifacts"] = {"type": "array", "items": _SOURCE_SCHEMA}
-PLAN_SCHEMA["properties"]["delivery_basis_review"] = {"type": ["object", "null"], "additionalProperties": False,
-    "required": ["action", "scope", "reason", "changes"],
-    "properties": {"action": {"type": "string", "enum": ["continue", "adjust", "supplement"]},
-                   "scope": {"type": "string"}, "reason": {"type": "string"},
-                   "changes": {"type": "array", "items": _BASIS_CHANGE_SCHEMA}}}
-PLAN_SCHEMA["required"] += ["delivery_claims", "delivery_artifacts", "delivery_basis_review"]
-PLAN_SCHEMA["properties"]["progress_summary"] = PROGRESS_SCHEMA
-PLAN_SCHEMA["required"].append("progress_summary")
-
-
-
-
-def designer_output(text: str) -> dict:
-    """Preserve structured observations and optional explicit adoption declarations."""
-    body = text.strip()
-    if body.startswith("```"):
-        body = body.split("\n", 1)[-1].removesuffix("```").strip()
-    if not body.startswith("{"):
-        return {"summary": text[-2000:]}
+def invoke(workspace, role, prompt, state_file, output_file, log_file):
+    spec = configuration(workspace)['expert' if role.startswith('expert') else role]
+    if spec.get('preset') == 'scripted':
+        if role.startswith('expert'):
+            state_file.write_text((workspace.path / 'STATE.md').read_text() + '\nPrepared one focused evidence question.\n')
+            if role != 'expert_finalize':
+                output_file.write_text('# Probe\n\nCheck the supplied evidence for:\n' + (workspace.path / 'GOAL.md').read_text())
+        else:
+            output_file.write_text('# Result\n\nObserved the current probe:\n' + (output_file.parent / 'probe.md').read_text())
+        log_file.write_text('Deterministic ' + role + ' completed.\n')
+        return
+    if output_file != state_file:
+        output_file.unlink(missing_ok=True)
+    prompt_file = log_file.with_suffix('.prompt.md')
+    prompt_file.write_text(prompt, encoding='utf-8')
+    values = dict(workdir=str(workspace.project), topic_dir=str(workspace.path),
+                  prompt_file=str(prompt_file), state_file=str(state_file), output_file=str(output_file))
+    values.update({k: spec[k] for k in ('model', 'reasoning_effort') if k in spec})
+    argv = [arg.format_map(values) for arg in spec['command']]
+    captured = []
+    errors = []
+    lock = threading.Lock()
     try:
-        output = json.loads(body)
-    except ValueError as exc:
-        raise ValueError("designer reply is invalid JSON: " + str(exc)) from exc
-    if not isinstance(output.get("summary"), str):
-        raise ValueError("designer JSON reply requires a summary string")
-    return output
-
-
-def request_rejected(message: str, executed: bool) -> bool:
-    """Known provider request rejection, not a failure after useful execution."""
-    markers = ("context_length_exceeded", "context window", "input too long", "prompt is too long",
-               "maximum context length", "invalid_json_schema", "invalid schema for response_format",
-               "invalid_request_error", "invalid request schema", "context length exceeded")
-    return not executed and any(marker in message.lower() for marker in markers)
-
-
-@dataclass
-class WorkerCall:
-    role: str
-    ok: bool
-    cost: Cost
-    call_id: str = ""
-    output: dict[str, Any] | None = None
-    error: str = ""
-    exhausted: bool = False            # the worker has no further experiment to propose
-    log_dir: str = ""
-    extra: dict[str, Any] = field(default_factory=dict)
-
-
-class Worker(Protocol):
-    def propose(self, ctx: dict[str, Any], tree: Path, log_dir: Path) -> WorkerCall: ...
-
-    def implement(self, plan: dict[str, Any], ctx: dict[str, Any], tree: Path,
-                  log_dir: Path) -> WorkerCall: ...
-
-
-def make_worker(spec: WorkerSpec, evaluator_tree: Path) -> Worker:
-    if spec.kind == "codex":
-        from .codex import CodexWorker
-        return CodexWorker(spec.options)
-    if spec.kind == "dsh":
-        from .dsh import DshWorker
-        return DshWorker(spec.options)
-    if spec.kind == "scripted":
-        from .scripted import ScriptedWorker
-        return ScriptedWorker(spec.options, evaluator_tree)
-    raise OPCError("unknown worker kind %r" % spec.kind)
-
-
-def validate_plan(plan: Any) -> str | None:
-    if not isinstance(plan, dict):
-        return "plan is not an object"
-    from ..core.results import validate_experiment_id
-    from ..core.model import OPCError
-    try:
-        validate_experiment_id(plan.get("experiment_id"))
-    except OPCError as exc:
-        return str(exc)
-    for k in PLAN_FIELDS:
-        if not isinstance(plan.get(k), str) or not plan[k].strip():
-            return "plan.%s is empty" % k
-    files = plan.get("files")
-    if files is not None and (not isinstance(files, list) or not all(
-            isinstance(f, str) and f.strip() for f in files)):
-        return "plan.files must be a list of paths when supplied"
-    for key in ("designer", "select_work"):
-        if plan.get(key) is not None and type(plan[key]) is not bool:
-            return "plan.%s must be boolean or null" % key
-    if plan.get("evaluate") is not None and type(plan["evaluate"]) is not bool:
-        return "plan.evaluate must be boolean or null"
-    base = plan.get("base_attempt")
-    if base is not None and (type(base) is not int or base < 0):
-        return "plan.base_attempt must be null or a nonnegative attempt number"
-    return None
+        with log_file.open('wb') as log, prompt_file.open('rb') as source:
+            def stream(pipe, capture):
+                try:
+                    while chunk := pipe.read1(65536):
+                        if capture:
+                            captured.append(chunk)
+                        with lock:
+                            log.write(chunk)
+                            log.flush()
+                except BaseException as exc:
+                    errors.append(exc)
+            threads = []
+            try:
+                with Process(argv, cwd=workspace.project, env={**os.environ, **spec.get('env', {})},
+                             stdin=source if spec['input_mode'] == 'stdin' else subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+                    for pipe, capture in ((process.stdout, spec['output_mode'] == 'stdout'), (process.stderr, False)):
+                        thread = threading.Thread(target=stream, args=(pipe, capture))
+                        thread.start()
+                        threads.append(thread)
+                    try:
+                        code = process.wait(timeout=spec['timeout_seconds'])
+                    except subprocess.TimeoutExpired as exc:
+                        raise ValueError(role + ': Worker timed out') from exc
+                    finally:
+                        process.kill_tree()
+                        for thread in threads:
+                            thread.join()
+                    if process.cancel_reason:
+                        raise ValueError(role + ': Worker interrupted: ' + process.cancel_reason)
+                    if code:
+                        raise ValueError(f'{role}: Worker exited with code {code}; see {log_file}')
+            finally:
+                for thread in threads:
+                    thread.join()
+            if errors:
+                raise OSError('Worker log streaming failed') from errors[0]
+        if spec['output_mode'] == 'stdout':
+            output_file.write_bytes(b''.join(captured))
+        required = state_file if role.startswith('expert') else output_file
+        if not required.is_file() or not required.read_text(encoding='utf-8').strip():
+            raise ValueError(role + ': missing or blank required output: ' + str(required))
+    finally:
+        prompt_file.unlink(missing_ok=True)

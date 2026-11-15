@@ -1,15 +1,16 @@
 # S4 任务策略、成果接纳与交付闭环
 
-状态：需求及轻量测试范围已确认（2026-10-31），[实现规格](../../../.scratch/s4-task-policies-and-delivery/spec.md)已发布为 `ready-for-agent`。[六个实现事项](../../../.scratch/s4-task-policies-and-delivery/issues/)已按用户确认的拆分发布，均为 `ready-for-agent`；尚未实施或执行 S4 验收，未启动正式研究考试。
+> 历史讨论：以下状态与操作描述属于当时版本，旧 Run／账本／四技能流程已退役。当前使用见[两入口流程](../../../README.md)；已清理的 S1–S5 规格与工单按原路径通过 Git 查找，原始实验材料保留。
+状态：需求及轻量测试范围已确认（2026-10-31），实现规格（Git 历史：`.scratch/s4-task-policies-and-delivery/spec.md`）已发布为 `ready-for-agent`。六个实现事项（Git 历史：`.scratch/s4-task-policies-and-delivery/issues/`）已按用户确认的拆分发布，均为 `ready-for-agent`；尚未实施或执行 S4 验收，未启动正式研究考试。
 
 本页兼作“整体架构与任务策略 / S4”专题白板，保留导航、设计依据及事项入口。行为与验收要求以实现规格为唯一权威来源，不维护两份实施要求。
 
 ## 阅读入口
 
-- [Implementation Decisions](../../../.scratch/s4-task-policies-and-delivery/spec.md#implementation-decisions)：任务策略、字段职责、候选、审核、修复及历史汇总。
-- [Testing Decisions](../../../.scratch/s4-task-policies-and-delivery/spec.md#testing-decisions)：已确认三类轻量案例、既有测试入口和必要故障分支。
-- [Out of Scope](../../../.scratch/s4-task-policies-and-delivery/spec.md#out-of-scope)：减法及正式考试边界。
-- 接续依据：[S1 交付记录](../../../.scratch/s1-task-contracts-and-onboarding/spec.md#交付验证)、[S2 交付记录](../../../.scratch/s2-attempts-and-worker-handoffs/spec.md#交付验证)、[S3 交付记录](../../../.scratch/s3-evidence-and-shared-knowledge/spec.md#交付验证)。部分历史入口保留实施前状态，以实际交付记录为准；本轮未重跑这些验证。
+- Implementation Decisions（Git 历史：`.scratch/s4-task-policies-and-delivery/spec.md`）：任务策略、字段职责、候选、审核、修复及历史汇总。
+- Testing Decisions（Git 历史：`.scratch/s4-task-policies-and-delivery/spec.md`）：已确认三类轻量案例、既有测试入口和必要故障分支。
+- Out of Scope（Git 历史：`.scratch/s4-task-policies-and-delivery/spec.md`）：减法及正式考试边界。
+- 接续依据：S1 交付记录（Git 历史：`.scratch/s1-task-contracts-and-onboarding/spec.md`）、S2 交付记录（Git 历史：`.scratch/s2-attempts-and-worker-handoffs/spec.md`）、S3 交付记录（Git 历史：`.scratch/s3-evidence-and-shared-knowledge/spec.md`）。部分历史入口保留实施前状态，以实际交付记录为准；本轮未重跑这些验证。
 - 阶段导航：[总规划](../ArcHa_Phased_Development_Plan.md)、[S0 共同边界](../00-foundations-and-test-methods/README.md)、[后续 S5](../05-debugging-workbench/README.md)。
 
 ## 讨论依据与取舍
@@ -30,12 +31,12 @@
 
 | 编号 | 标题 | Blocked by | 可独立验证的交付 |
 | --- | --- | --- | --- |
-| 01 | [数值目标与完成判定贯通](../../../.scratch/s4-task-policies-and-delivery/issues/01-target-completion.md) | 无 | target 未达阻止完成，中间冠军仍可更新；字段职责、准备与结果展示一致，覆盖历史语义边界 |
-| 02 | [请求验收与未完成收尾分流](../../../.scratch/s4-task-policies-and-delivery/issues/02-delivery-intent.md) | 无 | Expert 明确选工作、请求验收或未完成收尾，CLI/Loop 只在允许时进入终验，控制与恢复不重复派发 |
-| 03 | [固定探索交付对象与版本](../../../.scratch/s4-task-policies-and-delivery/issues/03-delivery-candidate-versions.md) | 02 | 从交付决策保存成果/主张版本，审核与报告使用同一候选；相关修订先处理，反证和缺口保留 |
-| 04 | [独立审核逐项覆盖必需需求](../../../.scratch/s4-task-policies-and-delivery/issues/04-requirement-review-coverage.md) | 03 | 同次审核按需求给出判断和依据，遗漏或证据不足不随整体 accept 放行；覆盖明确主张版本的探索验收 |
-| 05 | [终验缺口回流与范围内修复](../../../.scratch/s4-task-policies-and-delivery/issues/05-delivery-repair-loop.md) | 01、04 | 数值未达、审核缺口和执行故障进入正确后续路径；修成果、补证与补验收按影响复验，覆盖三类连续案例 |
-| 06 | [标准重验与 revision 历史汇总](../../../.scratch/s4-task-policies-and-delivery/issues/06-standards-history.md) | 01 | 明确授权的新标准重验适用成果，报告末尾汇总各 revision 最近结果；不为历史展示重复检验 |
+| 01 | 数值目标与完成判定贯通（Git 历史：`.scratch/s4-task-policies-and-delivery/issues/01-target-completion.md`） | 无 | target 未达阻止完成，中间冠军仍可更新；字段职责、准备与结果展示一致，覆盖历史语义边界 |
+| 02 | 请求验收与未完成收尾分流（Git 历史：`.scratch/s4-task-policies-and-delivery/issues/02-delivery-intent.md`） | 无 | Expert 明确选工作、请求验收或未完成收尾，CLI/Loop 只在允许时进入终验，控制与恢复不重复派发 |
+| 03 | 固定探索交付对象与版本（Git 历史：`.scratch/s4-task-policies-and-delivery/issues/03-delivery-candidate-versions.md`） | 02 | 从交付决策保存成果/主张版本，审核与报告使用同一候选；相关修订先处理，反证和缺口保留 |
+| 04 | 独立审核逐项覆盖必需需求（Git 历史：`.scratch/s4-task-policies-and-delivery/issues/04-requirement-review-coverage.md`） | 03 | 同次审核按需求给出判断和依据，遗漏或证据不足不随整体 accept 放行；覆盖明确主张版本的探索验收 |
+| 05 | 终验缺口回流与范围内修复（Git 历史：`.scratch/s4-task-policies-and-delivery/issues/05-delivery-repair-loop.md`） | 01、04 | 数值未达、审核缺口和执行故障进入正确后续路径；修成果、补证与补验收按影响复验，覆盖三类连续案例 |
+| 06 | 标准重验与 revision 历史汇总（Git 历史：`.scratch/s4-task-policies-and-delivery/issues/06-standards-history.md`） | 01 | 明确授权的新标准重验适用成果，报告末尾汇总各 revision 最近结果；不为历史展示重复检验 |
 
 03 依赖 02 的交付决策入口；04 依赖 03 的准确审核对象；05 依赖 01 的完成判定与 04 的逐项缺口（间接包含 02/03），不依赖历史表；06 依赖 01 的新门槛语义，不依赖自动修复。01/02 可先推进，06 与后续交付候选链可并行；共享文件不是新增依赖边的理由。
 

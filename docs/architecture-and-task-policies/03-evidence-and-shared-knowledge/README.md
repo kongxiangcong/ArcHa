@@ -1,19 +1,20 @@
 # S3 证据、主张与共享知识
 
-状态：需求讨论及测试边界已确认（2026-10-31），[规格](../../../.scratch/s3-evidence-and-shared-knowledge/spec.md)及 [7 个实现事项](../../../.scratch/s3-evidence-and-shared-knowledge/issues/)已发布，状态为 `ready-for-agent`。当前可从事项 01 开始，后续按各事项的阻塞依赖推进；未实施或执行本阶段验收。
+> 历史讨论：以下状态与操作描述属于当时版本，旧 Run／账本／四技能流程已退役。当前使用见[两入口流程](../../../README.md)；已清理的 S1–S5 规格与工单按原路径通过 Git 查找，原始实验材料保留。
+状态：需求讨论及测试边界已确认（2026-10-31），规格（Git 历史：`.scratch/s3-evidence-and-shared-knowledge/spec.md`）及 7 个实现事项（Git 历史：`.scratch/s3-evidence-and-shared-knowledge/issues/`）已发布，状态为 `ready-for-agent`。当前可从事项 01 开始，后续按各事项的阻塞依赖推进；未实施或执行本阶段验收。
 
 本页保留阶段导航和设计取舍；实现与验收要求以规格为唯一权威来源，术语以根 [GLOSSARY.md](../../../GLOSSARY.md) 为准。
 
 ## 阅读入口
 
-- 实现前阅读：[S3 规格](../../../.scratch/s3-evidence-and-shared-knowledge/spec.md#implementation-decisions)。
-- 验收与测试边界：[Testing Decisions](../../../.scratch/s3-evidence-and-shared-knowledge/spec.md#testing-decisions)。
-- 范围与减法：[Out of Scope](../../../.scratch/s3-evidence-and-shared-knowledge/spec.md#out-of-scope)。
+- 实现前阅读：S3 规格（Git 历史：`.scratch/s3-evidence-and-shared-knowledge/spec.md`）。
+- 验收与测试边界：Testing Decisions（Git 历史：`.scratch/s3-evidence-and-shared-knowledge/spec.md`）。
+- 范围与减法：Out of Scope（Git 历史：`.scratch/s3-evidence-and-shared-knowledge/spec.md`）。
 - 阶段安排：[总规划](../ArcHa_Phased_Development_Plan.md)；后续方向：[S4](../04-task-policies-and-delivery/README.md)。
 
 ## 接续依据
 
-S3 依赖 S2，目标是让后续工作利用真实经验并修正旧判断。共同语义与披露原则沿用 [S0 定稿](../00-foundations-and-test-methods/README.md)；契约、结果反馈、恢复与工具边界以 [S1 交付记录](../../../.scratch/s1-task-contracts-and-onboarding/spec.md#交付验证)及 [S2 交付记录](../../../.scratch/s2-attempts-and-worker-handoffs/spec.md#交付验证)为准。本轮仅核查代码及测试结构，没有重新运行这些验证。
+S3 依赖 S2，目标是让后续工作利用真实经验并修正旧判断。共同语义与披露原则沿用 [S0 定稿](../00-foundations-and-test-methods/README.md)；契约、结果反馈、恢复与工具边界以 S1 交付记录（Git 历史：`.scratch/s1-task-contracts-and-onboarding/spec.md`）及 S2 交付记录（Git 历史：`.scratch/s2-attempts-and-worker-handoffs/spec.md`）为准。本轮仅核查代码及测试结构，没有重新运行这些验证。
 
 整体架构背景见 [§4](../ArcHa_Overall_Architecture_and_Task_Policies.md#s04)、[§9](../ArcHa_Overall_Architecture_and_Task_Policies.md#s09)、[§10](../ArcHa_Overall_Architecture_and_Task_Policies.md#s10)、[§11](../ArcHa_Overall_Architecture_and_Task_Policies.md#s11)及 [§14](../ArcHa_Overall_Architecture_and_Task_Policies.md#s14)。整体文档中的早期方案仅保留背景，S3 的收敛要求以规格为准。
 

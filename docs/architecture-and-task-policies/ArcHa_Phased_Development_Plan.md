@@ -1,5 +1,6 @@
 # ArcHa 任务策略驱动改造的阶段规划
 
+> 历史讨论：以下状态与操作描述属于当时版本，旧 Run／账本／四技能流程已退役。当前使用见[两入口流程](../../README.md)；已清理的 S1–S5 规格与工单按原路径通过 Git 查找，原始实验材料保留。
 > 2026-10-31 更新：S0 需求已收束，以 [S0 当前决定](00-foundations-and-test-methods/README.md) 为准。Expert 位于 Run 层，Attempt 执行选定工作，引擎维护增量 DAG；Call 与会话分离。最终采用开发、调优、探索三个模块题及独立端到端题。正文中的早期示例/范围如有冲突，由此决定替代。框架实现与正式考试尚未完成。
 
 日期：2026-10-30。状态：**S0 已收束；S1 七票已实现并验证；后续阶段需求待讨论**。
@@ -126,7 +127,7 @@
 
 **当前状态：** 方向复核与目录生成完成；S0 已收束；已进行环境自检，未运行正式考试；S1 七票已实现并验证；S2 需求经 grill-with-docs 澄清收敛，代码与 CLI 能力只读核查完成，真实后端运行验证未做；S2–S5 尚待实现。
 
-**下一步：** [S2 实现规格](../../.scratch/s2-attempts-and-worker-handoffs/spec.md)已发布为 ready-for-agent，作为后续拆票与实施依据；背景及能力核查见 [S2 专题](02-attempts-and-worker-handoffs/README.md)。已发布 [7 张实现事项](../../.scratch/s2-attempts-and-worker-handoffs/issues/)，尚未实施；DSH 当前按规格例外仅实现、不新增专用测试或真实验证，四题正式考试仍后置。
+**下一步：** S2 实现规格（Git 历史：`.scratch/s2-attempts-and-worker-handoffs/spec.md`）已发布为 ready-for-agent，作为后续拆票与实施依据；背景及能力核查见 [S2 专题](02-attempts-and-worker-handoffs/README.md)。已发布 7 张实现事项（Git 历史：`.scratch/s2-attempts-and-worker-handoffs/issues/`），尚未实施；DSH 当前按规格例外仅实现、不新增专用测试或真实验证，四题正式考试仍后置。
 
 ## 7. 核查依据与验证范围
 
@@ -134,10 +135,10 @@
 
 | 本地依据 | 已核查的规划意义 |
 | --- | --- |
-| [运行账本](../../opc/core/ledger.py)、[引擎](../../opc/core/engine.py)、[结果类型](../../opc/core/model.py) | 已有运行事实与控制记录、工作版本、空补丁新测量和结果分类；需要演进，不能按完全缺失重新设计 |
+| 运行账本（Git 历史：`opc/core/ledger.py`）、[引擎](../../opc/core/engine.py)、结果类型（Git 历史：`opc/core/model.py`） | 已有运行事实与控制记录、工作版本、空补丁新测量和结果分类；需要演进，不能按完全缺失重新设计 |
 | [Worker 接缝](../../opc/adapters/worker.py) | 已有角色协议与结构化计划；新信封和角色 payload 需要与后端实际能力一起讨论 |
-| [成果管理](../../opc/core/results.py)、[已有成果改造记录](../design/task-results/tickets.md) | 已有跨 run 实验关联、成果入口与上下文快照基础；共享空间应明确新增语义而非再建一套存储 |
-| [观察 API](../../opc/observer/api.py)、[观察模型](../../opc/observer/models.py)、[工作台实施记录](../design/observer-workbench/tickets.md) | 已有 GET-only API、展示 DTO 和界面，优先复用；展示合同不等于执行协议 |
+| 成果管理（Git 历史：`opc/core/results.py`）、[已有成果改造记录](../design/task-results/tickets.md) | 已有跨 run 实验关联、成果入口与上下文快照基础；共享空间应明确新增语义而非再建一套存储 |
+| [观察 API](../../opc/observer/api.py)、观察模型（Git 历史：`opc/observer/models.py`）、[工作台实施记录](../design/observer-workbench/tickets.md) | 已有 GET-only API、展示 DTO 和界面，优先复用；展示合同不等于执行协议 |
 
 规划过程中查证的外部参考如下。它们用于约束工程方法与复用方向，不证明本次架构已取得性能收益。
 

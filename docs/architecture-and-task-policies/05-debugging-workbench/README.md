@@ -1,10 +1,11 @@
 # S5 沉浸式工作台：设计简报与原型范围
 
+> 历史讨论：以下状态与操作描述属于当时版本，旧 Run／账本／四技能流程已退役。当前使用见[两入口流程](../../../README.md)；已清理的 S1–S5 规格与工单按原路径通过 Git 查找，原始实验材料保留。
 状态：**S5 已实现；2026-11-02 已补充多专题目录入口、实时研究现场和语义动效。以下保留原设计决策；本次增量说明见文末。**
 
 所属：整体架构与任务策略。本页是 S5 设计的唯一讨论与简报入口。采用 winson 与 editorial-ui 1.1.0；当前为设计讨论，未来集成允许 redesign，保留业务契约。入口：[总规划](../ArcHa_Phased_Development_Plan.md)；背景：[整体架构](../ArcHa_Overall_Architecture_and_Task_Policies.md) §5、§10、§14、§17；后续：[S6](../06-deepstack-exploration-validation/README.md)。
 
-实施入口：[S5 规格与六票索引](../../../.scratch/s5-debugging-workbench/spec.md)，均为 ready-for-agent；当前无阻塞事项为 [01：真实工作现场与清爽布局](../../../.scratch/s5-debugging-workbench/issues/01-live-workspace.md)。本专题保留需求、布局与取舍依据，具体接口、执行承载与测试合同以规格为准。
+实施入口：S5 规格与六票索引（Git 历史：`.scratch/s5-debugging-workbench/spec.md`），均为 ready-for-agent；当前无阻塞事项为 01：真实工作现场与清爽布局（Git 历史：`.scratch/s5-debugging-workbench/issues/01-live-workspace.md`）。本专题保留需求、布局与取舍依据，具体接口、执行承载与测试合同以规格为准。
 
 ## 1. 目标与信息边界
 
@@ -92,7 +93,7 @@
 
 ## 5. 前后端能力与必要缺口
 
-核查代码基点 `18694a1`。S1–S4 实际交付分别见 [S1](../../../.scratch/s1-task-contracts-and-onboarding/spec.md#交付验证)、[S2](../../../.scratch/s2-attempts-and-worker-handoffs/spec.md#交付验证)、[S3](../../../.scratch/s3-evidence-and-shared-knowledge/spec.md#交付验证)、[S4](../../../.scratch/s4-task-policies-and-delivery/spec.md#实施与最终验证)。部分历史入口的未实施文字已滞后，不据此重复建设。以下是设计与开发依据，不是产品界面内容。
+核查代码基点 `18694a1`。S1–S4 实际交付分别见 S1（Git 历史：`.scratch/s1-task-contracts-and-onboarding/spec.md`）、S2（Git 历史：`.scratch/s2-attempts-and-worker-handoffs/spec.md`）、S3（Git 历史：`.scratch/s3-evidence-and-shared-knowledge/spec.md`）、S4（Git 历史：`.scratch/s4-task-policies-and-delivery/spec.md`）。部分历史入口的未实施文字已滞后，不据此重复建设。以下是设计与开发依据，不是产品界面内容。
 
 | 用户操作 | 复用基础 | 必要代码/接口缺口 |
 | --- | --- | --- |
@@ -104,7 +105,7 @@
 | 继续同一运行 | Engine.open_run/restore_run/run/reconcile、CLI 显式 run_id、项目单写入约束 | 补可靠启动/重入及启动失败反馈、恢复生效事实；不能只设 control=run，也不能将 active 当作恢复完成 |
 | 保持清爽 | 现有 React 组件、URL 选择、主题变量 | 移除 Sources、digest/sha256、内部 ID 与元数据面板；限制材料/输出入口，不能以通用文件列表重新暴露内部材料 |
 
-源码入口：[adapter](../../../opc/observer/adapter.py)、[API](../../../opc/observer/api.py)、[DTO](../../../opc/observer/models.py)、[Engine](../../../opc/core/engine.py)、[Ledger](../../../opc/core/ledger.py)、[CLI](../../../opc/cli.py)、[web App](../../../web/src/App.tsx)、[组件](../../../web/src/components.tsx)、[前端类型](../../../web/src/types.ts)。Python DTO 允许额外字段，不能把前端未消费误判为 HTTP 丢字段。
+源码入口：[adapter](../../../opc/observer/adapter.py)、[API](../../../opc/observer/api.py)、DTO（Git 历史：`opc/observer/models.py`）、[Engine](../../../opc/core/engine.py)、Ledger（Git 历史：`opc/core/ledger.py`）、[CLI](../../../opc/cli.py)、[web App](../../../web/src/App.tsx)、组件（Git 历史：`web/src/components.tsx`）、[前端类型](../../../web/src/types.ts)。Python DTO 允许额外字段，不能把前端未消费误判为 HTTP 丢字段。
 
 必须带入实施的三个具体判断：
 
@@ -132,7 +133,7 @@
 | 停止最小分支 | 请求收到、实际停止、终态未知；不将停止显示为交付成功 |
 | 主题/交互 | 浅深主题候选、面板显隐/阅读、键盘与焦点返回、快速开关、减少动态、窄/短视口及长中文 |
 
-采用当前协议真实记录或清楚标明的夹具。夹具只能验证交互和展示，不算真实控制通过。API/Engine 的后续验证要覆盖在途日志可读、命令关联、暂停无后续派发、恢复不重做成功调用、重复请求/断连不双重启动、停止未知终态、观察失败不改业务结果。已有 [Engine 控制测试](../../../opc/tests/test_engine.py) 与 [并行控制测试](../../../opc/tests/test_attempt_dag.py) 是复用基础；不运行正式研究考试。
+采用当前协议真实记录或清楚标明的夹具。夹具只能验证交互和展示，不算真实控制通过。API/Engine 的后续验证要覆盖在途日志可读、命令关联、暂停无后续派发、恢复不重做成功调用、重复请求/断连不双重启动、停止未知终态、观察失败不改业务结果。已有 Engine 控制测试（Git 历史：`opc/tests/test_engine.py`） 与 并行控制测试（Git 历史：`opc/tests/test_attempt_dag.py`） 是复用基础；不运行正式研究考试。
 
 当前原型已获确认，首版不再要求 DAG 对比。若后续实际任务出现并行追因困难，再比较同组任务的定位路径、依赖误认和现场返回，不能只凭截图或动效决定增加第二套主屏。
 
