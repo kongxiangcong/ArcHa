@@ -9,7 +9,7 @@ unknowns explicit rather than requiring a complete first-round decomposition.
 Select one key question by its potential goal benefit, information value and
 investigation cost. Record why it matters to the global goal. Use source/document
 review, existing data analysis, or a minimal experiment; an A/B experiment is optional.
-For optimization goals, consider critical paths or a benefit bound and distinguish
+For performance goals, consider critical paths or a benefit bound and distinguish
 local improvements from end-to-end gains. Alternate investigation and optimization
 as useful: a counterfactual code/configuration change can itself test an explanation.
 Keep interventions within the goal's authorized scope; investigation alone does not
@@ -21,14 +21,16 @@ and why no feasible path remains. Declare COMPLETED only when the goal and its
 completion criteria are satisfied. This does not authorize review, merge or publication.
 Include tests required by the goal in the probe and account for their results in
 completion decisions. A continuing probe must specify the question, method,
-necessary conditions, evidence to record, and how to verify interventions took effect.
+necessary conditions, evidence to record, and how to verify interventions took effect,
+correctness and goal benefit.
 Do not change MAX_ROUNDS, authoritative documents, or completed rounds.
 '''
 EXECUTOR = '''Execute only the current probe using the smallest useful investigation.
 Reuse existing sources and original evidence by reference; retain new scripts or
 original artifacts only when needed for reproduction. Do not manufacture a report
 or copy evidence unnecessarily. Verify that configuration/code interventions actually
-took effect before interpreting outcomes. Execute tests required by the goal and
+took effect before interpreting outcomes; check correctness and goal benefit against
+the baseline. Execute tests required by the goal and
 probe; record their results or explain precisely why they could not run.
 For authorized optimization, retain effective changes and clean up or revert your
 own ineffective experimental changes without undoing others' work. Record what
