@@ -120,7 +120,12 @@ class TopicWorkspace:
             'executor' if rounds and not rounds[-1][1] else
             'expert_finalize' if completed == budget else 'expert')
         from .topic_control import activity
-        return dict(**activity(self), topic=self.topic, status=state, max_rounds=budget,
+        error_path = self.path / '.last-error'
+        try:
+            error = error_path.read_text(encoding='utf-8')
+        except FileNotFoundError:
+            error = None
+        return dict(**activity(self), topic=self.topic, status=state, max_rounds=budget, error=error,
                     completed_rounds=completed, next_action=action,
                     current_round=(len(rounds) if action in {'executor', 'expert_finalize'} or state != 'IN_PROGRESS'
                                    else completed + 1),

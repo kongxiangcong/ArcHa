@@ -165,14 +165,19 @@ def lifecycle(workspace):
                 if owner:
                     record['worker'] = owner
             publish(workspace, record)
+        error_path = workspace.path / '.last-error'
+        error_path.unlink(missing_ok=True)
         try:
-            with execution_control(check, workspace.path, recorder=register,
-                                   env={'ARCHA_EXECUTION': record['id']}):
-                yield
-        finally:
-            # Process context has already killed and joined its tree. A failed
-            # confirmation keeps ownership and staged material for recovery.
-            end_previous(workspace, record)
+            try:
+                with execution_control(check, workspace.path, recorder=register,
+                                       env={'ARCHA_EXECUTION': record['id']}):
+                    yield
+            finally:
+                # Only the lifecycle owner cleans the execution after tree exit.
+                end_previous(workspace, record)
+        except Exception as exc:
+            error_path.write_text(str(exc), encoding='utf-8')
+            raise
 
 
 def stop(workspace, timeout=10, *, execution_id=None):
