@@ -114,7 +114,7 @@ def end_previous(workspace, record):
             if time.monotonic() > deadline:
                 raise ValueError('unknown execution: cannot confirm previous process tree ended')
             time.sleep(.01)
-    from .topic_workspace import TopicWorkspace
+    from .workspace import TopicWorkspace
     TopicWorkspace(workspace.project, record['topic']).recover()
     (workspace.control / ('.stop-' + record['id'])).unlink(missing_ok=True)
     (workspace.control / '.execution.json').unlink(missing_ok=True)

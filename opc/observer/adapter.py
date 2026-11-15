@@ -3,7 +3,7 @@ import codecs
 import os
 from pathlib import Path
 
-from ..core.topic_workspace import TopicWorkspace
+from ..core.workspace import TopicWorkspace
 
 
 class ObserverError(Exception):

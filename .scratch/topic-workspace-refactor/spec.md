@@ -1,6 +1,6 @@
 # ArcHa：专题工作区与通用 Worker 端到端重构
 
-Status: ready-for-agent
+Status: resolved
 
 ## Problem Statement
 
@@ -139,4 +139,4 @@ Status: ready-for-agent
 
 - 本规格记录用户需求与验收约定；[已确认开发方案](../../archa-refactor-plan.md)是具体工作区布局、提交协议、模块清单及旧规格替代范围的技术依据。本规格不复制其代码布局和路径清单。
 - 领域用语以[词汇表](../../GLOSSARY.md)为准，架构取舍见[专题工作区 ADR](../../docs/adr/0001-topic-workspace.md)。
-- 两轮 grilling 的 Q1–Q14 已全部接受，测试边界已确认；本规格可直接交给 agent 开发，无须再次分诊或重复设计访谈。
+- 两轮 grilling 的 Q1–Q14 已全部接受，测试边界已确认；实现与最终验收已完成，证据及环境限制见 [09](issues/09-retire-and-verify.md#answer)。

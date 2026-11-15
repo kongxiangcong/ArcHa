@@ -1,6 +1,6 @@
 """Explicit offline example using the same topic files as a real project."""
 from pathlib import Path
-from ..core.topic_workspace import TopicWorkspace
+from ..core.workspace import TopicWorkspace
 
 
 def create_demo(root: Path):

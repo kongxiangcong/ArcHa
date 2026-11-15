@@ -3,8 +3,11 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+import pytest
+pytest.importorskip("fastapi")
+pytest.importorskip("httpx")
 from fastapi.testclient import TestClient
-from opc.core.topic_workspace import TopicWorkspace
+from opc.core.workspace import TopicWorkspace
 from opc.observer.api import create_app
 
 PREFIX = '/api/observer/v1/topics/research'
