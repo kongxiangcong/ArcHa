@@ -1,1 +1,1 @@
-{"roles": {"expert": {"command": []}, "executor": {"command": []}}}
+{"roles": {"expert": {"preset": "codex"}, "executor": {"preset": "codex"}}}

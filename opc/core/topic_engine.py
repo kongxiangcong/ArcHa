@@ -30,6 +30,7 @@ class TopicEngine:
             if role == 'expert':
                 stage.mkdir()
                 state_file, output_file = stage / 'STATE.md', stage / 'probe.md'
+                state_file.write_text((w.path / 'STATE.md').read_text(), encoding='utf-8')
             else:
                 state_file, output_file = w.path / 'STATE.md', directory / '.staging.result.md'
             invoke(w, role, prompt(w, role, directory, state_file, output_file),

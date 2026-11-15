@@ -19,6 +19,7 @@ CreateJob = api("CreateJobObjectW", w.HANDLE, c.c_void_p, w.LPCWSTR)
 SetInfo = api("SetInformationJobObject", w.BOOL, w.HANDLE, c.c_int, c.c_void_p, w.DWORD)
 Assign = api("AssignProcessToJobObject", w.BOOL, w.HANDLE, w.HANDLE)
 Terminate = api("TerminateJobObject", w.BOOL, w.HANDLE, w.UINT)
+QueryInfo = api("QueryInformationJobObject", w.BOOL, w.HANDLE, c.c_int, c.c_void_p, w.DWORD, c.c_void_p)
 Close = api("CloseHandle", w.BOOL, w.HANDLE)
 Snapshot = api("CreateToolhelp32Snapshot", w.HANDLE, w.DWORD, w.DWORD)
 First = api("Thread32First", w.BOOL, w.HANDLE, c.c_void_p)
@@ -38,6 +39,11 @@ class Extended(c.Structure):
     _fields_ = [("basic", Basic), ("io", c.c_ulonglong * 6),
                 ("process_mem", c.c_size_t), ("job_mem", c.c_size_t),
                 ("peak_process", c.c_size_t), ("peak_job", c.c_size_t)]
+
+
+class Accounting(c.Structure):
+    _fields_ = [("times", c.c_longlong * 4), ("faults", w.DWORD),
+                ("total", w.DWORD), ("active", w.DWORD), ("terminated", w.DWORD)]
 
 
 class ThreadEntry(c.Structure):
@@ -88,6 +94,11 @@ class Job:
 
     def terminate(self):
         checked(Terminate(self.handle, 1))
+
+    def active_processes(self):
+        info = Accounting()
+        checked(QueryInfo(self.handle, 1, c.byref(info), c.sizeof(info), None))
+        return info.active
 
     def close(self):
         if self.handle:
