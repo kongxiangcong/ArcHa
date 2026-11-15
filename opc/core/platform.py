@@ -117,11 +117,15 @@ class Process(subprocess.Popen):
             if self._control is not None:
                 self._control.record(self, "running")
         except BaseException:
-            if getattr(self, "pid", None) is not None:
-                self.kill()
-                self.wait()
-            if self._job is not None:
-                self._job.close()
+            try:
+                if getattr(self, "pid", None) is not None:
+                    # Registration can fail after descendants have started.
+                    self._control = None
+                    self.kill()  # Also handles a Windows child not yet assigned.
+                    self.kill_tree()
+            finally:
+                if self._job is not None:
+                    self._job.close()
             raise
 
     def wait(self, timeout=None):
@@ -185,6 +189,11 @@ class Process(subprocess.Popen):
             # A bounded wait leaves an unverifiable termination without a Call
             # receipt, so recovery keeps its workspace and blocks redispatch.
             super().wait(timeout=2)
+            deadline = time.monotonic() + 2
+            while self.tree_alive():
+                if time.monotonic() >= deadline:
+                    raise OSError("cannot confirm owned process tree has ended")
+                time.sleep(.01)
         except (OSError, subprocess.TimeoutExpired) as exc:
             if self._control is not None:
                 self._control.unknown = str(exc)
@@ -192,6 +201,27 @@ class Process(subprocess.Popen):
             raise
         if self._control is not None:
             self._control.record(self, "cancelled" if self.cancel_reason else "completed")
+
+    def tree_alive(self):
+        if self._job is not None:
+            return self._job.active_processes() != 0
+        if sys.platform.startswith("linux"):
+            # Zombies cannot write; orphan reaping belongs to the host's init.
+            for entry in Path("/proc").iterdir():
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+                except (FileNotFoundError, ProcessLookupError):
+                    continue
+                if int(fields[2]) == self.pid and fields[0] not in {"Z", "X"}:
+                    return True
+            return False
+        try:
+            os.killpg(self.pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
 
     def __exit__(self, *args):
         try:
