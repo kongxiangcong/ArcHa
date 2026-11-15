@@ -1,6 +1,6 @@
 # 探针断点调试
 
-Status: ready-for-agent
+Status: resolved
 
 ## Problem Statement
 
@@ -63,3 +63,7 @@ CLI 与现有工作台提供相同操作。工作台突出当前探针和操作�
 来源为[探针断点调试地图](map.md)及其中已确认的范围。本文是后续实现的规格入口；地图保留决策背景，不再扩展为另一套规格。
 
 保持实现与文档轻量。后续实现事项按可验证的闭环拆分，不按核心、API、前端横向分层拆票；本次仅发布规格，不创建实现事项或修改代码。
+
+## Answer
+
+已在 `integration/round-review` 完成[断点与继续](issues/02-breakpoint-continue.md)及[反馈重拟](issues/03-feedback-revise.md)，验证证据见各事项。规范审查无发现；规格审查发现的跨轮次意见草稿问题及假设依据展示缺口已修复并通过复审。最终回归 107 passed、3 skipped、12 subtests passed，前端类型检查、构建及真实浏览器闭环通过。
