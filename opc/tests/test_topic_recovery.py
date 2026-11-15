@@ -93,8 +93,8 @@ def test_restart_discards_unverified_expert_and_keeps_logs_and_originals(project
 @pytest.mark.parametrize('boundary', ['after-commit', 'after-STATE.md', 'before-cleanup'])
 def test_restart_recovers_terminal_state_without_probe_or_worker(project, terminal, boundary):
     cli(project, 'init', '--goal', 'Check evidence')
-    command = "import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text(p.read_text().replace('IN_PROGRESS', sys.argv[3])); pathlib.Path(sys.argv[2]).write_text('must not publish')"
-    config = {'roles': {'expert': {'command': [sys.executable, '-c', command, '{state_file}', '{output_file}', terminal],
+    command = "import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text((pathlib.Path(sys.argv[4]) / 'STATE.md').read_text().replace('IN_PROGRESS', sys.argv[3])); pathlib.Path(sys.argv[2]).write_text('must not publish')"
+    config = {'roles': {'expert': {'command': [sys.executable, '-c', command, '{state_file}', '{output_file}', terminal, '{topic_dir}'],
                                  'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5},
                         'executor': {'preset': 'scripted'}}}
     (project / '.archa/workers.json').write_text(json.dumps(config))
@@ -167,8 +167,8 @@ def test_invalid_expert_draft_is_not_published_and_can_retry(project, mutation, 
     cli(project, 'init', '--goal', 'Check evidence')
     state = project / '.archa/topics/research/STATE.md'
     old = state.read_bytes()
-    command = "import pathlib,sys; p=pathlib.Path(sys.argv[1]); text=p.read_text(); p.write_text(" + mutation + ")"
-    config = {'roles': {'expert': {'command': [sys.executable, '-c', command, '{state_file}'],
+    command = "import pathlib,sys; p=pathlib.Path(sys.argv[1]); text=(pathlib.Path(sys.argv[2]) / 'STATE.md').read_text(); p.write_text(" + mutation + ")"
+    config = {'roles': {'expert': {'command': [sys.executable, '-c', command, '{state_file}', '{topic_dir}'],
                                  'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5},
                         'executor': {'preset': 'scripted'}}}
     (project / '.archa/workers.json').write_text(json.dumps(config))

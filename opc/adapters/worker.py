@@ -115,7 +115,7 @@ def invoke(workspace, role, prompt, state_file, output_file, log_file):
                 with Process(argv, cwd=workspace.project, env={**os.environ, **spec.get('env', {})},
                              stdin=source if spec['input_mode'] == 'stdin' else subprocess.DEVNULL,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
-                    for pipe, capture in ((process.stdout, True), (process.stderr, False)):
+                    for pipe, capture in ((process.stdout, spec['output_mode'] == 'stdout'), (process.stderr, False)):
                         thread = threading.Thread(target=stream, args=(pipe, capture))
                         thread.start()
                         threads.append(thread)

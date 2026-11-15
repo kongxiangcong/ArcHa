@@ -169,7 +169,7 @@ def lifecycle(workspace):
         error_path.unlink(missing_ok=True)
         try:
             try:
-                with execution_control(check, workspace.path, recorder=register,
+                with execution_control(check, recorder=register,
                                        env={'ARCHA_EXECUTION': record['id']}):
                     yield
             finally:

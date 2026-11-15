@@ -55,7 +55,7 @@ print(role + ' live stderr', file=sys.stderr, flush=True)
 while not (root / ('release-' + role)).exists(): time.sleep(.05)
 if role == 'expert_finalize': sys.exit(9)
 if role == 'expert':
-    state.write_text(state.read_text() + '\nCurrent evidence remains uncertain.\n')
+    state.write_text((root / '.archa/topics/research/STATE.md').read_text() + '\nCurrent evidence remains uncertain.\n')
 output.write_text('# ' + role + ' material\n\n[Original](../../../../../evidence.md)')
 """)
             config = {'roles': {role: {'command': [sys.executable, str(worker), role, '{state_file}', '{output_file}', str(root)], 'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 60} for role in ('expert', 'executor')}}
