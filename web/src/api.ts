@@ -1,103 +1,20 @@
-import { useEffect, useState } from "react";
-import { poll } from "./poll";
-import type { Envelope } from "./types";
-export const base = "/api/observer/v1";
-export const enc = encodeURIComponent;
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    public status: number,
-    public code: string,
-  ) {
-    super(message);
-  }
-}
-export async function get<T>(
-  path: string,
-  signal?: AbortSignal,
-): Promise<Envelope<T>> {
-  const response = await fetch(base + path, {
-    signal: signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(8000)])
-      : AbortSignal.timeout(8000),
-    headers: { Accept: "application/json" },
+import type { Content, Overview, TopicDetail } from "./types";
+const prefix = "/api/observer/v1";
+async function read<T>(path: string): Promise<T> {
+  const response = await fetch(prefix + path, {
+    signal: AbortSignal.timeout(10000),
   });
-  return decode<T>(response);
+  const value = await response.json();
+  if (!response.ok)
+    throw new Error(value.error?.message || `HTTP ${response.status}`);
+  return value;
 }
-async function decode<T>(response: Response): Promise<Envelope<T>> {
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    throw new ApiError(
-      body?.error?.message || `读取失败 (${response.status})`,
-      response.status,
-      body?.error?.code ?? "http_error",
-    );
-  }
-  const body = await response.json();
-  if (!String(body.schema_version).startsWith("1."))
-    throw new Error("观察接口主版本不兼容");
-  return body;
-}
-export async function controlRequest<T>(
-  run: string,
-  requestId: string,
-  action?: string,
-  signal?: AbortSignal,
-): Promise<Envelope<T>> {
-  const path = `/api/control/v1/runs/${enc(run)}/requests`;
-  const response = await fetch(action ? path : path + "/" + enc(requestId), {
-    method: action ? "POST" : "GET",
-    headers: {
-      Accept: "application/json",
-      ...(action ? { "Content-Type": "application/json" } : {}),
-    },
-    body: action
-      ? JSON.stringify({ request_id: requestId, action })
-      : undefined,
-    signal,
-  });
-  return decode<T>(response);
-}
-export function useResource<T>(
-  path: string | null,
-  interval = 0,
-  refresh: number | string = 0,
-) {
-  const [state, setState] = useState<{
-    path: string | null;
-    value?: Envelope<T>;
-    error?: string;
-  }>({ path: null });
-  useEffect(() => {
-    if (!path) return;
-    let active = true,
-      pending = false;
-    const ctrl = new AbortController();
-    const read = async () => {
-      if (pending) return;
-      pending = true;
-      try {
-        const value = await get<T>(path, ctrl.signal);
-        if (active) setState({ path, value });
-      } catch (e) {
-        if (active && !ctrl.signal.aborted)
-          setState((old) => ({
-            path,
-            value: old.path === path ? old.value : undefined,
-            error: String((e as Error).message),
-          }));
-      } finally {
-        pending = false;
-      }
-    };
-    const stop = poll(read, interval);
-    return () => {
-      active = false;
-      ctrl.abort();
-      stop();
-    };
-  }, [path, interval, refresh]);
-  return state.path === path
-    ? state
-    : { path, value: undefined, error: undefined };
-}
+export const api = {
+  topics: () => read<Overview>("/topics"),
+  topic: (topic: string) =>
+    read<TopicDetail>("/topics/" + encodeURIComponent(topic)),
+  material: (path: string, offset = 0) =>
+    read<Content>(
+      "/materials?" + new URLSearchParams({ path, offset: String(offset) }),
+    ),
+};
