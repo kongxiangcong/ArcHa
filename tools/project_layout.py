@@ -36,7 +36,7 @@ def main():
         paths = layout(args.project_root, args.topic)
         if args.command == 'init' and args.apply:
             if not Path(paths['entrypoint']).is_file():
-                raise ValueError('deploy with skills/archa-map/scripts/initialize.py first')
+                raise ValueError('deploy with skills/archa-discuss/scripts/initialize.py first')
             return subprocess.call([sys.executable, paths['entrypoint'], 'init', '-p', paths['project'],
                                     '--topic', args.topic, '--goal', args.goal, '--max-rounds', str(args.max_rounds)])
         print(json.dumps(paths, indent=2))

@@ -167,7 +167,7 @@ Executor 职责：执行最小调查，优先复用原件；修改配置时核�
 
 停止表示中断当前调用，继续可重跑未提交调用；首版不支持“等当前轮结束后暂停”。CLI 对未完成、阻塞、预算耗尽和调用失败提供可区分结果，不能全部报告成功完成。
 
-`archa-map` 初始化专题；`archa-task` 澄清目标、问题队列并检查配置；`archa-loop` 运行/继续并汇报状态；`archa-log` 按用户需要整理已有材料，生成衍生 `PROGRESS_LOG.md`。这些入口不形成强制四步链，明确目标可直接 init/run。
+技能分为讨论定锚与执行循环两个入口，具体流程以 [archa-discuss](skills/archa-discuss/SKILL.md) 和 [archa-run](skills/archa-run/SKILL.md) 为准；两者共用专题材料。
 
 ### 工作台
 
@@ -188,10 +188,10 @@ Executor 职责：执行最小调查，优先复用原件；修改配置时核�
 | P0 | 重写 worker/config/scripted 与默认 workers；精简复用 platform/windows |
 | P1 | 重写 workspace/engine；按新职责裁剪 model/config，不保留无消费者的旧类型 |
 | P2 | 重写 prompts，提供单一 templates.py |
-| P3 | CLI、scaffold 初始化、observer 后端、React 前端、`opc/log.py`、四个技能及其脚本、部署与安装工具 |
+| P3 | CLI、scaffold 初始化、observer 后端、React 前端、`opc/log.py`、两个技能及部署脚本、部署与安装工具 |
 | 清理与交付 | 审查 `opc/domain.py`、`opc/domains/command.py` 等旧评价依赖；同步 README、opc/README、scaffold 文档、pyproject 包资源、`opc/tests` 和 `tools/tests` |
 
-部署以 `skills/archa-map/scripts/initialize.py` 的运行时清单为单一来源，同步 `tools/project_layout.py` 的路径行为，不维护重复文件列表。目标项目必须获得明确可调用的 `.archa/archa.py` 本地入口及 runtime；技能使用该入口，不依赖用户预先全局安装 `opc`。保留模块（包括日志整理及实际依赖）的传递导入和模板资源必须在部署产物中可用。
+部署以 `skills/archa-discuss/scripts/initialize.py` 的运行时清单为单一来源，同步 `tools/project_layout.py` 的路径行为，不维护重复文件列表。目标项目必须获得明确可调用的 `.archa/archa.py` 本地入口及 runtime；技能使用该入口，不依赖用户预先全局安装 `opc`。保留模块（包括日志整理及实际依赖）的传递导入和模板资源必须在部署产物中可用。
 
 先完成新组件与直接消费者的切换，再删除旧接口，避免某次集成只留下无法导入的主入口。P0/P1 核心、最小提示词、CLI 和部署一起形成首个可运行切片，完整工作台接入后才算 P0–P3 全部交付。
 

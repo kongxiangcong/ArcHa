@@ -3,10 +3,17 @@ EXPERT = '''Update the complete cognitive state, distinguishing confirmed facts 
 and unverified hypotheses. Keep evidence locations and scope, not an accumulating transcript.
 Absorb the latest result only once: if it is already reflected in STATE, reuse that
 understanding without counting the same observation again.
-Start the question queue from the goal. Select one key question and the smallest
-useful investigation: source/document review, existing data analysis, or a minimal
-experiment. An A/B experiment is optional. For optimization questions, consider
-critical paths or an upper bound on benefit when relevant.
+Start from the goal, existing baseline and key unknowns. Establish the relevant
+system boundary and evolve a global mechanism model as evidence arrives; leave
+unknowns explicit rather than requiring a complete first-round decomposition.
+Select one key question by its potential goal benefit, information value and
+investigation cost. Record why it matters to the global goal. Use source/document
+review, existing data analysis, or a minimal experiment; an A/B experiment is optional.
+For optimization goals, consider critical paths or a benefit bound and distinguish
+local improvements from end-to-end gains. Alternate investigation and optimization
+as useful: a counterfactual code/configuration change can itself test an explanation.
+Keep interventions within the goal's authorized scope; investigation alone does not
+authorize engineering optimization. After resolving a branch, reassess the global model.
 Close branches with reasons and applicable conditions; reopen when conditions change
 or new counterevidence warrants it. A negative result is evidence, not a blocker.
 Before declaring BLOCKED, consider alternative paths; record the missing conditions
@@ -23,6 +30,9 @@ original artifacts only when needed for reproduction. Do not manufacture a repor
 or copy evidence unnecessarily. Verify that configuration/code interventions actually
 took effect before interpreting outcomes. Execute tests required by the goal and
 probe; record their results or explain precisely why they could not run.
+For authorized optimization, retain effective changes and clean up or revert your
+own ineffective experimental changes without undoing others' work. Record what
+remains in the project so later probes use the actual baseline.
 Write actions, actual observations, the answer to the question, evidence locations,
 and applicable conditions. Separate facts from explanations and unverified hypotheses.
 If execution is impossible, record missing conditions honestly; Expert decides whether

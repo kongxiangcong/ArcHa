@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def project(tmp_path):
     target = tmp_path / 'project'
     target.mkdir()
-    result = subprocess.run([sys.executable, str(ROOT / 'skills/archa-map/scripts/initialize.py'),
+    result = subprocess.run([sys.executable, str(ROOT / 'skills/archa-discuss/scripts/initialize.py'),
                              '--project', str(target)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     return target

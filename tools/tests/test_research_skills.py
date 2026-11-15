@@ -5,7 +5,7 @@ import shutil
 import pytest
 from tools.tests.test_topic_skills import ROOT, call
 
-spec = importlib.util.spec_from_file_location('initialize', ROOT / 'skills/archa-map/scripts/initialize.py')
+spec = importlib.util.spec_from_file_location('initialize', ROOT / 'skills/archa-discuss/scripts/initialize.py')
 initialize = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(initialize)
 
@@ -14,7 +14,7 @@ def test_bundle_is_relocatable_and_integrity_checked(tmp_path):
     skills = tmp_path / 'skills'
     call(ROOT / 'tools/install_research_skills.py', '--destination', skills)
     moved = tmp_path / 'relocated'
-    shutil.move(skills / 'archa-map', moved)
+    shutil.move(skills / 'archa-discuss', moved)
     target = tmp_path / 'target'
     target.mkdir()
     call(moved / 'scripts/initialize.py', '--project', target, cwd=target)

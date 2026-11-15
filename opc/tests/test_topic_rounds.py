@@ -45,6 +45,28 @@ def test_run_and_additional_budget_preserve_completed_rounds(project):
     assert 'positive integer' in cli(project, 'resume', '--add-rounds', '0', ok=False)
 
 
+def test_goal_correction_replaces_only_pending_probe(project):
+    cli(project, 'init', '--goal', 'Original question', '--max-rounds', '2')
+    scripted(project)
+    for _ in range(3):
+        cli(project, 'step')
+    assert cli(project, 'stop')['activity'] == 'idle'
+    topic = project / '.archa/topics/research'
+    completed = topic / 'steps/step-01'
+    before = {p: p.read_bytes() for p in completed.iterdir() if p.is_file()}
+    (topic / 'GOAL.md').write_text('Investigate weight loading')
+    pending = topic / 'steps/step-02/probe.md'
+    assert cli(project, 'status')['next_action'] == 'executor'
+    pending.unlink()
+    assert cli(project, 'status')['next_action'] == 'expert'
+    result = execute(project, 'resume', code=5)
+    assert result['completed_rounds'] == 2
+    assert result['max_rounds'] == 2
+    assert 'Investigate weight loading' in pending.read_text()
+    assert 'Investigate weight loading' in pending.with_name('result.md').read_text()
+    assert all(p.read_bytes() == body for p, body in before.items())
+
+
 def worker(project, body):
     import json
     import sys

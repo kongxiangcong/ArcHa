@@ -21,7 +21,7 @@ def test_installed_skills_deploy_init_run_and_report(tmp_path):
     old = project / '.opc/history.txt'
     old.parent.mkdir()
     old.write_text('preserved legacy evidence')
-    call(skills / 'archa-map/scripts/initialize.py', '--project', project)
+    call(skills / 'archa-discuss/scripts/initialize.py', '--project', project)
     entry = project / '.archa/archa.py'
     call(entry, 'init', '-p', project, '--topic', 'evidence', '--goal', 'Explain observations', '--max-rounds', 1)
     (project / '.archa/workers.json').write_text(json.dumps({'roles': {r: {'preset': 'scripted'} for r in ('expert', 'executor')}}))
@@ -31,7 +31,7 @@ def test_installed_skills_deploy_init_run_and_report(tmp_path):
     topic = project / '.archa/topics/evidence'
     assert not (topic / 'PROGRESS_LOG.md').exists()
     before = {p: p.read_bytes() for p in topic.rglob('*') if p.is_file()}
-    report = call(skills / 'archa-log/scripts/log.py', *args, cwd=tmp_path)
+    report = call(entry, 'report', *args, cwd=tmp_path)
     body = Path(report['report']).read_text()
     assert 'BUDGET_EXHAUSTED' in body and 'Observed the current probe' in body
     assert 'steps/step-01/result.md' in body and 'STATE.md' in body
@@ -42,7 +42,7 @@ def test_installed_skills_deploy_init_run_and_report(tmp_path):
 
 def test_deployed_worker_check_is_read_only(tmp_path):
     project = tmp_path
-    call(ROOT / 'skills/archa-map/scripts/initialize.py', '--project', project)
+    call(ROOT / 'skills/archa-discuss/scripts/initialize.py', '--project', project)
     entry = project / '.archa/archa.py'
     args = ['-p', project, '--topic', 'check']
     call(entry, 'init', *args, '--goal', 'inspect')
@@ -57,10 +57,10 @@ def test_installed_stop_edit_resume_report(tmp_path):
     call(ROOT / 'tools/install_research_skills.py', '--destination', skills)
     project = tmp_path / 'target'
     project.mkdir()
-    call(skills / 'archa-map/scripts/initialize.py', '--project', project)
+    call(skills / 'archa-discuss/scripts/initialize.py', '--project', project)
     entry = project / '.archa/archa.py'
     args = ['-p', project, '--topic', 'intervene']
-    call(skills / 'archa-map/scripts/research.py', '--project', project, '--topic', 'intervene', '--goal', 'Check evidence', '--max-rounds', 1)
+    call(entry, 'init', *args, '--goal', 'Check evidence', '--max-rounds', 1)
     config = project / '.archa/workers.json'
     roles = {r: {'preset': 'scripted'} for r in ('expert', 'executor')}
     config.write_text(json.dumps({'roles': roles}))
@@ -85,7 +85,7 @@ def test_installed_stop_edit_resume_report(tmp_path):
         assert call(entry, 'resume', *args, code=5)['completed_rounds'] == 1
         assert 'Human corrected question' in probe.with_name('result.md').read_text()
         before = {p: p.read_bytes() for p in topic.rglob('*') if p.is_file()}
-        report = call(skills / 'archa-log/scripts/log.py', *args)
+        report = call(entry, 'report', *args)
         assert 'Human corrected question' in Path(report['report']).read_text()
         assert all(p.read_bytes() == body for p, body in before.items())
     finally:
