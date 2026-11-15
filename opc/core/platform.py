@@ -67,8 +67,13 @@ class ExecutionControl:
     log_dir: Path
     cancelled: str | None = None
     unknown: str | None = None
+    recorder: Callable | None = None
+    env: dict | None = None
 
     def record(self, process, state: str) -> None:
+        if self.recorder is not None:
+            self.recorder(process, state)
+            return
         from .model import write_json
         write_json(self.log_dir / "process.json", {
             "pid": process.pid, "state": state, "returncode": process.returncode,
@@ -79,8 +84,8 @@ _EXECUTION: ContextVar[ExecutionControl | None] = ContextVar("opc_execution", de
 
 
 @contextmanager
-def execution_control(check: Callable[[], str | None], log_dir: Path):
-    scope = ExecutionControl(check, log_dir)
+def execution_control(check: Callable[[], str | None], log_dir: Path, *, recorder=None, env=None):
+    scope = ExecutionControl(check, log_dir, recorder=recorder, env=env)
     token = _EXECUTION.set(scope)
     try:
         yield scope
@@ -111,6 +116,9 @@ class Process(subprocess.Popen):
         else:
             kwargs["start_new_session"] = True
         try:
+            if self._control is not None and self._control.recorder is not None:
+                self._control.record(self, "starting")
+                kwargs["env"] = {**kwargs.get("env", os.environ), **(self._control.env or {})}
             super().__init__(argv, **kwargs)
             if self._job is not None:
                 self._job.attach_and_resume(self)
@@ -126,6 +134,9 @@ class Process(subprocess.Popen):
             finally:
                 if self._job is not None:
                     self._job.close()
+            control = _EXECUTION.get()
+            if control is not None and control.recorder is not None:
+                control.record(self, "ended")
             raise
 
     def wait(self, timeout=None):
@@ -200,7 +211,8 @@ class Process(subprocess.Popen):
                 self._control.record(self, "unknown")
             raise
         if self._control is not None:
-            self._control.record(self, "cancelled" if self.cancel_reason else "completed")
+            self._control.record(self, "ended" if self._control.recorder else
+                                 ("cancelled" if self.cancel_reason else "completed"))
 
     def tree_alive(self):
         if self._job is not None:

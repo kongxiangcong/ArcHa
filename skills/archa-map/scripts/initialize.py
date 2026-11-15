@@ -55,6 +55,7 @@ RUNTIME_FILES = (
     "opc/topic_cli.py",
     "opc/core/topic_workspace.py",
     "opc/core/topic_engine.py",
+    "opc/core/topic_control.py",
     "opc/adapters/topic_prompts.py",
     "opc/adapters/topic_worker.py",
     "opc/scaffold/templates.py",

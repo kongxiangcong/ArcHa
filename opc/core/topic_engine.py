@@ -1,7 +1,6 @@
 """Single role dispatch with explicit prepared and published output boundaries."""
 import os
 import re
-from contextlib import contextmanager
 from .topic_workspace import TopicWorkspace
 from ..adapters.topic_prompts import prompt
 from ..adapters.topic_worker import invoke
@@ -10,12 +9,6 @@ from ..adapters.topic_worker import invoke
 class TopicEngine:
     def __init__(self, project, topic):
         self.workspace = TopicWorkspace(project, topic)
-
-    @contextmanager
-    def lifecycle(self):
-        with self.workspace.writer():
-            self.workspace.recover()
-            yield
 
     def run(self):
         with self.lifecycle():
@@ -35,14 +28,19 @@ class TopicEngine:
         return status
 
     def step(self):
-        w = self.workspace
-        with w.writer():
-            w.recover()
-            return self.step_locked()
+        with self.lifecycle():
+            self.step_locked()
+        return self.workspace.status()
+
+    def lifecycle(self):
+        from .topic_control import lifecycle
+        return lifecycle(self.workspace)
 
     def step_locked(self):
         """Dispatch once with the project lock held and recovery complete."""
         w = self.workspace
+        from .topic_control import check_stop
+        check_stop(w)
         status = w.status()
         role = status['next_action']
         if role not in {'expert', 'executor', 'expert_finalize'}:
