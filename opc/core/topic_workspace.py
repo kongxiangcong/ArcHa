@@ -118,7 +118,8 @@ class TopicWorkspace:
         action = state.lower() if state != 'IN_PROGRESS' else (
             'executor' if rounds and not rounds[-1][1] else
             'expert_finalize' if completed == budget else 'expert')
-        return dict(topic=self.topic, status=state, max_rounds=budget,
+        from .topic_control import activity
+        return dict(**activity(self), topic=self.topic, status=state, max_rounds=budget,
                     completed_rounds=completed, next_action=action,
                     current_round=len(rounds) if action == 'executor' else completed + 1,
                     publishing=any((self.path / 'steps').glob('step-*/.staging.commit')))

@@ -10,14 +10,19 @@ class TopicEngine:
         self.workspace = TopicWorkspace(project, topic)
 
     def step(self):
-        w = self.workspace
-        with w.writer():
-            w.recover()
-            return self.step_locked()
+        with self.lifecycle():
+            self.step_locked()
+        return self.workspace.status()
+
+    def lifecycle(self):
+        from .topic_control import lifecycle
+        return lifecycle(self.workspace)
 
     def step_locked(self):
         """Dispatch once with the project lock held and recovery complete."""
         w = self.workspace
+        from .topic_control import check_stop
+        check_stop(w)
         status = w.status()
         role = status['next_action']
         if role not in {'expert', 'executor', 'expert_finalize'}:

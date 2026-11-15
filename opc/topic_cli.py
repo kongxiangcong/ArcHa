@@ -10,7 +10,7 @@ from .core.topic_engine import TopicEngine
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='opc')
     sub = parser.add_subparsers(dest='command', required=True)
-    for command in ('init', 'step', 'status'):
+    for command in ('init', 'step', 'status', 'stop'):
         p = sub.add_parser(command)
         p.add_argument('-p', '--project', required=True)
         p.add_argument('--topic', required=True)
@@ -26,6 +26,9 @@ def main(argv=None):
             result = workspace.initialize(args.goal_file.read_text() if args.goal_file else args.goal, args.max_rounds)
         elif args.command == 'step':
             result = TopicEngine(args.project, args.topic).step()
+        elif args.command == 'stop':
+            from .core.topic_control import stop
+            result = stop(workspace)
         else:
             result = workspace.status()
         print(json.dumps(result, ensure_ascii=False, indent=2))
