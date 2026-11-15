@@ -9,13 +9,15 @@
 | `init [--goal TEXT 或 --goal-file PATH] [--max-rounds N] [--template default或pim]` | 初始化专题，不覆盖已有目标、状态或配置；空目标不能运行 |
 | `check` | 只读校验 Worker 配置 |
 | `step` | 执行一次 Expert、Executor 或收尾调用 |
-| `run` | 执行到领域终态或调用失败 |
+| `run [--debug-probes / --no-debug-probes]` | 执行到领域终态、探针断点或调用失败 |
 | `stop` | 停止当前调用并等待归属进程结束 |
-| `resume [--add-rounds N]` | 恢复提交，显式解除已处理阻塞，按需追加预算并继续 |
+| `resume [--add-rounds N] [--debug-probes / --no-debug-probes]` | 恢复提交，显式解除已处理阻塞，按需追加预算并继续 |
 | `status` | 只读查看状态、轮数、下一动作、当前执行和错误 |
 | `report` | 从已有材料生成专题内 `PROGRESS_LOG.md`，不调用 Worker |
 
-退出码：一般成功为 0，输入或执行错误为 2；`run`/`resume` 分别以 0、3、4、5 表示 `COMPLETED`、`IN_PROGRESS`、`BLOCKED`、`BUDGET_EXHAUSTED`。预算耗尽不是调用失败，也不表示目标已完成。
+退出码：一般成功为 0，输入或执行错误为 2；`run`/`resume` 分别以 0、3、4、5 表示 `COMPLETED`、`IN_PROGRESS`、`BLOCKED`、`BUDGET_EXHAUSTED`。正常探针断点等待返回 0（专题仍为 `IN_PROGRESS`）。预算耗尽不是调用失败，也不表示目标已完成。
+
+`--debug-probes` 在专家提交探针后、Executor 派发前正常结束并释放锁。设置保存在专题 `.debug-probes` 标记中；后续 `run`/`resume` 执行当前探针，到下一探针再次停下。首次启用时已有待执行探针也会先停下供检查。`--no-debug-probes` 显式恢复自动运行；`step` 仍只派发一次角色。`status` 的 `debug_probes` 表示选项，`probe_breakpoint` 表示无错误且空闲的探针等待。
 
 工程 `.archa/workers.json` 优先；缺省使用 [分发配置](scaffold/workers.json)。角色为 `expert`、`executor`，可选显式 preset 或命令数组。例如自定义 Executor：
 
@@ -97,4 +99,4 @@ Executor 写 `.staging.result.md`，成功检查后原子替换为 `result.md`�
 
 项目本地部署、固定运行时显式升级及配置保留见 [仓库入口](../README.md)。部署文件清单只维护在 [initialize.py](../skills/archa-discuss/scripts/initialize.py) 的 `RUNTIME_FILES`，安装器复用；包含传递依赖与模板资源。
 
-工作台只显示 Expert、Executor 和收尾的活动、流式日志与已有材料，不推断模型私有活动；当前认知不冒充历史状态快照。控制限于停止、继续、追加预算，请求与实际状态分开展示，服务端独占锁防止重复启动。材料读取限制在明确允许的根目录，禁止越界或执行原始 HTML；demo 使用同一专题接口。
+工作台只显示 Expert、Executor 和收尾的活动、流式日志与已有材料，不推断模型私有活动；当前认知不冒充历史状态快照。控制提供停止、继续、追加预算和探针断点调试（HTTP `resume` 的可选布尔字段 `debug_probes`），请求与实际状态分开展示，服务端独占锁防止重复启动。主屏直接读取当前探针，输入与认知状态、历史日志按需展开；专题详情的 `current_probe` 引用权威探针材料。材料读取限制在明确允许的根目录，禁止越界或执行原始 HTML；demo 使用同一专题接口。

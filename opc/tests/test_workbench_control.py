@@ -83,3 +83,28 @@ def test_control_disabled_and_unknown_owner_are_explicit(tmp_path):
         assert client.post(PREFIX + '/resume', json={}).status_code == 409
         assert client.post(PREFIX + '/stop', json={'execution_id': 'abandoned'}).status_code == 409
         assert client.get(PREFIX).json()['activity'] == 'unknown'
+
+
+def test_probe_breakpoint_http_continue_and_read_only_materials(tmp_path):
+    w = setup(tmp_path)
+    with w.writer():
+        w.resume(1)
+    (tmp_path / '.archa/workers.json').write_text(json.dumps({
+        'roles': {role: {'preset': 'scripted'} for role in ('expert', 'executor')}}))
+    with TestClient(create_app(tmp_path, control=True)) as client:
+        assert client.post(PREFIX + '/resume', json={'debug_probes': True}).status_code == 202
+        detail = wait_idle(client)
+        assert detail['probe_breakpoint'] and detail['completed_rounds'] == 0
+        probe = detail['current_probe']
+        assert probe['name'] == 'probe.md'
+        assert client.get('/api/observer/v1/materials', params={'path': probe['path']}).json()['text']
+        assert client.get(PREFIX).json()['completed_rounds'] == 0
+        assert client.post(PREFIX + '/resume', json={}).status_code == 202
+        detail = wait_idle(client)
+        assert detail['probe_breakpoint'] and detail['completed_rounds'] == 1
+        assert detail['current_round'] == 2 and detail['error'] is None
+        assert client.post(PREFIX + '/resume', json={'debug_probes': False}).status_code == 202
+        detail = wait_idle(client)
+        assert detail['status'] == 'BUDGET_EXHAUSTED' and not detail['debug_probes']
+        assert detail['current_probe'] is None
+        assert client.post(PREFIX + '/resume', json={'debug_probes': 'true'}).status_code == 422

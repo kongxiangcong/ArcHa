@@ -129,6 +129,11 @@ function Controls({ detail }: { detail: TopicDetail }) {
   const [message, setMessage] = useState("");
   const [failure, setFailure] = useState("");
   const [rounds, setRounds] = useState("");
+  const [debug, setDebug] = useState(detail.debug_probes || false);
+  useEffect(
+    () => setDebug(detail.debug_probes || false),
+    [detail.debug_probes],
+  );
   const active =
     detail.activity === "running" || detail.activity === "stopping";
   const exhausted = detail.status === "BUDGET_EXHAUSTED";
@@ -141,7 +146,11 @@ function Controls({ detail }: { detail: TopicDetail }) {
         await api.stop(detail.topic, detail.execution.id);
         setMessage("停止请求已处理；执行活动以服务端状态为准。");
       } else {
-        await api.resume(detail.topic, rounds ? Number(rounds) : undefined);
+        await api.resume(
+          detail.topic,
+          rounds ? Number(rounds) : undefined,
+          debug,
+        );
         setMessage("继续请求已接收；请查看执行活动和结果。");
       }
     } catch (error) {
@@ -154,6 +163,16 @@ function Controls({ detail }: { detail: TopicDetail }) {
     <section aria-label="专题控制">
       {detail.status !== "COMPLETED" && (
         <>
+          <label>
+            <input
+              type="checkbox"
+              aria-label="探针断点调试"
+              checked={debug}
+              onChange={(event) => setDebug(event.target.checked)}
+              disabled={active || !!pending}
+            />
+            探针断点调试
+          </label>
           <label>
             追加轮数{" "}
             <input
@@ -180,7 +199,13 @@ function Controls({ detail }: { detail: TopicDetail }) {
               ? "追加并继续"
               : detail.status === "BLOCKED"
                 ? "条件已补齐，继续"
-                : "继续"}
+                : debug && !detail.debug_probes
+                  ? "启用调试并继续"
+                  : !debug && detail.debug_probes
+                    ? "关闭调试并自动继续"
+                    : detail.probe_breakpoint
+                      ? "执行当前探针并继续"
+                      : "继续"}
           </button>
           {exhausted && <p>轮数已耗尽，请追加预算后继续。</p>}
         </>
@@ -339,7 +364,11 @@ export default function App() {
               </p>
               <p>
                 执行活动{" "}
-                <strong>{activities[detail.activity || "unknown"]}</strong>
+                <strong>
+                  {detail.probe_breakpoint
+                    ? "探针断点等待"
+                    : activities[detail.activity || "unknown"]}
+                </strong>
                 {detail.publishing && " · 成果提交中"}
               </p>
               {execution && (
@@ -359,64 +388,71 @@ export default function App() {
               {detail.error && <p role="alert">{detail.error}</p>}
             </section>
             {overview?.control && <Controls key={topic} detail={detail} />}
-            <div className="workspace-grid">
-              <section>
-                <h2>当前认知状态</h2>
-                <p className="muted">STATE.md 是当前认知，不是历史轮次快照。</p>
-                {currentState && (
-                  <Reader path={currentState.path} onOpen={open} live />
-                )}
+            {detail.current_probe && (
+              <section aria-label="当前探针">
+                <h2>第 {detail.current_round} 轮 · 待执行探针</h2>
+                <Reader path={detail.current_probe.path} onOpen={open} live />
               </section>
-              <section>
-                <h2>轮次材料</h2>
-                <nav aria-label="轮次">
-                  {detail.rounds.map((item) => (
-                    <button
-                      key={item.number}
-                      aria-pressed={selected?.number === item.number}
-                      onClick={() => setRound(item.number)}
-                    >
-                      第 {item.number} 轮{item.completed ? " · 已完成" : ""}
+            )}
+            <details>
+              <summary>输入与认知状态</summary>
+              <p className="muted">STATE.md 是当前认知，不是历史轮次快照。</p>
+              <div className="material-buttons">
+                {detail.materials
+                  .filter((item) => item.name !== "STATE.md")
+                  .map((item) => (
+                    <button key={item.path} onClick={() => open(item.path)}>
+                      {item.name}
                     </button>
                   ))}
-                </nav>
-                {selected ? (
-                  <>
-                    <h3>第 {selected.number} 轮</h3>
-                    <div className="material-buttons">
-                      {selected.materials.map((item) => (
+              </div>
+              {currentState && (
+                <Reader path={currentState.path} onOpen={open} live />
+              )}
+            </details>
+            <details>
+              <summary>轮次历史与日志</summary>
+              <nav aria-label="轮次">
+                {detail.rounds.map((item) => (
+                  <button
+                    key={item.number}
+                    aria-pressed={selected?.number === item.number}
+                    onClick={() => setRound(item.number)}
+                  >
+                    第 {item.number} 轮{item.completed ? " · 已完成" : ""}
+                  </button>
+                ))}
+              </nav>
+              {selected ? (
+                <>
+                  <h3>第 {selected.number} 轮</h3>
+                  <div className="material-buttons">
+                    {selected.materials
+                      .filter(
+                        (item) => item.path !== detail.current_probe?.path,
+                      )
+                      .map((item) => (
                         <button key={item.path} onClick={() => open(item.path)}>
                           {item.name}
                         </button>
                       ))}
-                    </div>
-                    {selected.logs.map((log) => (
-                      <details key={log.path} open>
-                        <summary>{roles[log.role]} · stdout / stderr</summary>
-                        <Reader
-                          key={execution?.id || "idle"}
-                          path={log.path}
-                          onOpen={open}
-                          live
-                        />
-                      </details>
-                    ))}
-                  </>
-                ) : (
-                  <p>尚无轮次材料</p>
-                )}
-              </section>
-            </div>
-            <section>
-              <h2>专题材料</h2>
-              <div className="material-buttons">
-                {detail.materials.map((item) => (
-                  <button key={item.path} onClick={() => open(item.path)}>
-                    {item.name === "STATE.md" ? "当前 STATE.md" : item.name}
-                  </button>
-                ))}
-              </div>
-            </section>
+                  </div>
+                  {selected.logs.map((log) => (
+                    <details key={log.path}>
+                      <summary>{roles[log.role]} · stdout / stderr</summary>
+                      <Reader
+                        key={execution?.id || "idle"}
+                        path={log.path}
+                        onOpen={open}
+                        live
+                      />
+                    </details>
+                  ))}
+                </>
+              ) : (
+                <p>尚无轮次材料</p>
+              )}
+            </details>
             <section id="material-reader" tabIndex={-1} aria-label="材料阅读">
               <h2>材料阅读</h2>
               {material ? (

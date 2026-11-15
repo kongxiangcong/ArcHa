@@ -10,21 +10,35 @@ class TopicEngine:
     def __init__(self, project, topic):
         self.workspace = TopicWorkspace(project, topic)
 
-    def run(self):
+    def run(self, debug_probes=None):
         with self.lifecycle():
-            self.run_locked()
+            self.run_locked(self.configure_debug(debug_probes))
         return self.workspace.status()
 
-    def resume(self, add_rounds=None):
+    def resume(self, add_rounds=None, debug_probes=None):
         with self.lifecycle():
             self.workspace.resume(add_rounds)
-            self.run_locked()
+            self.run_locked(self.configure_debug(debug_probes))
         return self.workspace.status()
 
-    def run_locked(self):
+    def configure_debug(self, enabled):
+        """Persist explicit user selection under the execution lock."""
+        path = self.workspace.path / '.debug-probes'
+        newly_enabled = enabled is True and not path.exists()
+        if enabled is True:
+            path.touch(exist_ok=True)
+        elif enabled is False:
+            path.unlink(missing_ok=True)
+        return newly_enabled
+
+    def run_locked(self, pause_existing=False):
         status = self.workspace.status()
+        if pause_existing and status['next_action'] == 'executor':
+            return status
         while status['status'] == 'IN_PROGRESS':
             status = self.step_locked()
+            if status['debug_probes'] and status['next_action'] == 'executor':
+                break
         return status
 
     def step(self):

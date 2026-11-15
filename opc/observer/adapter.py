@@ -53,7 +53,9 @@ class ObserverAdapter:
                     if (directory / f'.{role}.log').is_file()]
             rounds.append(dict(number=number, completed=(directory / 'result.md').exists(),
                                materials=materials, logs=logs))
-        return dict(**value, rounds=sorted(rounds, key=lambda item: item['number']),
+        pending = next((item for item in rounds if item['number'] == value['current_round'] and not item['completed']), None)
+        current_probe = next((item for item in pending['materials'] if item['name'] == 'probe.md'), None) if pending else None
+        return dict(**value, current_probe=current_probe, rounds=sorted(rounds, key=lambda item: item['number']),
                     materials=[self.material(workspace.path / name) for name in ('GOAL.md', 'STATE.md', 'PROGRESS_LOG.md')
                                if (workspace.path / name).is_file()])
 

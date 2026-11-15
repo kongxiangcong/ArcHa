@@ -22,7 +22,7 @@ def main():
         with socket.socket() as socket_:
             socket_.bind(('127.0.0.1', 0))
             port = socket_.getsockname()[1]
-        server = uvicorn.Server(uvicorn.Config(create_app(root), host='127.0.0.1', port=port, log_level='warning'))
+        server = uvicorn.Server(uvicorn.Config(create_app(root, control=True), host='127.0.0.1', port=port, log_level='warning'))
         thread = threading.Thread(target=server.run, daemon=True)
         thread.start()
         try:
@@ -67,16 +67,19 @@ output.write_text('# ' + role + ' material\n\n[Original](../../../../../evidence
                 page = browser.new_page()
                 page.goto(origin + '?topic=research')
                 expect(page.get_by_label('选择专题')).to_have_value('research')
-                expect(page.get_by_role('heading', name='当前认知状态')).to_be_visible()
+                expect(page.get_by_text('输入与认知状态', exact=True)).to_be_visible()
                 expect(page.get_by_text('IN_PROGRESS', exact=True)).to_be_visible()
                 expect(page.get_by_text('运行中', exact=True)).to_be_visible()
+                page.get_by_text('轮次历史与日志', exact=True).click()
+                page.get_by_text('Expert · stdout / stderr', exact=True).click()
                 expect(page.locator('pre').filter(has_text='expert live stdout')).to_contain_text('expert live stderr')
                 assert process.poll() is None, 'must observe stdout while worker is alive'
                 (root / 'release-expert').touch()
+                page.get_by_text('Executor · stdout / stderr', exact=True).click()
                 expect(page.locator('pre').filter(has_text='executor live stdout')).to_contain_text('executor live stderr', timeout=10000)
-                page.get_by_role('button', name='probe.md', exact=True).click()
-                expect(page.locator('#material-reader')).to_contain_text('expert material')
+                expect(page.get_by_label('当前探针')).to_contain_text('expert material')
                 (root / 'release-executor').touch()
+                page.get_by_text('Expert · 收尾消化 · stdout / stderr', exact=True).click()
                 expect(page.locator('pre').filter(has_text='expert_finalize live stdout')).to_contain_text('expert_finalize live stderr', timeout=10000)
                 expect(page.get_by_text('Expert · 收尾消化 · stdout / stderr', exact=True)).to_be_visible()
                 (root / 'release-expert_finalize').touch()
@@ -125,7 +128,48 @@ output.write_text('# ' + role + ' material\n\n[Original](../../../../../evidence
                 page.keyboard.press('Tab')
                 assert page.evaluate('document.activeElement.tagName') == 'A'
                 assert page.get_by_role('button', name='暂停').count() == 0
+                # A second topic exercises actual controls and Worker subprocesses.
+                subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / 'skills/archa-discuss/scripts/initialize.py'), '--project', str(root)], check=True, capture_output=True)
+                launcher = root / '.archa/archa.py'
+                subprocess.run([sys.executable, str(launcher), 'init', '-p', str(root), '--topic', 'debug', '--goal', 'Inspect hypothesis evidence', '--max-rounds', '2'], check=True, capture_output=True)
+                worker.write_text(r"""import pathlib, sys
+role, state, output, topic = sys.argv[1:]
+state, output, topic = map(pathlib.Path, (state, output, topic))
+print(role + ' diagnostic output', flush=True)
+if role == 'expert':
+    state.write_text((topic / 'STATE.md').read_text())
+    output.write_text('# Hypothesis and evidence\n\nKnown baseline suggests a mismatch.\n\n## Probe design\n\nMeasure the exact integer sum.')
+else:
+    output.write_text('Observed exact integer mismatch.')
+""")
+                (root / '.archa/workers.json').write_text(json.dumps({'roles': {role: {
+                    'command': [sys.executable, str(worker), role, '{state_file}', '{output_file}', '{topic_dir}'],
+                    'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 10,
+                } for role in ('expert', 'executor')}}))
+                page.goto(origin + '?topic=debug')
+                page.get_by_label('探针断点调试', exact=True).check()
+                page.get_by_role('button', name='启用调试并继续', exact=True).click()
+                expect(page.get_by_text('探针断点等待', exact=True)).to_be_visible(timeout=10000)
+                expect(page.get_by_role('heading', name='Hypothesis and evidence')).to_be_visible()
+                expect(page.get_by_role('heading', name='Probe design')).to_be_visible()
+                endpoint = origin + '/api/observer/v1/topics/debug'
+                assert page.request.get(endpoint).json()['completed_rounds'] == 0
+                page.reload()
+                expect(page.get_by_text('探针断点等待', exact=True)).to_be_visible()
+                assert page.request.get(endpoint).json()['completed_rounds'] == 0
+                page.get_by_text('轮次历史与日志', exact=True).click()
+                page.get_by_text('Expert · stdout / stderr', exact=True).click()
+                expect(page.locator('pre').filter(has_text='expert diagnostic output')).to_be_visible()
+                page.get_by_text('输入与认知状态', exact=True).click()
+                page.get_by_role('button', name='GOAL.md', exact=True).click()
+                expect(page.locator('#material-reader')).to_contain_text('Inspect hypothesis evidence')
+                page.get_by_role('button', name='执行当前探针并继续', exact=True).click()
+                expect(page.get_by_text('第 2 轮 · 待执行探针', exact=True)).to_be_visible(timeout=10000)
+                detail = page.request.get(endpoint).json()
+                assert detail['completed_rounds'] == 1 and detail['probe_breakpoint'] and detail['error'] is None
+                assert detail['execution'] is None
                 browser.close()
+                print('PASS browser debug: enable, read hypothesis/design, refresh, diagnostics, continue to next probe')
             print('PASS browser: live role logs, finalize failure, interruption, safe materials, read-only polling, theme, mobile and keyboard')
         finally:
             if 'process' in locals() and process.poll() is None:

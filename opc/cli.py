@@ -14,6 +14,9 @@ def main(argv=None):
         p = sub.add_parser(command)
         p.add_argument('-p', '--project', required=True)
         p.add_argument('--topic', required=True)
+        if command in {'run', 'resume'}:
+            p.add_argument('--debug-probes', action=argparse.BooleanOptionalAction, default=None,
+                           help='pause before each probe; selection persists for this topic')
         if command == 'resume':
             p.add_argument('--add-rounds', type=int)
         if command == 'init':
@@ -39,13 +42,15 @@ def main(argv=None):
             from .core.topic_control import stop
             result = stop(workspace)
         elif args.command == 'run':
-            result = TopicEngine(args.project, args.topic).run()
+            result = TopicEngine(args.project, args.topic).run(args.debug_probes)
         elif args.command == 'resume':
-            result = TopicEngine(args.project, args.topic).resume(args.add_rounds)
+            result = TopicEngine(args.project, args.topic).resume(args.add_rounds, args.debug_probes)
         else:
             result = workspace.status()
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if args.command in {'run', 'resume'}:
+            if result['probe_breakpoint']:
+                return 0
             return {'COMPLETED': 0, 'IN_PROGRESS': 3, 'BLOCKED': 4, 'BUDGET_EXHAUSTED': 5}[result['status']]
         return 0
     except (ValueError, OSError, KeyError) as exc:

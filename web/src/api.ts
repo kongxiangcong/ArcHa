@@ -17,10 +17,10 @@ async function read<T>(path: string, body?: object): Promise<T> {
   return value;
 }
 export const api = {
-  resume: (topic: string, add_rounds?: number) =>
+  resume: (topic: string, add_rounds?: number, debug_probes?: boolean) =>
     read<{ accepted: boolean }>(
       "/topics/" + encodeURIComponent(topic) + "/resume",
-      { add_rounds },
+      { add_rounds, debug_probes },
     ),
   stop: (topic: string, execution_id: string) =>
     read<Topic>("/topics/" + encodeURIComponent(topic) + "/stop", {

@@ -381,3 +381,50 @@ print('Done; see the file I wrote.')
     assert (topic / 'steps/step-01/result.md').read_text() == 'Input [9007199254740993]; expected 9007199254740993; actual 9007199254740992.'
     assert cli(project, 'step')['status'] == 'COMPLETED'
     assert 'Observed exact integer mismatch.' in (topic / 'STATE.md').read_text()
+
+
+def test_deployed_probe_breakpoints_continue_and_finalize(project):
+    cli(project, 'init', '--goal', 'Inspect evidence', '--max-rounds', '2')
+    scripted(project)
+    first = cli(project, 'run', '--debug-probes')
+    assert first['probe_breakpoint'] and first['completed_rounds'] == 0
+    assert first['activity'] == 'idle' and first['error'] is None
+    assert cli(project, 'status')['probe_breakpoint']
+    second = cli(project, 'resume')
+    assert second['probe_breakpoint'] and second['completed_rounds'] == 1
+    assert second['current_round'] == 2
+    result = subprocess.run([sys.executable, str(project / '.archa/archa.py'), 'resume',
+                             '-p', str(project), '--topic', 'research'], capture_output=True, text=True)
+    assert result.returncode == 5, result.stderr
+    final = json.loads(result.stdout)
+    assert final['status'] == 'BUDGET_EXHAUSTED' and final['completed_rounds'] == 2
+    assert not final['probe_breakpoint']
+
+
+@pytest.mark.parametrize('terminal', ['COMPLETED', 'BLOCKED'])
+def test_debug_probes_preserves_expert_terminal_decision(project, terminal):
+    cli(project, 'init', '--goal', 'Inspect evidence')
+    body = "import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text(pathlib.Path(sys.argv[2]).read_text().replace('IN_PROGRESS', sys.argv[3]))"
+    (project / '.archa/workers.json').write_text(json.dumps({'roles': {
+        'expert': {'command': [sys.executable, '-c', body, '{state_file}',
+                              '{topic_dir}/STATE.md', terminal],
+                   'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5},
+        'executor': {'preset': 'scripted'}}}))
+    result = subprocess.run([sys.executable, str(project / '.archa/archa.py'), 'run',
+                             '-p', str(project), '--topic', 'research', '--debug-probes'],
+                            capture_output=True, text=True)
+    assert result.returncode == (0 if terminal == 'COMPLETED' else 4), result.stderr
+    status = json.loads(result.stdout)
+    assert status['status'] == terminal and status['completed_rounds'] == 0
+    assert not status['probe_breakpoint'] and status['error'] is None
+
+
+def test_enabling_debug_holds_existing_probe_and_step_stays_single_dispatch(project):
+    cli(project, 'init', '--goal', 'Inspect evidence', '--max-rounds', '3')
+    scripted(project)
+    cli(project, 'step')
+    assert cli(project, 'resume', '--debug-probes')['completed_rounds'] == 0
+    result = cli(project, 'step')
+    assert result['completed_rounds'] == 1 and result['next_action'] == 'expert'
+    result = cli(project, 'resume')
+    assert result['probe_breakpoint'] and result['completed_rounds'] == 1

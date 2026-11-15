@@ -132,7 +132,11 @@ class TopicWorkspace:
             error = error_path.read_text(encoding='utf-8')
         except FileNotFoundError:
             error = None
-        return dict(**activity(self), topic=self.topic, status=state, max_rounds=budget, error=error,
+        runtime = activity(self)
+        debug = (self.path / '.debug-probes').exists()
+        return dict(**runtime, debug_probes=debug,
+                    probe_breakpoint=debug and action == 'executor' and runtime['activity'] == 'idle' and not error,
+                    topic=self.topic, status=state, max_rounds=budget, error=error,
                     completed_rounds=completed, next_action=action,
                     current_round=(len(rounds) if action in {'executor', 'expert_finalize'} or state != 'IN_PROGRESS'
                                    else completed + 1),

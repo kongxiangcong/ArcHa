@@ -10,6 +10,8 @@ export type Topic = {
   next_action?: string;
   activity?: Activity;
   publishing?: boolean;
+  debug_probes?: boolean;
+  probe_breakpoint?: boolean;
   execution?: {
     id: string;
     role: Role;
@@ -24,7 +26,11 @@ export type Round = {
   materials: Material[];
   logs: (Material & { role: Role })[];
 };
-export type TopicDetail = Topic & { rounds: Round[]; materials: Material[] };
+export type TopicDetail = Topic & {
+  current_probe?: Material | null;
+  rounds: Round[];
+  materials: Material[];
+};
 export type Overview = {
   project: string;
   demo: boolean;

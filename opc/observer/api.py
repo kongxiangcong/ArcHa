@@ -1,13 +1,14 @@
 """Topic observation HTTP boundary; every GET is read-only."""
 from pathlib import Path
 from fastapi import FastAPI, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictBool
 from .control import resume
 from ..core.topic_control import stop
 
 
 class ResumeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    debug_probes: StrictBool | None = None
     add_rounds: StrictInt | None = Field(default=None, gt=0)
 
 
@@ -62,7 +63,7 @@ def create_app(root: Path | str, demo=False, *, control=False, topics=None):
 
     @app.post(prefix + '/topics/{topic}/resume', status_code=202)
     def resume_topic(topic: str, body: ResumeRequest):
-        return resume(controlled_workspace(topic), body.add_rounds)
+        return resume(controlled_workspace(topic), body.add_rounds, body.debug_probes)
 
     @app.post(prefix + '/topics/{topic}/stop')
     def stop_topic(topic: str, body: StopRequest):

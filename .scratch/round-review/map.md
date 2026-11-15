@@ -16,6 +16,8 @@ Labels: wayfinder:map
 
 - [固定断点调试的最小范围](issues/01-review-control.md)：专家生成探针后停下，支持继续或方向反馈重拟；CLI 与现有工作台共用控制，保留排查所需原始材料。
 
+- [CLI 与工作台断点/继续已交付](issues/02-breakpoint-continue.md)：专题持久化调试选项，共用引擎断点，真实浏览器与 Worker 验证只读检查和继续至下一探针。
+
 ## Not yet specified
 
 无必须继续拆票的产品决策。参数命名、接口路径和最少的数据保存方式由实现时结合现有代码决定。

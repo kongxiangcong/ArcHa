@@ -6,7 +6,7 @@ from threading import Thread
 from ..core.engine import TopicEngine
 
 
-def resume(workspace, add_rounds=None):
+def resume(workspace, add_rounds=None, debug_probes=None):
     admitted = Future()
 
     def execute():
@@ -19,8 +19,9 @@ def resume(workspace, add_rounds=None):
                 if status['status'] == 'BUDGET_EXHAUSTED' and add_rounds is None:
                     raise ValueError('BUDGET_EXHAUSTED requires additional rounds')
                 workspace.resume(add_rounds)
+                pause_existing = engine.configure_debug(debug_probes)
                 admitted.set_result({'accepted': True, 'execution_id': workspace.status()['execution']['id']})
-                engine.run_locked()
+                engine.run_locked(pause_existing)
         except Exception as exc:
             if not admitted.done():
                 admitted.set_exception(exc)
