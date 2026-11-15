@@ -255,6 +255,10 @@ def cmd_onboard(a) -> int:
 
 
 def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if any(arg == "--topic" or arg.startswith("--topic=") for arg in argv):
+        from .topic_cli import main as topic_main
+        return topic_main(argv)
     ap = argparse.ArgumentParser(prog="opc", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
 
