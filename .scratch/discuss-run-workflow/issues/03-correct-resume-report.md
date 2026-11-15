@@ -4,7 +4,7 @@
 
 **Blocked by:** 01：贯通讨论、执行准备与首次探索轮次。
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 依据：[父规格](../spec.md)。本事项不依赖 02 的探针选择策略，可沿用现有 Expert/Executor 循环验证控制行为。
 
@@ -16,3 +16,10 @@
 - [ ] 准确解释研究完成、专题阻塞、预算耗尽及调用失败；保留真实错误和日志入口，不自动无限重试，不把研究完成当成合并或发布。
 - [ ] 在 01 的真实交互流程中演示停止、纠偏、重新出题、继续及按需报告；结合现有材料与自动回归验证普通恢复、已完成轮次和预算保持、报告前后权威材料不变。
 - [ ] 复用现有调度、停止和提交恢复能力，不新增重规划命令、目标哈希、自动变更检测或通用回滚机制；验收记录引用已有证据，避免重复报告。
+
+
+## Comments
+
+2026-11-15：基于 `integration/discuss-run-workflow` 的 `4392811` 验证候选两技能与现有调度；使用父规格已确认的已安装技能行为、安装器／项目本地 CLI seams。普通恢复测试原先手工改写 probe，不能证明恢复保留原探针，现改为保留并逐字核对实际 result；补充停止后修改目标仍使用旧探针、显式移除待执行 probe 后 Expert 重出题、保留前轮证据及两轮预算的 CLI 回归。离线状态／报告回归将 Worker 配置设为无效，证明无需调用 Worker，检查权威材料字节不变且仅新增请求的报告。脚本 Worker 只提供机械回归，不作为真实技能或研究证据。候选实现对这些行为首次即通过，未人为制造 red，也未据此修改已可用运行时。
+
+自动回归：`/tmp/archa-results-venv/bin/python -m pytest -q tools/tests/test_topic_skills.py opc/tests/test_topic_control.py opc/tests/test_topic_recovery.py opc/tests/test_topic_cli.py` → **69 passed**（52.24s）。沿用既有进程停止与提交恢复测试，未改提交边界；新增报告文件集合断言后单测复验。

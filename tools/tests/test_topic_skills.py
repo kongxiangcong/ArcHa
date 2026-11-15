@@ -51,7 +51,7 @@ def test_deployed_worker_check_is_read_only(tmp_path):
     assert all(p.read_bytes() == body for p, body in before.items())
 
 
-def test_installed_stop_edit_resume_report(tmp_path):
+def test_installed_stop_resume_preserves_pending_probe_and_reports_offline(tmp_path):
     import time
     skills = tmp_path / 'skills'
     call(ROOT / 'tools/install_research_skills.py', '--destination', skills)
@@ -79,16 +79,57 @@ def test_installed_stop_edit_resume_report(tmp_path):
         topic = project / '.archa/topics/intervene'
         probe = topic / 'steps/step-01/probe.md'
         assert 'visible progress' in probe.with_name('.executor.log').read_text()
-        probe.write_text('Human corrected question')
+        original_probe = probe.read_bytes()
         roles['executor'] = {'preset': 'scripted'}
         config.write_text(json.dumps({'roles': roles}))
         assert call(entry, 'resume', *args, code=5)['completed_rounds'] == 1
-        assert 'Human corrected question' in probe.with_name('result.md').read_text()
+        assert probe.read_bytes() == original_probe
+        assert original_probe.decode() in probe.with_name('result.md').read_text()
         before = {p: p.read_bytes() for p in topic.rglob('*') if p.is_file()}
         report = call(entry, 'report', *args)
-        assert 'Human corrected question' in Path(report['report']).read_text()
+        assert 'Check evidence' in Path(report['report']).read_text()
         assert all(p.read_bytes() == body for p, body in before.items())
     finally:
         if running.poll() is None:
             call(entry, 'stop', *args)
             running.communicate(timeout=5)
+
+
+def test_deployed_explicit_correction_reissues_probe_preserving_evidence_and_budget(tmp_path):
+    call(ROOT / 'skills/archa-discuss/scripts/initialize.py', '--project', tmp_path)
+    entry = tmp_path / '.archa/archa.py'
+    args = ['-p', tmp_path, '--topic', 'correct']
+    call(entry, 'init', *args, '--goal', 'Investigate input order', '--max-rounds', 2)
+    config = tmp_path / '.archa/workers.json'
+    config.write_text(json.dumps({'roles': {r: {'preset': 'scripted'} for r in ('expert', 'executor')}}))
+    call(entry, 'step', *args)
+    call(entry, 'step', *args)
+    call(entry, 'step', *args)
+    topic = tmp_path / '.archa/topics/correct'
+    completed = {p: p.read_bytes() for p in (topic / 'steps/step-01').iterdir() if p.is_file()}
+    pending = topic / 'steps/step-02/probe.md'
+    original = pending.read_bytes()
+    stopped = call(entry, 'stop', *args)
+    assert stopped['activity'] == 'idle' and not stopped['publishing']
+    goal = topic / 'GOAL.md'
+    goal.write_text(goal.read_text().replace('Investigate input order', 'Investigate cancellation at 2**53'))
+    # Editing the goal alone leaves the already-published probe in place.
+    assert call(entry, 'status', *args)['next_action'] == 'executor'
+    assert pending.read_bytes() == original
+    pending.unlink()
+    assert call(entry, 'status', *args)['next_action'] == 'expert'
+    resumed = call(entry, 'resume', *args, code=5)
+    assert resumed['completed_rounds'] == 2 and resumed['max_rounds'] == 2
+    assert 'Investigate cancellation at 2**53' in pending.read_text()
+    assert 'Investigate input order' not in pending.read_text()
+    assert pending.read_text() in pending.with_name('result.md').read_text()
+    assert all(p.read_bytes() == data for p, data in completed.items())
+    # Neither read-only status nor report can invoke these now-invalid Workers.
+    config.write_text('{}')
+    authoritative = {p: p.read_bytes() for p in topic.rglob('*') if p.is_file()}
+    assert call(entry, 'status', *args)['status'] == 'BUDGET_EXHAUSTED'
+    assert not (topic / 'PROGRESS_LOG.md').exists()
+    report = call(entry, 'report', *args)
+    assert 'Investigate cancellation at 2**53' in Path(report['report']).read_text()
+    assert all(p.read_bytes() == data for p, data in authoritative.items())
+    assert {p for p in topic.rglob('*') if p.is_file()} - authoritative.keys() == {Path(report['report'])}
