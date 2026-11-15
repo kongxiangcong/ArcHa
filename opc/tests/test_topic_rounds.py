@@ -66,7 +66,7 @@ assert 'hypotheses' in prompt
 assert 'conditions' in prompt
 assert 'tests required by the goal' in prompt
 status = 'COMPLETED' if (topic / 'conditions-ready').exists() else 'BLOCKED'
-state.write_text(state.read_text().replace('STATUS: IN_PROGRESS', 'STATUS: ' + status)
+state.write_text((topic / 'STATE.md').read_text().replace('STATUS: IN_PROGRESS', 'STATUS: ' + status)
                  + '\\nNeed access to evidence; no alternative path.\\n')
 """)
     assert execute(project, 'run', code=4)['completed_rounds'] == 0
@@ -111,7 +111,7 @@ assert 'LOG_MUST_NOT_BE_INJECTED' not in prompt
 assert 'PREVIOUS result.md' in prompt and 'Observed the current probe' in prompt
 assert 'Role: expert_finalize' in prompt
 assert 'Do not create a probe' in prompt
-state.write_text(state.read_text().replace('STATUS: IN_PROGRESS', 'STATUS: COMPLETED')
+state.write_text((topic / 'STATE.md').read_text().replace('STATUS: IN_PROGRESS', 'STATUS: COMPLETED')
                  + '\\nEvidence supports the completion criteria.\\n')
 """)
     result = execute(project, 'run', code=0)
@@ -123,7 +123,7 @@ state.write_text(state.read_text().replace('STATUS: IN_PROGRESS', 'STATUS: COMPL
 def test_resume_reuses_absorbed_fact_and_negative_result_without_retry(project):
     cli(project, 'init', '--goal', 'Check evidence', '--max-rounds', '1')
     worker(project, """
-text = state.read_text()
+text = (topic / 'STATE.md').read_text()
 assert 'without counting the same observation again' in prompt
 if 'PREVIOUS result.md' in prompt and 'Unique fact: negative observation.' not in text:
     text += '\\nUnique fact: negative observation.\\n'

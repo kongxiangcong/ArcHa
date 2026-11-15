@@ -39,6 +39,13 @@ def parse_state(text):
     return values['STATUS'], int(values['MAX_ROUNDS'])
 
 
+def replace_state_header(text, state, budget):
+    """Replace validated metadata while retaining the cognitive body verbatim."""
+    lines = text.splitlines(keepends=True)
+    end = next((i for i, line in enumerate(lines[1:], 1) if not line.strip()), len(lines))
+    return f'# Exploration State\nSTATUS: {state}\nMAX_ROUNDS: {budget}\n' + ''.join(lines[end:])
+
+
 class TopicWorkspace:
     def __init__(self, project, topic):
         self.project = Path(project).resolve()
@@ -147,11 +154,9 @@ class TopicWorkspace:
         if state == status['status'] and budget == status['max_rounds']:
             return
         path = self.path / 'STATE.md'
-        lines = path.read_text(encoding='utf-8').splitlines(keepends=True)
-        end = next((i for i, line in enumerate(lines[1:], 1) if not line.strip()), len(lines))
         temporary = self.path / '.STATE.resume.md'
-        temporary.write_text(f'# Exploration State\nSTATUS: {state}\nMAX_ROUNDS: {budget}\n'
-                             + ''.join(lines[end:]), encoding='utf-8')
+        temporary.write_text(replace_state_header(path.read_text(encoding='utf-8'), state, budget),
+                             encoding='utf-8')
         os.replace(temporary, path)
 
     def commit_expert(self, directory, max_rounds, *, finalize=False):
@@ -171,13 +176,8 @@ class TopicWorkspace:
                 raise ValueError('Expert probe is missing or empty')
         else:
             probe.unlink(missing_ok=True)
-        # Normalize only the metadata header, retaining the complete cognitive body.
-        lines = text.splitlines(keepends=True)
-        end = next((i for i, line in enumerate(lines[1:], 1) if not line.strip()), len(lines))
-        body = ''.join(lines[end:])
-        (stage / 'STATE.md').write_text(
-            f'# Exploration State\nSTATUS: {state}\nMAX_ROUNDS: {max_rounds}\n' + body,
-            encoding='utf-8')
+        (stage / 'STATE.md').write_text(replace_state_header(text, state, max_rounds),
+                                       encoding='utf-8')
         stage.rename(directory / '.staging.commit')
         self.publish_expert(directory)
 

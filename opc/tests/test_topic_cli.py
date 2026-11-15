@@ -146,18 +146,19 @@ def test_commands_accept_prompt_files_and_stdout_results(project):
     cli(project, 'init', '--goal', 'Investigate evidence')
     script = project / 'worker.py'
     script.write_text("""import pathlib, sys
-role, state, output, prompt = sys.argv[1:]
+role, state, output, prompt, topic = sys.argv[1:]
 assert 'Investigate evidence' in pathlib.Path(prompt).read_text()
 if role == 'expert':
-    assert 'STATUS: IN_PROGRESS' in pathlib.Path(state).read_text()
-    pathlib.Path(state).write_text(pathlib.Path(state).read_text() + '\\nEvidence reviewed.\\n')
+    current = (pathlib.Path(topic) / 'STATE.md').read_text()
+    assert 'STATUS: IN_PROGRESS' in current
+    pathlib.Path(state).write_text(current + '\\nEvidence reviewed.\\n')
     pathlib.Path(output).write_text('One focused question')
 else:
     print('Actual observation')
     print('Diagnostic only', file=sys.stderr)
 """)
     config = {'roles': {role: {'command': [sys.executable, str(script), role,
-                '{state_file}', '{output_file}', '{prompt_file}'], 'input_mode': 'file',
+                '{state_file}', '{output_file}', '{prompt_file}', '{topic_dir}'], 'input_mode': 'file',
                 'output_mode': 'file' if role == 'expert' else 'stdout', 'timeout_seconds': 5}
                 for role in ('expert', 'executor')}}
     (project / '.archa/workers.json').write_text(json.dumps(config))
@@ -309,3 +310,31 @@ def test_installed_cli_requires_topic_and_exposes_only_topic_commands(tmp_path):
                             capture_output=True, text=True, cwd=ROOT)
     assert result.returncode != 0 and '--topic' in result.stderr
     assert not (tmp_path / '.opc').exists()
+
+
+@pytest.mark.parametrize('finalize', [False, True])
+def test_expert_must_write_state_before_publishing(project, finalize):
+    cli(project, 'init', '--goal', 'Check evidence', '--max-rounds', '1')
+    scripted(project)
+    if finalize:
+        cli(project, 'step')
+        cli(project, 'step')
+    topic = project / '.archa/topics/research'
+    before = (topic / 'STATE.md').read_bytes()
+    body = "print('Expert exited without updating state', flush=True)"
+    if not finalize:
+        body += "; import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('Probe only')"
+    spec = {'command': [sys.executable, '-c', body, '{output_file}'],
+            'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5}
+    (project / '.archa/workers.json').write_text(json.dumps({'roles': {
+        'expert': spec, 'executor': {'preset': 'scripted'}}}))
+    assert 'missing or blank required output' in cli(project, 'step', ok=False)
+    assert (topic / 'STATE.md').read_bytes() == before
+    status = cli(project, 'status')
+    assert status['status'] == 'IN_PROGRESS'
+    assert status['next_action'] == ('expert_finalize' if finalize else 'expert')
+    step = topic / 'steps/step-01'
+    if not finalize:
+        assert not (step / 'probe.md').exists()
+    log = step / ('.expert_finalize.log' if finalize else '.expert.log')
+    assert 'Expert exited without updating state' in log.read_text()

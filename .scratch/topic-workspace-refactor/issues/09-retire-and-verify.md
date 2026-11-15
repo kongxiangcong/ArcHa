@@ -47,3 +47,9 @@
 | 工作台与全仓 | 两个真实浏览器工具、完整核心/工具收集回归、生产构建与独立 wheel 验收 |
 
 环境限制如实保留：真实 Codex 参数已按 `codex exec --help` 核实；最小真实调用返回 `failed to initialize in-process app-server client: Read-only file system (os error 30)`，未绕过权限，不能声称真实模型调用成功，详见 [02 验收记录](02-universal-worker.md)。本机不能执行 Windows 专属测试，保留对应回归与 Linux/Windows × Python 3.10/3.12/3.14 CI 矩阵。
+
+## Comments
+
+最终 Spec / Standards 审查修正：引擎不再预填 Expert 草稿；零退出但普通回合仅写探针、收尾回合没有状态产出时均失败并保留正式状态与日志，Worker 仍不删除调用方已有草稿。部署 CLI 两项回归先失败、移除预填后通过。同步修正 CLI、恢复、轮次及浏览器 Worker 夹具，使其从正式状态读取并显式写出完整状态。文件模式 stdout 仅流式落盘，stdout 模式才收集正文；进程控制要求 recorder，删除旧 process.json / log_dir 备用协议及无消费者写入函数，登记失败测试通过真实 recorder 注入且确认后代已启动；状态头替换复用一个保留正文的纯函数。
+
+修正验证：CLI/轮次/进程专项 44 passed，恢复专项 23 passed；更新余下恢复夹具后全仓 `pytest -q` 为 95 passed、3 skipped、12 subtests passed（57.34s，仍为上述 Windows 跳过及 anyio 弃用警告）。两个真实 Chromium 工具再次通过；前端未改动，复用既有生产构建，临时静态资源链接已移除。`git diff --check` 通过。

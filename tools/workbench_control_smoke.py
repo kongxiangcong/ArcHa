@@ -25,6 +25,8 @@ state, output, root = map(pathlib.Path,sys.argv[1:])
 print('Worker live output',flush=True)
 while not (root/'release').exists(): time.sleep(.05)
 if (root/'fail').exists(): sys.exit(9)
+if state.parent.name == '.staging.expert':
+    state.write_text((root / '.archa/topics/research/STATE.md').read_text() + '\\nEvidence reviewed.\\n')
 if state != output: output.write_text('Original evidence')
 ''')
         config = {'roles': {role: {'command': [sys.executable, str(worker), '{state_file}', '{output_file}', str(root)], 'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 30} for role in ('expert', 'executor')}}

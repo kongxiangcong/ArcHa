@@ -7,14 +7,12 @@ Neither mechanism is an OS sandbox against hostile code (e.g. POSIX setsid).
 from __future__ import annotations
 
 import errno
-import json
 import os
 import shutil
 import signal
 import subprocess
 import sys
 import time
-import tempfile
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -48,41 +46,25 @@ def unlock_writer(fd: int) -> None:
         fcntl.flock(fd, fcntl.LOCK_UN)
 
 
-def write_json(path: Path, value) -> None:
-    """Publish a complete process descriptor without exposing partial JSON."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='.tmp-', suffix=path.suffix)
-    with os.fdopen(fd, 'w', encoding='utf-8', newline='') as stream:
-        json.dump(value, stream, ensure_ascii=False, indent=2)
-        stream.write('\n')
-    os.replace(temporary, path)
-
-
 @dataclass
 class ExecutionControl:
     """One call's process boundary; each concurrent worker installs its own scope."""
     check: Callable[[], str | None]
-    log_dir: Path
+    recorder: Callable
     cancelled: str | None = None
     unknown: str | None = None
-    recorder: Callable | None = None
     env: dict | None = None
 
     def record(self, process, state: str) -> None:
-        if self.recorder is not None:
-            self.recorder(process, state)
-            return
-        write_json(self.log_dir / "process.json", {
-            "pid": process.pid, "state": state, "returncode": process.returncode,
-            "cancel_reason": process.cancel_reason, "termination_error": self.unknown})
+        self.recorder(process, state)
 
 
 _EXECUTION: ContextVar[ExecutionControl | None] = ContextVar("opc_execution", default=None)
 
 
 @contextmanager
-def execution_control(check: Callable[[], str | None], log_dir: Path, *, recorder=None, env=None):
-    scope = ExecutionControl(check, log_dir, recorder=recorder, env=env)
+def execution_control(check: Callable[[], str | None], *, recorder, env=None):
+    scope = ExecutionControl(check, recorder=recorder, env=env)
     token = _EXECUTION.set(scope)
     try:
         yield scope
@@ -113,7 +95,7 @@ class Process(subprocess.Popen):
         else:
             kwargs["start_new_session"] = True
         try:
-            if self._control is not None and self._control.recorder is not None:
+            if self._control is not None:
                 self._control.record(self, "starting")
                 kwargs["env"] = {**kwargs.get("env", os.environ), **(self._control.env or {})}
             super().__init__(argv, **kwargs)
@@ -132,7 +114,7 @@ class Process(subprocess.Popen):
                 if self._job is not None:
                     self._job.close()
             control = _EXECUTION.get()
-            if control is not None and control.recorder is not None:
+            if control is not None:
                 control.record(self, "ended")
             raise
 
@@ -208,8 +190,7 @@ class Process(subprocess.Popen):
                 self._control.record(self, "unknown")
             raise
         if self._control is not None:
-            self._control.record(self, "ended" if self._control.recorder else
-                                 ("cancelled" if self.cancel_reason else "completed"))
+            self._control.record(self, "ended")
 
     def tree_alive(self):
         if self._job is not None:
