@@ -26,3 +26,7 @@
 CLI `revise --feedback` 与 HTTP `revise` 共用引擎重拟控制。Expert 接收当前探针、方向意见、目标、认知状态及上一轮结果，并明确不重复吸收已计入观测、不改变目标；沿用 staged Expert 提交与恢复，保持当前轮次、预算及 IN_PROGRESS，失败保留正式探针。每轮仅保留最近一次 feedback.md 与重拟日志，工作台提供方向输入、调整活动、更新后探针及诊断材料。
 
 验证：先经 CLI 缺少命令、HTTP 缺少路由、浏览器缺少方向输入得到红测，再逐条实现。部署 CLI 和 HTTP 可控 Worker 验证输入、无实验结果、轮次/预算不增加与失败提案保留。真实 Chromium + HTTP + Worker 走通提交意见、查看调整、读取反馈、继续使用修改后探针并到下一断点。`pytest opc/tests -q` 为 89 passed、2 skipped；执行角色简化后补跑 CLI 重拟、HTTP/生命周期 11 项及完整浏览器均通过。前端 typecheck（build 内）及生产构建通过。唯一警告为现有 Starlette/AnyIO 弃用提示；未以真实模型质量作为确定性验收。
+
+评审修复：当前轮次改变时清空未提交方向草稿，避免旧探针意见落到下一探针。真实浏览器先复现第二轮仍保留旧草稿的失败，再验证浏览器继续和外部部署 CLI resume 两种推进后输入框均为空；同轮重拟与既有控制链路仍通过。
+
+修复后回归：`/tmp/archa-results-venv/bin/python -m pytest opc/tests tools/tests -q`：107 passed、3 skipped、12 subtests passed；仅现有 Starlette/AnyIO 弃用警告。前端 typecheck/build 及完整真实 Chromium + HTTP + Worker 冒烟通过。

@@ -461,3 +461,25 @@ output.write_text('Revised baseline probe')
     assert (step / 'probe.md').read_text() == 'Revised baseline probe'
     assert not (step / 'result.md').exists()
     assert cli(project, 'status')['error']
+
+
+def test_deployed_expert_receives_probe_hypothesis_and_evidence_contract(project):
+    cli(project, 'init', '--goal', 'Inspect integer precision', '--max-rounds', '2')
+    worker = project / 'expert.py'
+    worker.write_text("""import pathlib, sys
+state, output, topic = map(pathlib.Path, sys.argv[1:])
+text = sys.stdin.read()
+assert 'A continuing probe must include the current hypothesis and its supporting' in text
+assert 'evidence or rationale' in text
+state.write_text((topic / 'STATE.md').read_text())
+output.write_text('# Hypothesis\\nFloat conversion loses integer precision.\\n\\n'
+                  '## Evidence\\nBaseline 9007199254740993 became 9007199254740992.\\n\\n'
+                  '## Probe\\nCompare exact integer addition with the baseline.')
+""")
+    (project / '.archa/workers.json').write_text(json.dumps({'roles': {
+        'expert': {'command': [sys.executable, str(worker), '{state_file}', '{output_file}', '{topic_dir}'],
+                   'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5},
+        'executor': {'preset': 'scripted'}}}))
+    assert cli(project, 'run', '--debug-probes')['probe_breakpoint']
+    assert cli(project, 'revise', '--feedback', 'Keep the measured baseline')['probe_breakpoint']
+    assert cli(project, 'resume')['current_round'] == 2

@@ -20,7 +20,8 @@ Before declaring BLOCKED, consider alternative paths; record the missing conditi
 and why no feasible path remains. Declare COMPLETED only when the goal and its
 completion criteria are satisfied. This does not authorize review, merge or publication.
 Include tests required by the goal in the probe and account for their results in
-completion decisions. A continuing probe must specify the question, method,
+completion decisions. A continuing probe must include the current hypothesis and its supporting
+evidence or rationale, citing existing evidence locations where available. Specify the question, method,
 necessary conditions, evidence to record, and how to verify interventions took effect,
 correctness and goal benefit.
 Do not change MAX_ROUNDS, authoritative documents, or completed rounds.

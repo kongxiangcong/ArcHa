@@ -77,7 +77,7 @@ output.write_text('# ' + role + ' material\n\n[Original](../../../../../evidence
                 (root / 'release-expert').touch()
                 page.get_by_text('Executor · stdout / stderr', exact=True).click()
                 expect(page.locator('pre').filter(has_text='executor live stdout')).to_contain_text('executor live stderr', timeout=10000)
-                expect(page.get_by_label('当前探针')).to_contain_text('expert material')
+                expect(page.get_by_label('当前探针', exact=True)).to_contain_text('expert material')
                 (root / 'release-executor').touch()
                 page.get_by_text('Expert · 收尾消化 · stdout / stderr', exact=True).click()
                 expect(page.locator('pre').filter(has_text='expert_finalize live stdout')).to_contain_text('expert_finalize live stderr', timeout=10000)
@@ -131,7 +131,7 @@ output.write_text('# ' + role + ' material\n\n[Original](../../../../../evidence
                 # A second topic exercises actual controls and Worker subprocesses.
                 subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / 'skills/archa-discuss/scripts/initialize.py'), '--project', str(root)], check=True, capture_output=True)
                 launcher = root / '.archa/archa.py'
-                subprocess.run([sys.executable, str(launcher), 'init', '-p', str(root), '--topic', 'debug', '--goal', 'Inspect hypothesis evidence', '--max-rounds', '2'], check=True, capture_output=True)
+                subprocess.run([sys.executable, str(launcher), 'init', '-p', str(root), '--topic', 'debug', '--goal', 'Inspect hypothesis evidence', '--max-rounds', '3'], check=True, capture_output=True)
                 worker.write_text(r"""import pathlib, sys, time
 role, state, output, topic = sys.argv[1:]
 state, output, topic = map(pathlib.Path, (state, output, topic))
@@ -146,9 +146,10 @@ if 'Role: expert_revise' in text:
     sys.exit(0)
 if role == 'expert':
     state.write_text((topic / 'STATE.md').read_text())
-    output.write_text('# Hypothesis and evidence\n\nKnown baseline suggests a mismatch.\n\n## Probe design\n\nMeasure the exact integer sum.')
+    output.write_text('# Hypothesis and evidence\n\nHypothesis: float conversion loses integer precision.\n\nEvidence: baseline input 9007199254740993 produced 9007199254740992.\n\n## Probe design\n\nMeasure the exact integer sum.')
 else:
-    assert 'Measure negative integer sums.' in text
+    expected = 'Measure negative integer sums.' if 'step-01' in output.parts else 'Measure the exact integer sum.'
+    assert expected in text
     output.write_text('Observed negative integer mismatch from revised probe.')
 """)
                 (root / '.archa/workers.json').write_text(json.dumps({'roles': {role: {
@@ -161,6 +162,8 @@ else:
                 expect(page.get_by_text('探针断点等待', exact=True)).to_be_visible(timeout=10000)
                 expect(page.get_by_role('heading', name='Hypothesis and evidence')).to_be_visible()
                 expect(page.get_by_role('heading', name='Probe design')).to_be_visible()
+                expect(page.get_by_label('当前探针', exact=True)).to_contain_text('Hypothesis: float conversion loses integer precision.')
+                expect(page.get_by_label('当前探针', exact=True)).to_contain_text('Evidence: baseline input 9007199254740993 produced 9007199254740992.')
                 endpoint = origin + '/api/observer/v1/topics/debug'
                 assert page.request.get(endpoint).json()['completed_rounds'] == 0
                 page.reload()
@@ -178,18 +181,24 @@ else:
                 expect(page.get_by_role('heading', name='Revised probe')).to_be_visible(timeout=10000)
                 expect(page.get_by_text('探针断点等待', exact=True)).to_be_visible()
                 revised = page.request.get(endpoint).json()
-                assert revised['completed_rounds'] == 0 and revised['max_rounds'] == 2
+                assert revised['completed_rounds'] == 0 and revised['max_rounds'] == 3
                 page.get_by_role('button', name='feedback.md', exact=True).click()
                 expect(page.locator('#material-reader')).to_contain_text('Focus on negative integers')
+                page.get_by_label('当前探针方向意见', exact=True).fill('Unsent direction for round one')
                 page.get_by_role('button', name='执行当前探针并继续', exact=True).click()
                 expect(page.get_by_text('第 2 轮 · 待执行探针', exact=True)).to_be_visible(timeout=10000)
+                expect(page.get_by_label('当前探针方向意见', exact=True)).to_have_value('')
                 detail = page.request.get(endpoint).json()
                 assert detail['completed_rounds'] == 1 and detail['probe_breakpoint'] and detail['error'] is None
                 assert detail['execution'] is None
                 result = next(item for item in detail['rounds'][0]['materials'] if item['name'] == 'result.md')
                 assert 'Observed negative integer mismatch' in page.request.get(origin + '/api/observer/v1/materials', params={'path': result['path']}).json()['text']
+                page.get_by_label('当前探针方向意见', exact=True).fill('Unsent direction for round two')
+                subprocess.run([sys.executable, str(launcher), 'resume', '-p', str(root), '--topic', 'debug'], check=True, capture_output=True, timeout=15)
+                expect(page.get_by_text('第 3 轮 · 待执行探针', exact=True)).to_be_visible(timeout=10000)
+                expect(page.get_by_label('当前探针方向意见', exact=True)).to_have_value('')
                 browser.close()
-                print('PASS browser debug: enable, refresh, diagnostics, submit direction, revise without budget use, execute revised probe, next breakpoint')
+                print('PASS browser debug: enable, refresh, diagnostics, submit direction, revise without budget use, execute revised probe, clear unsent direction after browser and CLI advance')
             print('PASS browser: live role logs, finalize failure, interruption, safe materials, read-only polling, theme, mobile and keyboard')
         finally:
             if 'process' in locals() and process.poll() is None:

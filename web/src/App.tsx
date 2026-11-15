@@ -131,6 +131,7 @@ function Controls({ detail }: { detail: TopicDetail }) {
   const [failure, setFailure] = useState("");
   const [rounds, setRounds] = useState("");
   const [feedback, setFeedback] = useState("");
+  useEffect(() => setFeedback(""), [detail.current_round]);
   const [debug, setDebug] = useState(detail.debug_probes || false);
   useEffect(
     () => setDebug(detail.debug_probes || false),
