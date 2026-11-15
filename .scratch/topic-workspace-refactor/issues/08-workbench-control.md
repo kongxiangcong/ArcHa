@@ -6,7 +6,7 @@
 
 **Status:** resolved
 
-依据：[父规格](../spec.md)、[开发方案](../../../archa-refactor-plan.md)、[架构决策](../../../docs/adr/0001-topic-workspace.md)。具体文件清单以开发方案为准。
+依据：[父规格](../spec.md)、[现行执行协议](../../../opc/README.md)、[架构决策](../../../docs/adr/0001-topic-workspace.md)。原开发方案及文件清单通过 Git 查找。
 
 **范围与归属：** 负责工作台控制后端与前端交互，复用已经完成的引擎控制和预算能力，不再实现第二套锁、停止或恢复协议。
 

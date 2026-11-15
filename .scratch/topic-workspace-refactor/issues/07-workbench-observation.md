@@ -6,7 +6,7 @@
 
 **Status:** resolved
 
-依据：[父规格](../spec.md)、[开发方案](../../../archa-refactor-plan.md)、[架构决策](../../../docs/adr/0001-topic-workspace.md)。具体文件清单以开发方案为准。
+依据：[父规格](../spec.md)、[现行执行协议](../../../opc/README.md)、[架构决策](../../../docs/adr/0001-topic-workspace.md)。原开发方案及文件清单通过 Git 查找。
 
 **范围与归属：** 负责观察后端、前端 API 客户端与类型、专题/轮次视图、材料阅读、日志展示及新格式 demo。以专题身份替代旧 Run 视图；控制操作在 08 接入。
 

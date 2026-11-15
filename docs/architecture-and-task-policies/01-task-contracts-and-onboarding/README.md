@@ -1,6 +1,7 @@
 # S1 任务契约、Profile 与准备流程
 
-状态：**7 张 tickets 已完成并通过最终回归、审查及本地小任务贯通（2026-10-31）。** 已确认的 [S1 实现规格](../../../.scratch/s1-task-contracts-and-onboarding/spec.md) 是实现与拆票的权威入口，[tickets](../../../.scratch/s1-task-contracts-and-onboarding/issues/) 各自记录依赖和验收条件，本页保留背景和决策理由。继承 [S0 定稿](../00-foundations-and-test-methods/README.md)，不重新讨论共同语义、不启动四题正式考试。
+> 历史讨论：以下状态与操作描述属于当时版本，旧 Run／账本／四技能流程已退役。当前使用见[两入口流程](../../../README.md)；已清理的 S1–S5 规格与工单按原路径通过 Git 查找，原始实验材料保留。
+状态：**7 张 tickets 已完成并通过最终回归、审查及本地小任务贯通（2026-10-31）。** 已确认的 S1 实现规格（Git 历史：`.scratch/s1-task-contracts-and-onboarding/spec.md`） 是实现与拆票的权威入口，tickets（Git 历史：`.scratch/s1-task-contracts-and-onboarding/issues/`） 各自记录依赖和验收条件，本页保留背景和决策理由。继承 [S0 定稿](../00-foundations-and-test-methods/README.md)，不重新讨论共同语义、不启动四题正式考试。
 
 本文件兼作“整体架构与任务策略 / S1 任务契约与准备流程”专题记录，不另建白板。范围是用户意图怎样成为可执行契约，以及如何选择和恢复运行；Attempt/DAG/会话恢复细节交 S2，证据导航交 S3，完成与重验交 S4。入口：[总规划](../ArcHa_Phased_Development_Plan.md)；依据：整体文档 §4–7、§13。下文保留行为边界与决策理由；交付验证以实现规格中的记录为准。
 
@@ -77,7 +78,7 @@
 | Task 累计计量与原始事件 | `opc/core/ledger.py` |
 | 状态与来源展示 | `opc/cli.py`、`opc/observer/adapter.py` |
 
-实施前核查基点：`4a1fa7ab4bea8d50e6eca50fbad90ed4cb8d0467`。2026-10-31 的暂停恢复、合同变更、工具链变化及旧 SHA-256 回执四项既有基线测试为 **4 passed**；该记录只说明实施前能力。七票各自的实现和相关验证记录见 [tickets](../../../.scratch/s1-task-contracts-and-onboarding/issues/)，最终回归、审查和可复现小任务证据统一记录在 [实现规格](../../../.scratch/s1-task-contracts-and-onboarding/spec.md#交付验证)。不另建报告副本。
+实施前核查基点：`4a1fa7ab4bea8d50e6eca50fbad90ed4cb8d0467`。2026-10-31 的暂停恢复、合同变更、工具链变化及旧 SHA-256 回执四项既有基线测试为 **4 passed**；该记录只说明实施前能力。七票各自的实现和相关验证记录见 tickets（Git 历史：`.scratch/s1-task-contracts-and-onboarding/issues/`），最终回归、审查和可复现小任务证据统一记录在 实现规格（Git 历史：`.scratch/s1-task-contracts-and-onboarding/spec.md`）。不另建报告副本。
 
 ## 后续边界
 

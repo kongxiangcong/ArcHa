@@ -1,6 +1,7 @@
 # S2 统一 Attempt、Worker 交接与运行观察
 
-状态：需求与 grill-with-docs 澄清已收敛，已发布 [S2 实现规格](../../../.scratch/s2-attempts-and-worker-handoffs/spec.md)（ready-for-agent）。规格是行为与验收的权威来源；本页保留背景、说明性例子和核查依据。已发布 [7 张实现事项](../../../.scratch/s2-attempts-and-worker-handoffs/issues/)，尚未实现或启动正式四题考试。
+> 历史讨论：以下状态与操作描述属于当时版本，旧 Run／账本／四技能流程已退役。当前使用见[两入口流程](../../../README.md)；已清理的 S1–S5 规格与工单按原路径通过 Git 查找，原始实验材料保留。
+状态：需求与 grill-with-docs 澄清已收敛，已发布 S2 实现规格（Git 历史：`.scratch/s2-attempts-and-worker-handoffs/spec.md`）（ready-for-agent）。规格是行为与验收的权威来源；本页保留背景、说明性例子和核查依据。已发布 7 张实现事项（Git 历史：`.scratch/s2-attempts-and-worker-handoffs/issues/`），尚未实现或启动正式四题考试。
 
 入口：[总规划](../ArcHa_Phased_Development_Plan.md)。整体文档依据：[§8](../ArcHa_Overall_Architecture_and_Task_Policies.md#s08)、[§9](../ArcHa_Overall_Architecture_and_Task_Policies.md#s09)、[§14](../ArcHa_Overall_Architecture_and_Task_Policies.md#s14)。
 
@@ -50,27 +51,27 @@
 
 ## 规范入口
 
-[实现规格](../../../.scratch/s2-attempts-and-worker-handoffs/spec.md)集中维护工作与角色边界、三处交接、Call/会话身份、恢复重试、暂停停止、DAG 并行、CLI 配置选择、预算和测试验收。不在本页重复维护字段协议或规则副本。
+实现规格（Git 历史：`.scratch/s2-attempts-and-worker-handoffs/spec.md`）集中维护工作与角色边界、三处交接、Call/会话身份、恢复重试、暂停停止、DAG 并行、CLI 配置选择、预算和测试验收。不在本页重复维护字段协议或规则副本。
 
 ### grill-with-docs：已确认决定
 
-两轮澄清已完成：CLI 切换与 revision、预算重置范围、并行计时和默认并发已写入规格的 Implementation Decisions；此前引用本节的文档以[规格](../../../.scratch/s2-attempts-and-worker-handoffs/spec.md#implementation-decisions)为准。历史实际用量与本次额度扣减起点是不同事实，S1 的历史交付记录不改写。
+两轮澄清已完成：CLI 切换与 revision、预算重置范围、并行计时和默认并发已写入规格的 Implementation Decisions；此前引用本节的文档以规格（Git 历史：`.scratch/s2-attempts-and-worker-handoffs/spec.md`）为准。历史实际用量与本次额度扣减起点是不同事实，S1 的历史交付记录不改写。
 
 ## 代码与后端能力核查（2026-10-31）
 
-核查基点 `02aeecf8493d970b53e41f804491d9079c6bd594`。本轮只读源码、官方资料和本机 CLI 帮助，未运行模型、测试或考试。S1 的既有回归与贯通证据仍见 [交付记录](../../../.scratch/s1-task-contracts-and-onboarding/spec.md#交付验证)，不能替代 S2 的工作级恢复验证。
+核查基点 `02aeecf8493d970b53e41f804491d9079c6bd594`。本轮只读源码、官方资料和本机 CLI 帮助，未运行模型、测试或考试。S1 的既有回归与贯通证据仍见 交付记录（Git 历史：`.scratch/s1-task-contracts-and-onboarding/spec.md`），不能替代 S2 的工作级恢复验证。
 
 ### 可复用基础与真实缺口
 
 | 现有入口与事实 | 最小调整 |
 | --- | --- |
-| [Ledger](../../../opc/core/ledger.py) 已有 SQLite 事务和项目级单写锁；`charge` 没有 Call/测量唯一关联，普通 Run 不能使用现有仅限 preparation 的计量补齐入口 | Engine 统一写账本；派发前分配身份，结果和用量可重复核对而不重复入账，不增加哈希或第二份状态账 |
+| Ledger（Git 历史：`opc/core/ledger.py`） 已有 SQLite 事务和项目级单写锁；`charge` 没有 Call/测量唯一关联，普通 Run 不能使用现有仅限 preparation 的计量补齐入口 | Engine 统一写账本；派发前分配身份，结果和用量可重复核对而不重复入账，不增加哈希或第二份状态账 |
 | [Engine.attempt / reconcile](../../../opc/core/engine.py) 先建 Attempt 再 Expert；返回后才分别记账和保存调用；未完成 Attempt 通常 abandoned | 将 Run 决策与工作执行分开，按已存调用、结果及反馈事实恢复；保留冠军引用收尾能力 |
 | `save_conclusions` 允许空反馈，按 `reviewed_by_attempt` 关联；专家材料目录在每轮结束删除 | 用决策 Call 关联处理结果及新工作；专家使用稳定的 Run 级材料入口，保留必要持久材料而不堆积上下文 |
 | [Workspaces](../../../opc/core/workspace.py) 同名 checkout 先删除，Engine 的 finally 清理全部工作区 | 仅清理已安全收尾且无恢复用途的工作区；未知在途和未保存成果不能盲删 |
-| [Process](../../../opc/core/platform.py) 已管理进程树并可硬终止；Worker 与[评价器](../../../opc/domains/command.py) 同步等待；普通 pause/stop 检查在 Attempt 轮间 | 复用进程管理，加 Call/评价派发前检查和可取消等待；首版无需常驻服务或进程冻结 |
+| [Process](../../../opc/core/platform.py) 已管理进程树并可硬终止；Worker 与评价器（Git 历史：`opc/domains/command.py`） 同步等待；普通 pause/stop 检查在 Attempt 轮间 | 复用进程管理，加 Call/评价派发前检查和可取消等待；首版无需常驻服务或进程冻结 |
 | Engine 缓存 Worker/Domain 对象，候选接纳、评价缓存和冠军状态按串行假设处理 | 不直接并发调用整个 `attempt()`；执行任务独立输入/工作区，主 Engine 汇集结果并串行记账、协调共享资源 |
-| [worker_config](../../../opc/core/worker_config.py) 本机字段不含 kind/binary，Engine 恢复冻结 worker_config，但适配器继续读 PATH/OPC_* 环境；准备/终验各有独立选类路径 | 在现有配置模块统一解析四角色实际 WorkerSpec 与来源，新 Run 冻结、恢复复用；保留角色参数隔离，不让 Reviewer 继承 Expert 模型配置 |
+| worker_config（Git 历史：`opc/core/worker_config.py`） 本机字段不含 kind/binary，Engine 恢复冻结 worker_config，但适配器继续读 PATH/OPC_* 环境；准备/终验各有独立选类路径 | 在现有配置模块统一解析四角色实际 WorkerSpec 与来源，新 Run 冻结、恢复复用；保留角色参数隔离，不让 Reviewer 继承 Expert 模型配置 |
 | [prompts](../../../opc/adapters/prompts.py) 当前禁止 Expert 查源码/原始日志；Designer 输出主要包装成 summary | 移除与按需证据读取冲突的限制，在授权范围提供可定位原件；只补必要结果/偏差交接，不建设完整 S3 导航系统 |
 
 ### 两个 CLI 的核查结论
@@ -82,7 +83,7 @@
 
 DSH 固定来源：[headless README](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/headless/README.md)、[会话采用与最终结果](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/headless/src/index.ts)、[JSON 投影与用量](https://github.com/deepseek-ai/deepseek-harness/blob/ce7073d51254c26cd63b22a60835b8f948deb447/packages/bundle/headless/src/json-stream.ts)。本机帮助检查成功退出，附带只读环境下无法创建 PATH aliases 的警告；未因此更改安装环境。
 
-两个适配器都须分开 ArcHa Call ID 与后端 session ID，保留本次实际用量和未知项。当前 [Codex](../../../opc/tests/test_codex_and_config.py) / [DSH](../../../opc/tests/test_dsh_worker.py) 主要以假 CLI 测试事件与失败，不证明真实会话恢复或工具隔离。已有进程树管理也不是文件读取隔离；真实工具访问边界与并行工作树必须另行验证。尚未安装 DSH 或发起真实调用，不将缺少运行证据表述为能力已通过。用户随后确认的阶段例外已写入[规格的测试决策](../../../.scratch/s2-attempts-and-worker-handoffs/spec.md#testing-decisions)：DSH 当前只实现，不新增专用测试或真实验证，安装/登录不在本阶段开展；Codex 和公共逻辑仍完成必要验证。
+两个适配器都须分开 ArcHa Call ID 与后端 session ID，保留本次实际用量和未知项。当前 Codex（Git 历史：`opc/tests/test_codex_and_config.py`） / DSH（Git 历史：`opc/tests/test_dsh_worker.py`） 主要以假 CLI 测试事件与失败，不证明真实会话恢复或工具隔离。已有进程树管理也不是文件读取隔离；真实工具访问边界与并行工作树必须另行验证。尚未安装 DSH 或发起真实调用，不将缺少运行证据表述为能力已通过。用户随后确认的阶段例外已写入规格的测试决策（Git 历史：`.scratch/s2-attempts-and-worker-handoffs/spec.md`）：DSH 当前只实现，不新增专用测试或真实验证，安装/登录不在本阶段开展；Codex 和公共逻辑仍完成必要验证。
 
 前序取舍依据保留为链接：[S0 原讨论](../../discussions/evaluation/s0-modeling-exploration/winson-whiteboard.md)、[Anthropic 合并子代理文章](https://claude.com/resources/articles/building-agents-when-to-fold-subagents-into-your-main-agent-loop)、[EAT v1](https://arxiv.org/abs/2610.36848v1)、[LangGraph 持久执行文档源码](https://github.com/langchain-ai/docs/blob/main/src/oss/langgraph/functional-api.mdx)。它们支持按上下文划分职责、区分组织演化及持久执行边界，不证明 ArcHa 增加 Supervisor 或可执行子图有收益；本轮不新增这些机制。
 

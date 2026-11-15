@@ -1,6 +1,6 @@
 # 项目接入与合同 v0.2 验证记录
 
-> 历史验证记录：所述旧合同与接入实现已被[专题工作区方案](../archa-refactor-plan.md)替代；当前使用见 [README](../README.md)。以下结论仅对应当时版本。
+> 历史验证记录：所述旧合同与接入实现已被[专题工作区协议](../opc/README.md)替代；当前使用见 [README](../README.md)。以下结论仅对应当时版本。
 
 日期：2026-10-22。范围是通用项目的接入设计、元数据初始化、实验路径计算和合同追踪校验。本轮没有向真实 openTPU 仓库安装 OPC，没有运行 GSD、真实模型调用或 EDA 作业。
 
@@ -11,8 +11,8 @@
 合并测试 **30 passed、1 skipped**；新合同的 **6 份样本、6 份 schema、关联草案**通过，**10 个字段/模型反例与 7 个跨对象反例**被拒绝。旧 v0.1 的 6 份样本、6 份 schema 与 4 个反例继续通过原校验。两项独立审核发现的 P2 均已修复，并经独立定向复验关闭。
 
 - 规范：[项目接入与目录规范](design/OPC%20项目接入与目录规范.md)。
-- 合同：[v0.2 升级说明](../contracts/V0.2.md)、[模板入口](../contracts/templates/v0.2/README.md)。
-- 可执行例子：[接入工具与两项目示例](../examples/project-onboarding/README.md)。
+- 合同：v0.2 升级说明（Git 历史：`contracts/V0.2.md`）、模板入口（Git 历史：`contracts/templates/v0.2/README.md`）。
+- 可执行例子：接入工具与两项目示例（Git 历史：`examples/project-onboarding/README.md`）。
 - 原有优化闭环：[GEMV 验证记录](validation.md)，保持 v0.1 历史归属，没有被改名包装成 v0.2 集成验收。
 
 ## 2. 复用依据与版本
@@ -57,7 +57,7 @@
 
 ## 5. 复现命令
 
-从 `D:/dsh-proj/Ge` 执行，依赖沿用 [GEMV 环境说明](../examples/gemv_loop/README.md) 与 [合同依赖](../contracts/README.md)。每次复跑使用新的 basetemp 和 JUnit 文件名，保留已有原件：
+从 `D:/dsh-proj/Ge` 执行，依赖沿用 GEMV 环境说明（Git 历史：`examples/gemv_loop/README.md`） 与 合同依赖（Git 历史：`contracts/README.md`）。每次复跑使用新的 basetemp 和 JUnit 文件名，保留已有原件：
 
 ```powershell
 $env:TEMP = 'D:/dsh-proj/Ge/.tmp'

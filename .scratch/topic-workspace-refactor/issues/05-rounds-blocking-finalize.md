@@ -6,7 +6,7 @@
 
 **Status:** resolved
 
-依据：[父规格](../spec.md)、[开发方案](../../../archa-refactor-plan.md)、[架构决策](../../../docs/adr/0001-topic-workspace.md)。具体文件清单以开发方案为准。
+依据：[父规格](../spec.md)、[现行执行协议](../../../opc/README.md)、[架构决策](../../../docs/adr/0001-topic-workspace.md)。原开发方案及文件清单通过 Git 查找。
 
 **范围与归属：** 负责连续调度、预算与四种专题状态、完整角色提示词、上下文裁剪和通用/PIM 模板。复用 01 的锁及 03 的提交接口，不重写 04 的停止清理机制。
 

@@ -6,7 +6,7 @@
 
 **Status:** resolved
 
-依据：[父规格](../spec.md)、[开发方案](../../../archa-refactor-plan.md)、[架构决策](../../../docs/adr/0001-topic-workspace.md)。具体文件清单以开发方案为准。
+依据：[父规格](../spec.md)、[现行执行协议](../../../opc/README.md)、[架构决策](../../../docs/adr/0001-topic-workspace.md)。原开发方案及文件清单通过 Git 查找。
 
 **范围与归属：** 负责 expand–contract 的最终收缩与全仓集成，不重复建设前八项能力。按开发方案的删除清单逐项确认无消费者后删除，并承接残留调用、包资源、说明和旧测试清理。
 
