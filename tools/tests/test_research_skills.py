@@ -22,9 +22,9 @@ def test_bundle_is_relocatable_and_integrity_checked(tmp_path):
     assert call(entry, 'init', '-p', target, '--topic', 'portable', '--goal', 'Inspect')['status'] == 'IN_PROGRESS'
     runtime = target / '.archa/runtime'
     manifest = initialize.verify(runtime)
-    assert 'opc/topic_report.py' in manifest['files']
+    assert 'opc/log.py' in manifest['files']
     assert 'opc/core/ledger.py' not in manifest['files']
-    (runtime / 'opc/topic_cli.py').write_text('# tampered')
+    (runtime / 'opc/cli.py').write_text('# tampered')
     with pytest.raises(ValueError, match='modified'):
         initialize.verify(runtime)
 
@@ -40,10 +40,10 @@ def test_explicit_upgrade_preserves_topic_and_previous_runtime(tmp_path):
     state = project / '.archa/topics/retained/STATE.md'
     before = state.read_bytes()
     import json
-    file = runtime / 'opc/topic_cli.py'
+    file = runtime / 'opc/cli.py'
     file.write_text(file.read_text() + '\n# new release\n')
     manifest = json.loads((runtime / 'manifest.json').read_text())
-    manifest['files']['opc/topic_cli.py'] = initialize.digest(file)
+    manifest['files']['opc/cli.py'] = initialize.digest(file)
     manifest['snapshot_sha256'] = 'updated'
     (runtime / 'manifest.json').write_text(json.dumps(manifest))
     result = initialize.initialize(project, runtime, update=True)

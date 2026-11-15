@@ -3,7 +3,7 @@ from concurrent.futures import Future
 import logging
 from threading import Thread
 
-from ..core.topic_engine import TopicEngine
+from ..core.engine import TopicEngine
 
 
 def resume(workspace, add_rounds=None):

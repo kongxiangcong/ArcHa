@@ -97,7 +97,7 @@ def test_competing_topics_and_stale_stop_do_not_affect_new_execution(project):
         code = '''
 import sys
 sys.path.insert(0, sys.argv[1])
-from opc.core.topic_workspace import TopicWorkspace
+from opc.core.workspace import TopicWorkspace
 from opc.core.topic_control import stop
 stop(TopicWorkspace(sys.argv[2], 'research'), execution_id=sys.argv[3])
 '''
@@ -143,7 +143,7 @@ def test_stop_snapshot_can_race_with_new_start_without_touching_it(project):
     code = '''
 import pathlib,sys,time
 sys.path.insert(0, sys.argv[1])
-from opc.core.topic_workspace import TopicWorkspace
+from opc.core.workspace import TopicWorkspace
 from opc.core.topic_control import stop
 original = pathlib.Path.touch
 project = pathlib.Path(sys.argv[2])

@@ -12,7 +12,7 @@ def crash_step(project, boundary):
     code = '''
 import os, pathlib, sys
 sys.path.insert(0, sys.argv[1])
-from opc.core.topic_engine import TopicEngine
+from opc.core.engine import TopicEngine
 replace = os.replace
 rename = pathlib.Path.rename
 rmdir = pathlib.Path.rmdir
@@ -131,7 +131,7 @@ def test_finalize_publication_recovers_without_an_experiment(project, terminal):
 import os, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-from opc.core.topic_workspace import TopicWorkspace
+from opc.core.workspace import TopicWorkspace
 w = TopicWorkspace(sys.argv[2], 'research')
 with w.writer():
     directory = w.path / 'steps/step-02'

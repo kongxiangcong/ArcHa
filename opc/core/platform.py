@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import time
+import tempfile
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -47,17 +48,14 @@ def unlock_writer(fd: int) -> None:
         fcntl.flock(fd, fcntl.LOCK_UN)
 
 
-def command_prefix(binary: str | list[str]) -> list[str]:
-    """Explicit argv prefix supports Python/Node CLIs without shell wrappers."""
-    if isinstance(binary, str):
-        if binary.startswith("["):
-            return command_prefix(json.loads(binary))
-        if binary.lower().endswith(".py"):
-            return [sys.executable, binary]
-        return [binary]
-    if isinstance(binary, list) and binary and all(isinstance(x, str) and x for x in binary):
-        return list(binary)
-    raise ValueError("worker binary must be a nonempty string or argv list")
+def write_json(path: Path, value) -> None:
+    """Publish a complete process descriptor without exposing partial JSON."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='.tmp-', suffix=path.suffix)
+    with os.fdopen(fd, 'w', encoding='utf-8', newline='') as stream:
+        json.dump(value, stream, ensure_ascii=False, indent=2)
+        stream.write('\n')
+    os.replace(temporary, path)
 
 
 @dataclass
@@ -74,7 +72,6 @@ class ExecutionControl:
         if self.recorder is not None:
             self.recorder(process, state)
             return
-        from .model import write_json
         write_json(self.log_dir / "process.json", {
             "pid": process.pid, "state": state, "returncode": process.returncode,
             "cancel_reason": process.cancel_reason, "termination_error": self.unknown})
@@ -242,24 +239,3 @@ class Process(subprocess.Popen):
             if self._job is not None:
                 self._job.close()
             super().__exit__(*args)
-
-
-def portable_path(path: str) -> bool:
-    """Contract paths are Git-style relative names on every host."""
-    if not path or path.startswith("/") or "\\" in path or ":" in path:
-        return False
-    parts = path.rstrip("/").split("/")
-    reserved = {"con", "prn", "aux", "nul", *('com%d' % i for i in range(1, 10)),
-                *('lpt%d' % i for i in range(1, 10))}
-    return all(p not in ("", ".", "..") and not p.endswith((" ", "."))
-               and p.split(".", 1)[0].casefold() not in reserved for p in parts)
-
-
-def is_link(path: Path) -> bool:
-    """Include Windows junctions/reparse points, also on Python 3.10."""
-    import stat
-    try:
-        st = path.lstat()
-    except FileNotFoundError:
-        return False
-    return stat.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & 0x400)

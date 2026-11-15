@@ -15,7 +15,7 @@ def project(tmp_path):
     target = tmp_path / 'project'
     target.mkdir()
     result = subprocess.run([sys.executable, str(ROOT / 'skills/archa-map/scripts/initialize.py'),
-                             '--project', str(target), '--topic-runtime'], capture_output=True, text=True)
+                             '--project', str(target)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     return target
 
@@ -297,3 +297,15 @@ def test_missing_project_config_uses_distributed_codex_preset(project):
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)['completed_rounds'] == 1
     assert (project / '.archa/topics/research/steps/step-01/result.md').read_text() == 'Default result'
+
+
+def test_installed_cli_requires_topic_and_exposes_only_topic_commands(tmp_path):
+    help_result = subprocess.run([sys.executable, '-m', 'opc', '--help'],
+                                 capture_output=True, text=True, cwd=ROOT)
+    assert help_result.returncode == 0
+    assert 'resume' in help_result.stdout and 'report' in help_result.stdout
+    assert 'promote' not in help_result.stdout and 'onboard' not in help_result.stdout
+    result = subprocess.run([sys.executable, '-m', 'opc', 'init', '-p', str(tmp_path)],
+                            capture_output=True, text=True, cwd=ROOT)
+    assert result.returncode != 0 and '--topic' in result.stderr
+    assert not (tmp_path / '.opc').exists()

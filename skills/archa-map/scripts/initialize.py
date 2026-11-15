@@ -20,7 +20,7 @@ from pathlib import Path
 import sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent / "runtime"))
-from opc.topic_cli import main
+from opc.cli import main
 if __name__ == "__main__":
     raise SystemExit(main())
 '''
@@ -46,19 +46,17 @@ RUNTIME_FILES = (
     'opc/adapters/__init__.py',
     'opc/core/__init__.py',
     'opc/scaffold/__init__.py',
-    'opc/topic_cli.py',
-    'opc/topic_report.py',
-    'opc/core/topic_workspace.py',
-    'opc/core/topic_engine.py',
+    'opc/cli.py',
+    'opc/log.py',
+    'opc/core/workspace.py',
+    'opc/core/engine.py',
     'opc/core/topic_control.py',
-    'opc/adapters/topic_prompts.py',
-    'opc/adapters/topic_worker.py',
+    'opc/adapters/prompts.py',
+    'opc/adapters/worker.py',
     'opc/scaffold/templates.py',
-    'opc/scaffold/topic_workers.json',
+    'opc/scaffold/workers.json',
     'opc/core/platform.py',
     'opc/core/windows.py',
-    'opc/core/config.py',
-    'opc/core/model.py',
 )
 
 
@@ -163,7 +161,7 @@ def upgrade_runtime(control: Path, runtime: Path) -> str:
         os.close(fd)
 
 
-def initialize(project: Path, runtime: Path, update: bool = False, topic_runtime: bool = True) -> dict:
+def initialize(project: Path, runtime: Path, update: bool = False) -> dict:
     project = project.resolve()
     if not project.is_dir():
         raise ValueError("project must be an existing directory")
@@ -216,21 +214,20 @@ def initialize(project: Path, runtime: Path, update: bool = False, topic_runtime
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", type=Path, required=True)
-    parser.add_argument("--topic-runtime", action="store_true", help="deploy the new .archa topic entry")
     parser.add_argument('--update', action='store_true', help='replace verified runtime, retaining a backup; stop controllers first')
     args = parser.parse_args()
     skill = Path(__file__).resolve().parents[1]
     bundle = skill / "assets/runtime"
     try:
         if bundle.is_dir():
-            result = initialize(args.project, bundle, update=args.update, topic_runtime=True)
+            result = initialize(args.project, bundle, update=args.update)
         else:
             source = skill.parent.parent
-            if not (source / "opc/topic_cli.py").is_file():
+            if not (source / "opc/cli.py").is_file():
                 raise ValueError("runtime bundle missing; reinstall with tools/install_research_skills.py")
             with tempfile.TemporaryDirectory(prefix="archa-source-") as temp:
                 snapshot(source, Path(temp))
-                result = initialize(args.project, Path(temp), update=args.update, topic_runtime=True)
+                result = initialize(args.project, Path(temp), update=args.update)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (OSError, ValueError) as exc:

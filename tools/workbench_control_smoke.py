@@ -9,7 +9,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import uvicorn
-from opc.core.topic_workspace import TopicWorkspace
+from opc.core.workspace import TopicWorkspace
 from opc.observer.api import create_app
 
 

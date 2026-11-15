@@ -1,8 +1,8 @@
 # ArcHa 端到端重构开发方案
 
-状态：Q1–Q14 设计决策已确认；实现尚未开始。
+状态：Q1–Q14 设计决策已实现，P0–P3 集成交付及旧实现退役完成。验收证据与环境限制见 [09](.scratch/topic-workspace-refactor/issues/09-retire-and-verify.md#answer)。
 
-本文是本次 P0–P3 重构的技术依据，替代 [旧 P0/P1 草案](archa-p0p1-plan.md)。用户需求与验收约定已发布为 [ready-for-agent 规格](.scratch/topic-workspace-refactor/spec.md)。P0–P3 是实现分层，共同组成可运行交付，不是四个独立发布版本。术语见 [GLOSSARY.md](GLOSSARY.md)，架构取舍见 [ADR 0001](docs/adr/0001-topic-workspace.md)。
+本文是本次 P0–P3 重构的技术依据，替代 [旧 P0/P1 草案](archa-p0p1-plan.md)。用户需求与验收约定已发布为 [需求规格](.scratch/topic-workspace-refactor/spec.md)。P0–P3 是实现分层，共同组成可运行交付，不是四个独立发布版本。术语见 [GLOSSARY.md](GLOSSARY.md)，架构取舍见 [ADR 0001](docs/adr/0001-topic-workspace.md)。
 
 ## 1. 已确认边界
 
