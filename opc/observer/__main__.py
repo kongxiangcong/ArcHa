@@ -14,7 +14,7 @@ def main(argv=None):
     mode.add_argument('--topics', '--topic', dest='topics', type=Path, help='topics 集合或单个专题目录')
     mode.add_argument('--project', type=Path, help='已有项目目录')
     mode.add_argument('--demo', action='store_true', help='在临时目录创建明确标记的离线演示材料')
-    parser.add_argument('--control', action='store_true', help='启用专题控制（控制接口接入后可用）')
+    parser.add_argument('--control', action='store_true', help='启用停止、继续及追加轮数')
     parser.add_argument('--host', default='127.0.0.1', help='只允许 loopback 地址')
     parser.add_argument('--port', type=int, default=8765)
     args = parser.parse_args(argv)

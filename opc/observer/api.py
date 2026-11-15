@@ -1,6 +1,19 @@
 """Topic observation HTTP boundary; every GET is read-only."""
 from pathlib import Path
 from fastapi import FastAPI, Query, Request
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from .control import resume
+from ..core.topic_control import stop
+
+
+class ResumeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    add_rounds: StrictInt | None = Field(default=None, gt=0)
+
+
+class StopRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    execution_id: str = Field(min_length=1)
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from .adapter import ObserverAdapter, ObserverError
@@ -32,7 +45,7 @@ def create_app(root: Path | str, demo=False, *, control=False, topics=None):
 
     @app.get(prefix + '/topics')
     def topics_list():
-        return adapter.overview()
+        return dict(**adapter.overview(), control=control and not demo)
 
     @app.get(prefix + '/topics/{topic}')
     def topic_detail(topic: str):
@@ -41,6 +54,19 @@ def create_app(root: Path | str, demo=False, *, control=False, topics=None):
     @app.get(prefix + '/materials')
     def material(path: str, offset: int = Query(0, ge=0), limit: int = Query(262144, ge=1, le=1048576)):
         return adapter.content(path, offset, limit)
+
+    def controlled_workspace(topic):
+        if not control or demo:
+            raise ObserverError(403, 'control_disabled', '工作台控制未启用')
+        return adapter.workspace(topic)
+
+    @app.post(prefix + '/topics/{topic}/resume', status_code=202)
+    def resume_topic(topic: str, body: ResumeRequest):
+        return resume(controlled_workspace(topic), body.add_rounds)
+
+    @app.post(prefix + '/topics/{topic}/stop')
+    def stop_topic(topic: str, body: StopRequest):
+        return stop(controlled_workspace(topic), execution_id=body.execution_id)
 
     # Unknown API routes must not fall through to SPA HTML.
     @app.get('/api/{unknown:path}')

@@ -1,8 +1,15 @@
-import type { Content, Overview, TopicDetail } from "./types";
+import type { Content, Overview, TopicDetail, Topic } from "./types";
 const prefix = "/api/observer/v1";
-async function read<T>(path: string): Promise<T> {
+async function read<T>(path: string, body?: object): Promise<T> {
   const response = await fetch(prefix + path, {
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(20000),
+    ...(body
+      ? {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }
+      : {}),
   });
   const value = await response.json();
   if (!response.ok)
@@ -10,6 +17,15 @@ async function read<T>(path: string): Promise<T> {
   return value;
 }
 export const api = {
+  resume: (topic: string, add_rounds?: number) =>
+    read<{ accepted: boolean }>(
+      "/topics/" + encodeURIComponent(topic) + "/resume",
+      { add_rounds },
+    ),
+  stop: (topic: string, execution_id: string) =>
+    read<Topic>("/topics/" + encodeURIComponent(topic) + "/stop", {
+      execution_id,
+    }),
   topics: () => read<Overview>("/topics"),
   topic: (topic: string) =>
     read<TopicDetail>("/topics/" + encodeURIComponent(topic)),
