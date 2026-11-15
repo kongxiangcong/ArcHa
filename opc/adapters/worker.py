@@ -9,9 +9,10 @@ import threading
 
 from ..core.platform import Process
 
+# Workers write protocol files themselves; Codex -o would overwrite them with its final chat message.
 PRESETS = {
     'codex': {'command': ['codex', 'exec', '--ephemeral', '--skip-git-repo-check', '-C', '{workdir}',
-                          '-s', 'workspace-write', '-o', '{output_file}', '-'],
+                          '-s', 'workspace-write', '-'],
               'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 1800},
     'scripted': {},
 }

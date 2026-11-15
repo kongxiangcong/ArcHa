@@ -285,12 +285,14 @@ def test_missing_project_config_uses_distributed_codex_preset(project):
     (project / '.archa/workers.json').unlink()
     # Exercise the deployed default through a real executable, without model access.
     binary = project / 'codex'
-    binary.write_text('#!' + sys.executable + '\n' + "import pathlib,sys\n"
+    binary.write_text('#!' + sys.executable + '\n' + "import pathlib,re,sys\n"
                       "assert sys.argv[1] == 'exec'\n"
                       "assert '--ephemeral' in sys.argv\n"
                       "assert 'workspace-write' in sys.argv\n"
-                      "assert 'Check evidence' in sys.stdin.read()\n"
-                      "pathlib.Path(sys.argv[sys.argv.index('-o')+1]).write_text('Default result')\n")
+                      "prompt = sys.stdin.read()\n"
+                      "assert 'Check evidence' in prompt\n"
+                      "output = re.search(r'Write complete result to (.+)\\.', prompt)[1]\n"
+                      "pathlib.Path(output).write_text('Default result')\n")
     binary.chmod(0o755)
     result = subprocess.run([sys.executable, str(project / '.archa/archa.py'), 'step',
                              '-p', str(project), '--topic', 'research'], capture_output=True,
@@ -338,3 +340,44 @@ def test_expert_must_write_state_before_publishing(project, finalize):
         assert not (step / 'probe.md').exists()
     log = step / ('.expert_finalize.log' if finalize else '.expert.log')
     assert 'Expert exited without updating state' in log.read_text()
+
+
+def test_codex_file_outputs_survive_final_chat_summary(project, tmp_path, monkeypatch):
+    """Codex's final chat message must not replace Worker-authored documents."""
+    executable = tmp_path / 'bin'
+    executable.mkdir()
+    worker = executable / 'worker.py'
+    worker.write_text('''import pathlib, re, sys
+prompt = sys.stdin.read()
+role = prompt.splitlines()[0]
+state = re.search(r"Write complete state to (.+)\\.", prompt)
+if state:
+    path = pathlib.Path(state[1])
+    completed = 'expert_finalize' in role
+    status = 'COMPLETED' if completed else 'IN_PROGRESS'
+    path.write_text('# Exploration State\\nSTATUS: ' + status + '\\nMAX_ROUNDS: 1\\n\\nObserved exact integer mismatch.')
+    probe = re.search(r"write one probe to (.+?)\\. COMPLETED", prompt)
+    if probe:
+        pathlib.Path(probe[1]).write_text('Compare [9007199254740993] to exact integer sum.')
+else:
+    result = re.search(r"Write complete result to (.+)\\.", prompt)
+    pathlib.Path(result[1]).write_text('Input [9007199254740993]; expected 9007199254740993; actual 9007199254740992.')
+if '-o' in sys.argv:
+    pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_text('Done; see the file I wrote.')
+print('Done; see the file I wrote.')
+''')
+    if os.name == 'nt':
+        (executable / 'codex.cmd').write_text(f'@"{sys.executable}" "{worker}" %*\n')
+    else:
+        launcher = executable / 'codex'
+        launcher.write_text(f'#!{sys.executable}\nexec(compile(open({str(worker)!r}).read(), {str(worker)!r}, "exec"))\n')
+        launcher.chmod(0o755)
+    monkeypatch.setenv('PATH', str(executable) + os.pathsep + os.environ['PATH'])
+    cli(project, 'init', '--goal', 'Observe exact integer semantics', '--max-rounds', '1')
+    cli(project, 'step')
+    topic = project / '.archa/topics/research'
+    assert (topic / 'steps/step-01/probe.md').read_text() == 'Compare [9007199254740993] to exact integer sum.'
+    cli(project, 'step')
+    assert (topic / 'steps/step-01/result.md').read_text() == 'Input [9007199254740993]; expected 9007199254740993; actual 9007199254740992.'
+    assert cli(project, 'step')['status'] == 'COMPLETED'
+    assert 'Observed exact integer mismatch.' in (topic / 'STATE.md').read_text()

@@ -21,8 +21,8 @@ opc status -p /path/to/project --topic investigation
 
 使用两个流程技能：
 
-- `/archa-discuss`：通过多轮讨论澄清需求、比较探索方向并形成专题目标；目标明确且已有执行授权时交接，否则留在讨论阶段。
-- `/archa-run`：按已明确的目标启动或继续探索与优化，也负责停止、查看进展和按需离线报告。技术未知留在循环中解决；目标或范围改变时回到讨论。
+- `/archa-discuss`：通过多轮讨论澄清需求、比较探索方向并形成专题目标，并确认环境就绪与反馈回路；目标、必要准备均就绪且已有执行授权时交接，否则留在讨论阶段。
+- `/archa-run`：按已明确且执行准备就绪的目标启动或继续探索与优化，也负责停止、查看进展和按需离线报告。技术未知留在循环中解决；目标或范围改变时回到讨论。
 
 两个入口共用 GOAL.md、STATE.md 与逐轮材料，不要求预拆方向或另写交接文档。安装到指定技能目录：
 
@@ -32,7 +32,7 @@ python tools/install_research_skills.py --destination /path/to/skills
 
 安装器只安装这两个技能，并将指定目录中的旧四技能移到相邻的 `skill-backups`，不保留旧入口或别名。
 
-目标项目经 `archa-discuss/scripts/initialize.py --project PROJECT` 获得 `.archa/archa.py` 和固定快照 runtime；以后通过 `python PROJECT/.archa/archa.py ...` 调用，不依赖全局安装。既有项目保留固定版本；仅在停止后显式使用 `--update` 升级运行时并备份旧快照。
+目标项目经 `archa-discuss/scripts/initialize.py --project PROJECT` 获得 `.archa/archa.py` 和固定快照 runtime；以后通过 `python PROJECT/.archa/archa.py ...` 调用，不依赖全局安装。既有项目保留固定版本；仅在停止后显式使用 `--update` 升级运行时并备份旧快照。升级保留 `.archa/workers.json`；自定义 Codex 命令若含 `-o {output_file}`，需显式移除该参数，避免最终聊天摘要覆盖 Worker 已写的探针、结果或状态文件。
 
 工作台显示专题状态、Expert/Executor/收尾日志与材料，默认只读；加 `--control` 开启停止、继续和追加轮数：
 

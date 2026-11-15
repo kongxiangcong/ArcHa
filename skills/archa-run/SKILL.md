@@ -1,10 +1,10 @@
 ---
 name: archa-run
-description: 执行目标已明确的 ArcHa 专题，启动、停止、继续循环，查看进展或按需生成离线报告；需求与方向讨论交给 archa-discuss。
+description: 执行目标与准备已就绪的 ArcHa 专题，启动、停止、继续循环，查看进展或按需生成离线报告；需求与方向讨论交给 archa-discuss。
 ---
 
-1. 定位目标工程与专题，读取 GOAL.md、STATE.md 和本地 `status`。需求尚未明确或需要改变目标、范围、完成判据时使用 `archa-discuss`；技术未知由循环内的探针解决。目标已明确但尚未初始化时，通过 `archa-discuss` 的部署初始化步骤准备，不强制重复需求访谈。
-2. 本地命令统一使用 `python PROJECT/.archa/archa.py COMMAND -p PROJECT --topic SLUG`。启动前检查 `.archa/workers.json` 中实际使用的 Expert/Executor 命令，以 `check` 只读检查配置，并确认命令可用；不以真实模型调用充当配置检查。Expert 使用文件输出，Executor 可显式使用 stdout；字段与参数以本地 `--help` 和配置为准。
+1. 定位目标工程与专题，读取 GOAL.md、STATE.md 和本地 `status`。需求尚未明确或需要改变目标、范围、完成判据时使用 `archa-discuss`；技术未知由循环内的探针解决。启动或恢复前确认目标材料包含环境搭建和运行入口、必要准备的就绪判据与验证依据、观测记录和判读方式及结果回到 Expert 的反馈回路；即使已有明确目标和执行授权，存在缺口时也通过 `archa-discuss` 补齐准备，再交接执行。已有答案与授权直接复用，不重复访谈。尚未初始化时使用该技能的部署初始化步骤。只读进展、停止与离线报告按请求直接处理。
+2. 本地命令统一使用 `python PROJECT/.archa/archa.py COMMAND -p PROJECT --topic SLUG`。启动前检查 `.archa/workers.json` 中实际使用的 Expert/Executor 命令，以 `check` 只读检查配置，并确认命令可用；不以真实模型调用充当配置检查；`check` 通过只说明配置有效，任务环境就绪还须有目标约定的实际依据。Expert 使用文件输出，Executor 可显式使用 stdout；字段与参数以本地 `--help` 和配置为准。
 3. 按用户请求执行 `run`、`stop` 或 `resume`；仅查看进展时读取 `status` 和已提交材料。已有授权直接执行，追加轮数仅用用户授权的 `resume --add-rounds N`。普通恢复继续已有待执行探针；若要纠偏，先由 `archa-discuss` 更新目标并处理旧探针，再按授权恢复。BLOCKED 补齐条件后显式 resume，COMPLETED 不重开。
 4. stop 确认结束后才编辑材料；未提交调用可能重跑，工程副作用不自动撤销。失败即停并提供真实错误和日志入口，不自动无限重试。依据状态解释目标达成、待补条件或预算耗尽；研究完成不意味着独立审核、合并或发布。
 5. 用户要求报告时，在执行停止且提交完成后调用本地 `report`，阅读并链接专题内 PROGRESS_LOG.md。运行中按已有授权停止，或等待执行结束后整理。报告离线生成，不调用 Worker，也不成为新的认知账本；普通进展查看无需生成报告。
