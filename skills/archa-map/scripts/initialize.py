@@ -52,6 +52,13 @@ RUNTIME_FILES = (
     "opc/adapters/scripted.py",
     "opc/adapters/worker.py",
     "opc/cli.py",
+    "opc/topic_cli.py",
+    "opc/core/topic_workspace.py",
+    "opc/core/topic_engine.py",
+    "opc/adapters/topic_prompts.py",
+    "opc/adapters/topic_worker.py",
+    "opc/scaffold/templates.py",
+    "opc/scaffold/topic_workers.json",
     "opc/log.py",
     "opc/core/__init__.py",
     "opc/core/accept.py",
@@ -150,7 +157,8 @@ def upgrade_runtime(control: Path, runtime: Path) -> str:
     finally:
         sys.path.pop(0)
         sys.dont_write_bytecode = previous
-    fd = os.open(local / 'ledger.lock', os.O_CREAT | os.O_RDWR, 0o644)
+    lock_path = control / '.run.lock' if control.name == '.archa' else local / 'ledger.lock'
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
     locked = False
     try:
         try:
@@ -181,15 +189,15 @@ def upgrade_runtime(control: Path, runtime: Path) -> str:
         os.close(fd)
 
 
-def initialize(project: Path, runtime: Path, update: bool = False) -> dict:
+def initialize(project: Path, runtime: Path, update: bool = False, topic_runtime: bool = False) -> dict:
     project = project.resolve()
     if not project.is_dir():
         raise ValueError("project must be an existing directory")
     verify(runtime)
-    control = project / ".opc"
-    if redirected(control) or any(p.name.casefold() == ".opc" and p.name != ".opc"
+    control = project / (".archa" if topic_runtime else ".opc")
+    if redirected(control) or any(p.name.casefold() == control.name and p.name != control.name
                                    for p in project.iterdir()):
-        raise ValueError(".opc is redirected or has a case-conflicting name")
+        raise ValueError(control.name + " is redirected or has a case-conflicting name")
     existing = control.exists()
     config_path = control / "project.json"
     if existing:
@@ -197,7 +205,7 @@ def initialize(project: Path, runtime: Path, update: bool = False) -> dict:
             raise ValueError(".opc must be a directory")
         if redirected(config_path):
             raise ValueError("project.json must not be a symlink")
-        if not config_path.is_file() and not (control / "runtime").is_dir():
+        if not config_path.is_file() and not (control / "runtime").is_dir() and not (topic_runtime and (control / "topics").is_dir()):
             raise ValueError("existing .opc is neither a deployed runtime nor a project scaffold")
     local_runtime = control / "runtime"
     if redirected(local_runtime):
@@ -205,7 +213,8 @@ def initialize(project: Path, runtime: Path, update: bool = False) -> dict:
     if local_runtime.exists():
         verify(local_runtime)  # Resume pinned version, even when skill carries a newer one.
     launcher = control / "archa.py"
-    if redirected(launcher) or (launcher.exists() and launcher.read_text(encoding="utf-8") != LAUNCHER):
+    launcher_text = LAUNCHER.replace("from opc.cli import main", "from opc.topic_cli import main") if topic_runtime else LAUNCHER
+    if redirected(launcher) or (launcher.exists() and launcher.read_text(encoding="utf-8") != launcher_text):
         raise ValueError("existing .opc/archa.py conflicts with project-local launcher")
     backup = None
     if update and local_runtime.exists() and verify(local_runtime)['snapshot_sha256'] != verify(runtime)['snapshot_sha256']:
@@ -228,7 +237,7 @@ def initialize(project: Path, runtime: Path, update: bool = False) -> dict:
             shutil.rmtree(staging)
     if not launcher.exists():
         with launcher.open("x") as stream:
-            stream.write(LAUNCHER)
+            stream.write(launcher_text)
     config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
     return {"project": str(project), "existing_scaffold": config_path.exists(),
             "execution_enabled": config.get("execution_enabled", False),
@@ -240,20 +249,21 @@ def initialize(project: Path, runtime: Path, update: bool = False) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", type=Path, required=True)
+    parser.add_argument("--topic-runtime", action="store_true", help="deploy the new .archa topic entry")
     parser.add_argument('--update', action='store_true', help='replace verified runtime, retaining a backup; stop controllers first')
     args = parser.parse_args()
     skill = Path(__file__).resolve().parents[1]
     bundle = skill / "assets/runtime"
     try:
         if bundle.is_dir():
-            result = initialize(args.project, bundle, update=args.update)
+            result = initialize(args.project, bundle, update=args.update, topic_runtime=args.topic_runtime)
         else:
             source = skill.parent.parent
             if not (source / "opc/cli.py").is_file():
                 raise ValueError("runtime bundle missing; reinstall with tools/install_research_skills.py")
             with tempfile.TemporaryDirectory(prefix="archa-source-") as temp:
                 snapshot(source, Path(temp))
-                result = initialize(args.project, Path(temp), update=args.update)
+                result = initialize(args.project, Path(temp), update=args.update, topic_runtime=args.topic_runtime)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (OSError, ValueError) as exc:
