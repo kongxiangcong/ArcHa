@@ -61,6 +61,12 @@ def prompt(workspace, role, directory, state_file, output_file):
             text += (f'If continuing, mark IN_PROGRESS and write one probe to {output_file}. '
                      'COMPLETED or BLOCKED requires state only.\n')
             previous = workspace.path / 'steps' / f'step-{int(directory.name[5:]) - 1:02d}'
+        if role == 'expert_revise':
+            text += ('Revise only the current unexecuted probe in response to the user direction. '
+                     'Design the concrete adjustment yourself; do not change the topic goal. '
+                     'Keep STATUS IN_PROGRESS and the existing budget. Do not execute the probe.\n'
+                     + '\nCURRENT PROBE\n' + (directory / 'probe.md').read_text()
+                     + '\nUSER DIRECTION\n' + (directory / 'feedback.md').read_text())
         if previous.exists():
             for name in ('probe.md', 'result.md'):
                 text += f'\nPREVIOUS {name}\n{(previous / name).read_text()}\n'

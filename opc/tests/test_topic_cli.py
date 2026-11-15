@@ -428,3 +428,36 @@ def test_enabling_debug_holds_existing_probe_and_step_stays_single_dispatch(proj
     assert result['completed_rounds'] == 1 and result['next_action'] == 'expert'
     result = cli(project, 'resume')
     assert result['probe_breakpoint'] and result['completed_rounds'] == 1
+
+
+def test_deployed_revise_preserves_round_and_failed_proposal(project):
+    cli(project, 'init', '--goal', 'Inspect evidence', '--max-rounds', '3')
+    scripted(project)
+    cli(project, 'run', '--debug-probes')
+    topic = project / '.archa/topics/research'
+    original = (topic / 'steps/step-01/probe.md').read_text()
+    worker = project / 'revise.py'
+    worker.write_text("""import pathlib, sys
+state, output = map(pathlib.Path, sys.argv[1:])
+text = sys.stdin.read()
+assert 'CURRENT PROBE\\n# Probe' in text and 'Inspect evidence' in text
+assert 'USER DIRECTION' in text and 'Focus on the baseline' in text
+assert 'already reflected in STATE' in text
+state.write_text(state.parents[3].joinpath('STATE.md').read_text())
+output.write_text('Revised baseline probe')
+""")
+    (project / '.archa/workers.json').write_text(json.dumps({'roles': {
+        'expert': {'command': [sys.executable, str(worker), '{state_file}', '{output_file}'],
+                   'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5},
+        'executor': {'preset': 'scripted'}}}))
+    revised = cli(project, 'revise', '--feedback', 'Focus on the baseline')
+    assert revised['probe_breakpoint'] and revised['current_round'] == 1
+    assert revised['completed_rounds'] == 0 and revised['max_rounds'] == 3
+    step = topic / 'steps/step-01'
+    assert (step / 'probe.md').read_text() == 'Revised baseline probe' != original
+    assert not (step / 'result.md').exists()
+    worker.write_text("import pathlib,sys; pathlib.Path(sys.argv[2]).write_text('partial'); sys.exit(7)")
+    assert 'code 7' in cli(project, 'revise', '--feedback', 'Try again', ok=False)
+    assert (step / 'probe.md').read_text() == 'Revised baseline probe'
+    assert not (step / 'result.md').exists()
+    assert cli(project, 'status')['error']

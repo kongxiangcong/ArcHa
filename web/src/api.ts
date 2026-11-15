@@ -22,6 +22,11 @@ export const api = {
       "/topics/" + encodeURIComponent(topic) + "/resume",
       { add_rounds, debug_probes },
     ),
+  revise: (topic: string, feedback: string) =>
+    read<{ accepted: boolean }>(
+      "/topics/" + encodeURIComponent(topic) + "/revise",
+      { feedback },
+    ),
   stop: (topic: string, execution_id: string) =>
     read<Topic>("/topics/" + encodeURIComponent(topic) + "/stop", {
       execution_id,

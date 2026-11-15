@@ -1,5 +1,5 @@
 export type Activity = "idle" | "running" | "stopping" | "unknown";
-export type Role = "expert" | "executor" | "expert_finalize";
+export type Role = "expert" | "executor" | "expert_finalize" | "expert_revise";
 export type Material = { name: string; path: string };
 export type Topic = {
   topic: string;

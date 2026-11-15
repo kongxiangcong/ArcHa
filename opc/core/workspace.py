@@ -163,11 +163,13 @@ class TopicWorkspace:
                              encoding='utf-8')
         os.replace(temporary, path)
 
-    def commit_expert(self, directory, max_rounds, *, finalize=False):
+    def commit_expert(self, directory, max_rounds, *, finalize=False, revise=False):
         """Validate the complete draft before entering recoverable publication."""
         stage = directory / '.staging.expert'
         text = (stage / 'STATE.md').read_text(encoding='utf-8')
         state, budget = parse_state(text)
+        if revise and state != 'IN_PROGRESS':
+            raise ValueError('Revised probe must retain IN_PROGRESS status')
         if not finalize and state not in {'IN_PROGRESS', 'COMPLETED', 'BLOCKED'}:
             raise ValueError('Expert returned invalid normal-turn STATUS')
         if budget != max_rounds:
@@ -194,7 +196,7 @@ class TopicWorkspace:
             if stage.exists():
                 shutil.rmtree(stage)
             for name in (".staging.result.md", ".expert.prompt.md",
-                         ".executor.prompt.md", ".expert_finalize.prompt.md"):
+                         ".executor.prompt.md", ".expert_finalize.prompt.md", ".expert_revise.prompt.md"):
                 (directory / name).unlink(missing_ok=True)
 
     def publish_expert(self, directory):

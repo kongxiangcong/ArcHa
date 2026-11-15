@@ -137,7 +137,7 @@ def check_stop(workspace):
 
 
 @contextmanager
-def lifecycle(workspace):
+def lifecycle(workspace, *, role=None):
     with workspace.writer():
         previous = read_execution(workspace)
         end_previous(workspace, previous)
@@ -146,7 +146,7 @@ def lifecycle(workspace):
         status = workspace.status()
         record = {'id': uuid.uuid4().hex, 'topic': workspace.topic,
                   'controller': identity(os.getpid()), 'worker': None,
-                  'role': status['next_action'], 'round': status['current_round'],
+                  'role': role or status['next_action'], 'round': status['current_round'],
                   'started_at': datetime.now(timezone.utc).isoformat()}
         stop = workspace.control / ('.stop-' + record['id'])
         publish(workspace, record)
@@ -157,7 +157,7 @@ def lifecycle(workspace):
                 record['worker'] = None
             elif state == 'starting':
                 current = workspace.status()
-                record.update(worker='starting', role=current['next_action'],
+                record.update(worker='starting', role=role or current['next_action'],
                               round=current['current_round'],
                               started_at=datetime.now(timezone.utc).isoformat())
             elif getattr(process, 'pid', None):

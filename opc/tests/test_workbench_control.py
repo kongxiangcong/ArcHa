@@ -108,3 +108,40 @@ def test_probe_breakpoint_http_continue_and_read_only_materials(tmp_path):
         assert detail['status'] == 'BUDGET_EXHAUSTED' and not detail['debug_probes']
         assert detail['current_probe'] is None
         assert client.post(PREFIX + '/resume', json={'debug_probes': 'true'}).status_code == 422
+
+
+def test_http_revise_worker_and_failure_keep_current_probe(tmp_path):
+    w = setup(tmp_path)
+    config = {'roles': {role: {'preset': 'scripted'} for role in ('expert', 'executor')}}
+    config_path = tmp_path / '.archa/workers.json'
+    config_path.write_text(json.dumps(config))
+    with TestClient(create_app(tmp_path, control=True)) as client:
+        assert client.post(PREFIX + '/resume', json={'debug_probes': True}).status_code == 202
+        initial = wait_idle(client)
+        worker = tmp_path / 'revise.py'
+        worker.write_text("""import pathlib, sys
+state, probe, topic = map(pathlib.Path, sys.argv[1:])
+text = sys.stdin.read()
+assert 'CURRENT PROBE' in text and 'Check evidence' in text
+assert 'USER DIRECTION' in text and 'Measure baseline' in text
+state.write_text((topic / 'STATE.md').read_text())
+probe.write_text('Revised measurement design')
+print('Revision diagnostic', flush=True)
+""")
+        config['roles']['expert'] = {'command': [sys.executable, str(worker), '{state_file}', '{output_file}', '{topic_dir}'], 'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5}
+        config_path.write_text(json.dumps(config))
+        assert client.post(PREFIX + '/revise', json={'feedback': 'Measure baseline'}).status_code == 202
+        detail = wait_idle(client)
+        assert detail['probe_breakpoint'] and detail['completed_rounds'] == 0
+        assert detail['max_rounds'] == initial['max_rounds'] and detail['current_round'] == 1
+        material = lambda path: client.get('/api/observer/v1/materials', params={'path': path}).json()['text']
+        assert material(detail['current_probe']['path']) == 'Revised measurement design'
+        assert not detail['rounds'][0]['completed']
+        assert any('Revision diagnostic' in material(log['path']) for log in detail['rounds'][0]['logs'])
+        worker.write_text("import pathlib,sys; pathlib.Path(sys.argv[2]).write_text('partial'); sys.exit(8)")
+        assert client.post(PREFIX + '/revise', json={'feedback': 'Try another design'}).status_code == 202
+        detail = wait_idle(client)
+        assert 'code 8' in detail['error']
+        assert material(detail['current_probe']['path']) == 'Revised measurement design'
+        assert detail['completed_rounds'] == 0
+        assert client.post(PREFIX + '/revise', json={'feedback': ' '}).status_code == 409

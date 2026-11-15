@@ -10,13 +10,15 @@ from .core.engine import TopicEngine
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='opc')
     sub = parser.add_subparsers(dest='command', required=True)
-    for command in ('init', 'step', 'run', 'resume', 'status', 'stop', 'report', 'check'):
+    for command in ('init', 'step', 'run', 'resume', 'revise', 'status', 'stop', 'report', 'check'):
         p = sub.add_parser(command)
         p.add_argument('-p', '--project', required=True)
         p.add_argument('--topic', required=True)
         if command in {'run', 'resume'}:
             p.add_argument('--debug-probes', action=argparse.BooleanOptionalAction, default=None,
                            help='pause before each probe; selection persists for this topic')
+        if command == 'revise':
+            p.add_argument('--feedback', required=True)
         if command == 'resume':
             p.add_argument('--add-rounds', type=int)
         if command == 'init':
@@ -43,6 +45,8 @@ def main(argv=None):
             result = stop(workspace)
         elif args.command == 'run':
             result = TopicEngine(args.project, args.topic).run(args.debug_probes)
+        elif args.command == 'revise':
+            result = TopicEngine(args.project, args.topic).revise(args.feedback)
         elif args.command == 'resume':
             result = TopicEngine(args.project, args.topic).resume(args.add_rounds, args.debug_probes)
         else:

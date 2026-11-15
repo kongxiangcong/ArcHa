@@ -11,6 +11,7 @@
 | `step` | 执行一次 Expert、Executor 或收尾调用 |
 | `run [--debug-probes / --no-debug-probes]` | 执行到领域终态、探针断点或调用失败 |
 | `stop` | 停止当前调用并等待归属进程结束 |
+| `revise --feedback "方向意见"` | 在调试断点由 Expert 重拟当前探针，保持轮次和预算；失败保留正式提案 |
 | `resume [--add-rounds N] [--debug-probes / --no-debug-probes]` | 恢复提交，显式解除已处理阻塞，按需追加预算并继续 |
 | `status` | 只读查看状态、轮数、下一动作、当前执行和错误 |
 | `report` | 从已有材料生成专题内 `PROGRESS_LOG.md`，不调用 Worker |
@@ -99,4 +100,4 @@ Executor 写 `.staging.result.md`，成功检查后原子替换为 `result.md`�
 
 项目本地部署、固定运行时显式升级及配置保留见 [仓库入口](../README.md)。部署文件清单只维护在 [initialize.py](../skills/archa-discuss/scripts/initialize.py) 的 `RUNTIME_FILES`，安装器复用；包含传递依赖与模板资源。
 
-工作台只显示 Expert、Executor 和收尾的活动、流式日志与已有材料，不推断模型私有活动；当前认知不冒充历史状态快照。控制提供停止、继续、追加预算和探针断点调试（HTTP `resume` 的可选布尔字段 `debug_probes`），请求与实际状态分开展示，服务端独占锁防止重复启动。主屏直接读取当前探针，输入与认知状态、历史日志按需展开；专题详情的 `current_probe` 引用权威探针材料。材料读取限制在明确允许的根目录，禁止越界或执行原始 HTML；demo 使用同一专题接口。
+工作台只显示 Expert、Executor 和收尾的活动、流式日志与已有材料，不推断模型私有活动；当前认知不冒充历史状态快照。控制提供停止、继续、追加预算和探针断点调试（HTTP `resume` 的可选布尔字段 `debug_probes`），请求与实际状态分开展示，服务端独占锁防止重复启动。HTTP `revise` 接收 `feedback` 字符串，共用 CLI 重拟控制；当前轮只保留最近一次 `feedback.md` 与重拟日志。主屏可提交方向意见并查看调整状态，直接读取当前探针，输入与认知状态、历史日志按需展开；专题详情的 `current_probe` 引用权威探针材料。材料读取限制在明确允许的根目录，禁止越界或执行原始 HTML；demo 使用同一专题接口。

@@ -21,6 +21,22 @@ class TopicEngine:
             self.run_locked(self.configure_debug(debug_probes))
         return self.workspace.status()
 
+    def revise(self, feedback):
+        with self.lifecycle('expert_revise'):
+            self.prepare_revision(feedback)
+            self.step_locked(revise=True)
+        return self.workspace.status()
+
+    def prepare_revision(self, feedback):
+        w = self.workspace
+        status = w.status()
+        if not isinstance(feedback, str) or not feedback.strip():
+            raise ValueError('feedback must contain a direction for the current probe')
+        if not status['debug_probes'] or status['next_action'] != 'executor':
+            raise ValueError('revise requires a pending probe in debug mode')
+        directory = w.path / 'steps' / f'step-{status["current_round"]:02d}'
+        (directory / 'feedback.md').write_text(feedback.strip(), encoding='utf-8')
+
     def configure_debug(self, enabled):
         """Persist explicit user selection under the execution lock."""
         path = self.workspace.path / '.debug-probes'
@@ -46,18 +62,18 @@ class TopicEngine:
             self.step_locked()
         return self.workspace.status()
 
-    def lifecycle(self):
+    def lifecycle(self, role=None):
         from .topic_control import lifecycle
-        return lifecycle(self.workspace)
+        return lifecycle(self.workspace, role=role)
 
-    def step_locked(self):
+    def step_locked(self, *, revise=False):
         """Dispatch once with the project lock held and recovery complete."""
         w = self.workspace
         from .topic_control import check_stop
         check_stop(w)
         status = w.status()
-        role = status['next_action']
-        if role not in {'expert', 'executor', 'expert_finalize'}:
+        role = 'expert_revise' if revise else status['next_action']
+        if role not in {'expert', 'executor', 'expert_finalize', 'expert_revise'}:
             return status
         goal = (w.path / 'GOAL.md').read_text()
         # A template with headings but no content is not an exploration goal.
@@ -77,7 +93,7 @@ class TopicEngine:
         invoke(w, role, prompt(w, role, directory, state_file, output_file),
                state_file, output_file, directory / f'.{role}.log')
         if role.startswith('expert'):
-            w.commit_expert(directory, status['max_rounds'], finalize=role == 'expert_finalize')
+            w.commit_expert(directory, status['max_rounds'], finalize=role == 'expert_finalize', revise=revise)
         else:
             if not output_file.read_text().strip():
                 raise ValueError('Executor result is empty')

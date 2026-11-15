@@ -9,6 +9,7 @@ const roles: Record<Role, string> = {
   expert: "Expert",
   executor: "Executor",
   expert_finalize: "Expert · 收尾消化",
+  expert_revise: "Expert · 调整探针",
 };
 const activities = {
   idle: "空闲",
@@ -129,6 +130,7 @@ function Controls({ detail }: { detail: TopicDetail }) {
   const [message, setMessage] = useState("");
   const [failure, setFailure] = useState("");
   const [rounds, setRounds] = useState("");
+  const [feedback, setFeedback] = useState("");
   const [debug, setDebug] = useState(detail.debug_probes || false);
   useEffect(
     () => setDebug(detail.debug_probes || false),
@@ -137,7 +139,7 @@ function Controls({ detail }: { detail: TopicDetail }) {
   const active =
     detail.activity === "running" || detail.activity === "stopping";
   const exhausted = detail.status === "BUDGET_EXHAUSTED";
-  const submit = async (action: "stop" | "resume") => {
+  const submit = async (action: "stop" | "resume" | "revise") => {
     setPending(action);
     setFailure("");
     setMessage("");
@@ -145,6 +147,10 @@ function Controls({ detail }: { detail: TopicDetail }) {
       if (action === "stop" && detail.execution) {
         await api.stop(detail.topic, detail.execution.id);
         setMessage("停止请求已处理；执行活动以服务端状态为准。");
+      } else if (action === "revise") {
+        await api.revise(detail.topic, feedback);
+        setFeedback("");
+        setMessage("重拟请求已接收；专家调整后会再次停下。");
       } else {
         await api.resume(
           detail.topic,
@@ -207,6 +213,28 @@ function Controls({ detail }: { detail: TopicDetail }) {
                       ? "执行当前探针并继续"
                       : "继续"}
           </button>
+          {detail.debug_probes && detail.next_action === "executor" && (
+            <div>
+              <label>
+                当前探针方向意见
+                <textarea
+                  aria-label="当前探针方向意见"
+                  value={feedback}
+                  onChange={(event) => setFeedback(event.target.value)}
+                  disabled={active || !!pending}
+                />
+              </label>
+              <button
+                disabled={active || !!pending || !feedback.trim()}
+                onClick={() => submit("revise")}
+              >
+                提交意见并重拟
+              </button>
+              <p className="muted">
+                只调整当前探针，由专家设计具体方案；修改专题目标请使用讨论入口。
+              </p>
+            </div>
+          )}
           {exhausted && <p>轮数已耗尽，请追加预算后继续。</p>}
         </>
       )}
@@ -223,7 +251,9 @@ function Controls({ detail }: { detail: TopicDetail }) {
         <p role="status">
           {pending === "stop"
             ? "停止请求处理中，等待确认进程树结束…"
-            : "继续请求处理中，等待工程执行权…"}
+            : pending === "revise"
+              ? "重拟请求处理中，等待工程执行权…"
+              : "继续请求处理中，等待工程执行权…"}
         </p>
       )}
       {message && <p role="status">{message}</p>}

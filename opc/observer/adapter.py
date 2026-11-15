@@ -49,7 +49,7 @@ class ObserverAdapter:
             materials = [self.material(path) for path in sorted(directory.iterdir())
                          if path.is_file() and not path.name.startswith('.')]
             logs = [{'role': role, **self.material(directory / f'.{role}.log')}
-                    for role in ('expert', 'executor', 'expert_finalize')
+                    for role in ('expert', 'executor', 'expert_finalize', 'expert_revise')
                     if (directory / f'.{role}.log').is_file()]
             rounds.append(dict(number=number, completed=(directory / 'result.md').exists(),
                                materials=materials, logs=logs))
@@ -71,7 +71,7 @@ class ObserverAdapter:
             raise ObserverError(403, 'outside_material_roots', 'Private runtime files are not materials')
         if relative.parts[0] == '.archa':
             hidden = [part for part in relative.parts[1:] if part.startswith('.')]
-            if hidden and (len(hidden) != 1 or hidden[0] not in {'.expert.log', '.executor.log', '.expert_finalize.log'}):
+            if hidden and (len(hidden) != 1 or hidden[0] not in {'.expert.log', '.executor.log', '.expert_finalize.log', '.expert_revise.log'}):
                 raise ObserverError(403, 'outside_material_roots', 'Unpublished runtime files are not materials')
         if not candidate.is_file():
             raise ObserverError(404, 'not_found', 'Material not found')

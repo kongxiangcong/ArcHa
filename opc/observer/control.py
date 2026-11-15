@@ -7,12 +7,25 @@ from ..core.engine import TopicEngine
 
 
 def resume(workspace, add_rounds=None, debug_probes=None):
+    return dispatch(workspace, add_rounds, debug_probes)
+
+
+def revise(workspace, feedback):
+    return dispatch(workspace, feedback=feedback)
+
+
+def dispatch(workspace, add_rounds=None, debug_probes=None, feedback=None):
     admitted = Future()
 
     def execute():
         engine = TopicEngine(workspace.project, workspace.topic)
         try:
-            with engine.lifecycle():
+            with engine.lifecycle('expert_revise' if feedback is not None else None):
+                if feedback is not None:
+                    engine.prepare_revision(feedback)
+                    admitted.set_result({'accepted': True, 'execution_id': workspace.status()['execution']['id']})
+                    engine.step_locked(revise=True)
+                    return
                 status = workspace.status()
                 if status['status'] == 'COMPLETED':
                     raise ValueError('COMPLETED topic cannot be reopened')

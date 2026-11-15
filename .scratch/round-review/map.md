@@ -18,6 +18,8 @@ Labels: wayfinder:map
 
 - [CLI 与工作台断点/继续已交付](issues/02-breakpoint-continue.md)：专题持久化调试选项，共用引擎断点，真实浏览器与 Worker 验证只读检查和继续至下一探针。
 
+- [方向意见与专家重拟已交付](issues/03-feedback-revise.md)：CLI/HTTP 共用当前轮重拟，失败保留正式探针，真实浏览器验证反馈到修改后执行的闭环。
+
 ## Not yet specified
 
 无必须继续拆票的产品决策。参数命名、接口路径和最少的数据保存方式由实现时结合现有代码决定。

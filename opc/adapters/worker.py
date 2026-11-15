@@ -78,7 +78,7 @@ def configuration(workspace):
 
 
 def invoke(workspace, role, prompt, state_file, output_file, log_file):
-    spec = configuration(workspace)['expert' if role == 'expert_finalize' else role]
+    spec = configuration(workspace)['expert' if role.startswith('expert') else role]
     if spec.get('preset') == 'scripted':
         if role.startswith('expert'):
             state_file.write_text((workspace.path / 'STATE.md').read_text() + '\nPrepared one focused evidence question.\n')
