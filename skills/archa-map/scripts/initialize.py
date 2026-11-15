@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install a project-local ArcHa snapshot without replacing existing contracts."""
+"""Deploy a project-local topic runtime without changing research materials."""
 from __future__ import annotations
 
 import argparse
@@ -20,7 +20,7 @@ from pathlib import Path
 import sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent / "runtime"))
-from opc.cli import main
+from opc.topic_cli import main
 if __name__ == "__main__":
     raise SystemExit(main())
 '''
@@ -38,54 +38,27 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-# Explicit deployment boundary: CLI, execution engine, workers, built-in strategy,
-# scaffold resources and license. New repository files are not deployed implicitly.
+# Single deployment allowlist, shared by the skill installer. Integrity hashes
+# protect the pinned runtime; research materials are never scanned or hashed.
 RUNTIME_FILES = (
-    "LICENSE",
-    "opc/__init__.py",
-    "opc/__main__.py",
-    "opc/adapters/__init__.py",
-    "opc/adapters/codex.py",
-    "opc/adapters/dsh.py",
-    "opc/adapters/dsh-tool-boundary.mjs",
-    "opc/adapters/prompts.py",
-    "opc/adapters/scripted.py",
-    "opc/adapters/worker.py",
-    "opc/cli.py",
-    "opc/topic_cli.py",
-    "opc/core/topic_workspace.py",
-    "opc/core/topic_engine.py",
-    "opc/core/topic_control.py",
-    "opc/adapters/topic_prompts.py",
-    "opc/adapters/topic_worker.py",
-    "opc/scaffold/templates.py",
-    "opc/scaffold/topic_workers.json",
-    "opc/log.py",
-    "opc/core/__init__.py",
-    "opc/core/accept.py",
-    "opc/core/config.py",
-    "opc/core/worker_config.py",
-    "opc/core/tool_boundary.py",
-    "opc/core/engine.py",
-    "opc/core/ledger.py",
-    "opc/core/model.py",
-    "opc/core/platform.py",
-    "opc/core/progress.py",
-    "opc/core/windows.py",
-    "opc/core/promote.py",
-    "opc/core/results.py",
-    "opc/core/workspace.py",
-    "opc/domain.py",
-    "opc/domains/__init__.py",
-    "opc/domains/command.py",
-    "opc/scaffold/__init__.py",
-    "opc/scaffold/brief.py",
-    "opc/scaffold/evaluate_template.py",
-    "opc/scaffold/onboard.py",
-    "opc/scaffold/workers.json",
-    "opc/strategies/__init__.py",
-    "opc/strategies/param_search.py",
-    "opc/scaffold/ONBOARDING.md",
+    'LICENSE',
+    'opc/__init__.py',
+    'opc/adapters/__init__.py',
+    'opc/core/__init__.py',
+    'opc/scaffold/__init__.py',
+    'opc/topic_cli.py',
+    'opc/topic_report.py',
+    'opc/core/topic_workspace.py',
+    'opc/core/topic_engine.py',
+    'opc/core/topic_control.py',
+    'opc/adapters/topic_prompts.py',
+    'opc/adapters/topic_worker.py',
+    'opc/scaffold/templates.py',
+    'opc/scaffold/topic_workers.json',
+    'opc/core/platform.py',
+    'opc/core/windows.py',
+    'opc/core/config.py',
+    'opc/core/model.py',
 )
 
 
@@ -146,7 +119,7 @@ def upgrade_runtime(control: Path, runtime: Path) -> str:
     """Replace a verified pinned runtime under the existing controller lock."""
     local = control / 'local'
     backups = local / 'runtime-backups'
-    if redirected(local) or redirected(backups) or redirected(local / 'ledger.lock'):
+    if redirected(local) or redirected(backups) or redirected(control / '.run.lock'):
         raise ValueError('runtime update paths must not be redirected')
     local.mkdir(parents=True, exist_ok=True)
     # The packaged platform helper supplies the same lock on Windows and POSIX.
@@ -158,7 +131,7 @@ def upgrade_runtime(control: Path, runtime: Path) -> str:
     finally:
         sys.path.pop(0)
         sys.dont_write_bytecode = previous
-    lock_path = control / '.run.lock' if control.name == '.archa' else local / 'ledger.lock'
+    lock_path = control / '.run.lock'
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
     locked = False
     try:
@@ -190,40 +163,35 @@ def upgrade_runtime(control: Path, runtime: Path) -> str:
         os.close(fd)
 
 
-def initialize(project: Path, runtime: Path, update: bool = False, topic_runtime: bool = False) -> dict:
+def initialize(project: Path, runtime: Path, update: bool = False, topic_runtime: bool = True) -> dict:
     project = project.resolve()
     if not project.is_dir():
         raise ValueError("project must be an existing directory")
     verify(runtime)
-    control = project / (".archa" if topic_runtime else ".opc")
+    control = project / (".archa")
     if redirected(control) or any(p.name.casefold() == control.name and p.name != control.name
                                    for p in project.iterdir()):
         raise ValueError(control.name + " is redirected or has a case-conflicting name")
     existing = control.exists()
-    config_path = control / "project.json"
     if existing:
         if not control.is_dir():
-            raise ValueError(".opc must be a directory")
-        if redirected(config_path):
-            raise ValueError("project.json must not be a symlink")
-        if not config_path.is_file() and not (control / "runtime").is_dir() and not (topic_runtime and (control / "topics").is_dir()):
-            raise ValueError("existing .opc is neither a deployed runtime nor a project scaffold")
+            raise ValueError(".archa must be a directory")
     local_runtime = control / "runtime"
     if redirected(local_runtime):
         raise ValueError("existing runtime is a symlink")
     if local_runtime.exists():
         verify(local_runtime)  # Resume pinned version, even when skill carries a newer one.
     launcher = control / "archa.py"
-    launcher_text = LAUNCHER.replace("from opc.cli import main", "from opc.topic_cli import main") if topic_runtime else LAUNCHER
+    launcher_text = LAUNCHER
     if redirected(launcher) or (launcher.exists() and launcher.read_text(encoding="utf-8") != launcher_text):
-        raise ValueError("existing .opc/archa.py conflicts with project-local launcher")
+        raise ValueError("existing .archa/archa.py conflicts with project-local launcher")
     backup = None
     if update and local_runtime.exists() and verify(local_runtime)['snapshot_sha256'] != verify(runtime)['snapshot_sha256']:
         backup = upgrade_runtime(control, runtime)
     if not existing:
         control.mkdir()
     if not local_runtime.exists():
-        # Stage inside .opc, so interruption cannot expose a partial runtime.
+        # Stage inside .archa, so interruption cannot expose a partial runtime.
         # TemporaryDirectory uses mode 0700. On Windows/Python 3.13+ its
         # private ACL survives rename and makes runtime unreadable to workers
         # running as the sandbox account. Inherit the project's ACL instead.
@@ -239,12 +207,10 @@ def initialize(project: Path, runtime: Path, update: bool = False, topic_runtime
     if not launcher.exists():
         with launcher.open("x") as stream:
             stream.write(launcher_text)
-    config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
-    return {"project": str(project), "existing_scaffold": config_path.exists(),
-            "execution_enabled": config.get("execution_enabled", False),
-            "runtime_commit": verify(local_runtime)["source_commit"],
-            "runtime_backup": backup,
-            "entrypoint": str(launcher), "next": "discuss research map; no experiments started"}
+    return {"project": str(project), "runtime_commit": verify(local_runtime)["source_commit"],
+            "runtime_backup": backup, "entrypoint": str(launcher),
+            "next": "initialize or inspect a topic; no experiments started"}
+
 
 
 def main() -> int:
@@ -257,14 +223,14 @@ def main() -> int:
     bundle = skill / "assets/runtime"
     try:
         if bundle.is_dir():
-            result = initialize(args.project, bundle, update=args.update, topic_runtime=args.topic_runtime)
+            result = initialize(args.project, bundle, update=args.update, topic_runtime=True)
         else:
             source = skill.parent.parent
-            if not (source / "opc/cli.py").is_file():
+            if not (source / "opc/topic_cli.py").is_file():
                 raise ValueError("runtime bundle missing; reinstall with tools/install_research_skills.py")
             with tempfile.TemporaryDirectory(prefix="archa-source-") as temp:
                 snapshot(source, Path(temp))
-                result = initialize(args.project, Path(temp), update=args.update, topic_runtime=args.topic_runtime)
+                result = initialize(args.project, Path(temp), update=args.update, topic_runtime=True)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (OSError, ValueError) as exc:

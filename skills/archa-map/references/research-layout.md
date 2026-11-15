@@ -1,58 +1,7 @@
-# 研究材料约定
+# 专题材料
 
-```text
-.opc/
-  archa.py                         项目内 CLI；python3 .opc/archa.py --help
-  runtime/                         ArcHa 代码、许可证、来源及逐文件摘要
-  research/
-    index.md                       名称、范围、地图链接；仅导航
-    topics/
-      dma-scheduling/
-        research-map.md            本专题地图与任务清单
-        discussion.md              本专题讨论
-        tasks/
-          r01-baseline/
-            task.md                链接 ../../research-map.md
-            task-brief.md          archa-task 生成
-            evidence/              按需创建
-```
+`.archa/topics/SLUG/GOAL.md` 记录目标、范围、环境入口和完成判据；`STATE.md` 记录唯一认知状态、状态头与授权轮数；`steps/step-NN/{probe,result}.md` 记录每轮调查与结果。工程共用 `.archa/workers.json` 和运行锁。
 
-`research/topics/<topic>/tasks/` 是研究讨论目录；`.opc/tasks/` 是执行合同目录，两者通过简报 Source 关联，不混用。
+先 stop 并确认进程结束，再编辑目标、问题队列或未执行探针。已完成轮次保持历史，新实验形成新探针；工程条件变化注明结论适用范围。实质换题新建专题，已完成专题不会自动重开。
 
-需要持续研究成果时，task 合同的可选 `results_path` 指向稳定 Markdown 入口。项目已有 workloads/specs/index 均保留原位置，入口用相对链接组织计划、批次、累计结论和审核。`opc results` 与引擎共用登记逻辑；运行事实以 ledger 为准，README 自动区只做投影，人工区保存摘要、条件与下一步。具体目录由项目确定，不把领域路径写进 runtime。
-
-## 地图末尾的任务清单
-
-地图正文自由组织，附上下面这类清单和接续提示词。路径相对地图文件。每个方向至少一个任务；稳定 ID 不因排序或标题变化而更换。拆分任务时给新 ID，保留旧条目的去向。
-
-```markdown
-## 研究任务 to-do
-
-勾选仅表示简报已就绪可交给 onboard 起草，不代表研究已完成或允许执行。
-
-- [ ] R01 | [理解输入消费链](tasks/r01-input-flow/task.md) | status=todo | depends=none
-- [ ] R02 | [确定调度研究范围](tasks/r02-scheduling/task.md) | status=parked | depends=R01（需要实际输入消费位置）
-
-## 下一步
-
-推荐 R01，因为 R02 需要知道实际输入消费位置。
-
-`$archa-task /absolute/project/.opc/research/topics/dma-scheduling/tasks/r01-input-flow/`
-```
-
-状态只有四种：
-
-- `todo`：未开始。
-- `active`：第二阶段正在调研、澄清或自主完善 brief 大纲。
-- `ready-for-onboard`：简报已就绪，可交给 onboard 起草；只有这一项勾选。
-- `parked`：阻塞、暂缓或取消，在 `depends` 或 `task.md` 写明原因和重开条件。
-
-状态由主 agent 更新，sub-agent 只交调查结果。
-
-`task.md` 保持短小：稳定 ID 与方向名、回到地图的相对链接、问题与预期用途、暂定包含/排除、依赖和当前缺口。尚未知的内容写原因，不填写虚构参数。
-
-## 修订
-
-地图记录日期和重大方向变更。新证据推翻前提时，链接证据说明影响，把受影响任务取消勾选改回 `active` 或 `parked`，若已有简报，将其标为 `Status: draft` 并记录修订原因；正文修订由 archa-task 记录新大纲与依据后生成；保留历史版本和证据。执行中的合同变更交由独立 revision/run 流程处理。
-
-同一专题可含多条技术路线，R01 等编号只在专题内唯一。不同专题同编号不共享合同、预算、成果或历史。共享材料显式引用原路径。旧 research-map.md、discussion.md、tasks/ 原位保留。新专题重名追加序号，标题调整不改目录。
+必要原件与脚本留在原位置并引用；`PROGRESS_LOG.md` 仅是按需衍生报告，不参与调度。停止不撤销工程修改；未提交调用可能重跑，已提交结果复用。
