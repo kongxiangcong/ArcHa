@@ -25,7 +25,12 @@ export type Round = {
   logs: (Material & { role: Role })[];
 };
 export type TopicDetail = Topic & { rounds: Round[]; materials: Material[] };
-export type Overview = { project: string; demo: boolean; topics: Topic[] };
+export type Overview = {
+  project: string;
+  demo: boolean;
+  control: boolean;
+  topics: Topic[];
+};
 export type Content = {
   path: string;
   text: string;

@@ -124,6 +124,88 @@ function Reader({
     </>
   );
 }
+function Controls({ detail }: { detail: TopicDetail }) {
+  const [pending, setPending] = useState("");
+  const [message, setMessage] = useState("");
+  const [failure, setFailure] = useState("");
+  const [rounds, setRounds] = useState("");
+  const active =
+    detail.activity === "running" || detail.activity === "stopping";
+  const exhausted = detail.status === "BUDGET_EXHAUSTED";
+  const submit = async (action: "stop" | "resume") => {
+    setPending(action);
+    setFailure("");
+    setMessage("");
+    try {
+      if (action === "stop" && detail.execution) {
+        await api.stop(detail.topic, detail.execution.id);
+        setMessage("停止请求已处理；执行活动以服务端状态为准。");
+      } else {
+        await api.resume(detail.topic, rounds ? Number(rounds) : undefined);
+        setMessage("继续请求已接收；请查看执行活动和结果。");
+      }
+    } catch (error) {
+      setFailure(String(error));
+    } finally {
+      setPending("");
+    }
+  };
+  return (
+    <section aria-label="专题控制">
+      {detail.status !== "COMPLETED" && (
+        <>
+          <label>
+            追加轮数{" "}
+            <input
+              aria-label="追加轮数"
+              type="number"
+              min="1"
+              step="1"
+              value={rounds}
+              onChange={(event) => setRounds(event.target.value)}
+              disabled={active || !!pending}
+            />
+          </label>
+          <button
+            disabled={
+              active ||
+              !!pending ||
+              (exhausted && !rounds) ||
+              (!!rounds &&
+                (!Number.isInteger(Number(rounds)) || Number(rounds) <= 0))
+            }
+            onClick={() => submit("resume")}
+          >
+            {rounds
+              ? "追加并继续"
+              : detail.status === "BLOCKED"
+                ? "条件已补齐，继续"
+                : "继续"}
+          </button>
+          {exhausted && <p>轮数已耗尽，请追加预算后继续。</p>}
+        </>
+      )}
+      {detail.execution && (
+        <button
+          disabled={!!pending || detail.activity === "stopping"}
+          onClick={() => submit("stop")}
+        >
+          停止
+        </button>
+      )}
+      {detail.status === "COMPLETED" && <p>研究已完成，不能自动重开。</p>}
+      {pending && (
+        <p role="status">
+          {pending === "stop"
+            ? "停止请求处理中，等待确认进程树结束…"
+            : "继续请求处理中，等待工程执行权…"}
+        </p>
+      )}
+      {message && <p role="status">{message}</p>}
+      {failure && <p role="alert">{failure}</p>}
+    </section>
+  );
+}
 export default function App() {
   const [overview, setOverview] = useState<Overview>();
   const [topic, setTopic] = useState(
@@ -276,6 +358,7 @@ export default function App() {
               )}
               {detail.error && <p role="alert">{detail.error}</p>}
             </section>
+            {overview?.control && <Controls key={topic} detail={detail} />}
             <div className="workspace-grid">
               <section>
                 <h2>当前认知状态</h2>
