@@ -83,7 +83,8 @@ def tree_members(record):
             env = (entry / 'environ').read_bytes().split(b'\0')
             if ('ARCHA_EXECUTION=' + record['id']).encode() not in env:
                 raise ValueError('unknown execution: surviving process ownership cannot be verified')
-            members.append(int(entry.name))
+            members.append({'pid': int(entry.name), 'start': fields[19],
+                            'boot': worker['boot']})
         except (FileNotFoundError, ProcessLookupError):
             continue
     return members
@@ -97,8 +98,8 @@ def end_previous(workspace, record):
     if members:
         # Verify individual birth identities and use pidfds: a recycled PID is
         # never signalled between inspecting /proc and sending the signal.
-        for pid in members:
-            owner = identity(pid)
+        for owner in members:
+            pid = owner['pid']
             try:
                 fd = os.pidfd_open(pid)
             except ProcessLookupError:
@@ -138,8 +139,10 @@ def check_stop(workspace):
 @contextmanager
 def lifecycle(workspace):
     with workspace.writer():
-        end_previous(workspace, read_execution(workspace))
-        workspace.recover()
+        previous = read_execution(workspace)
+        end_previous(workspace, previous)
+        if not previous or previous['topic'] != workspace.topic:
+            workspace.recover()
         status = workspace.status()
         record = {'id': uuid.uuid4().hex, 'topic': workspace.topic,
                   'controller': identity(os.getpid()), 'worker': None,

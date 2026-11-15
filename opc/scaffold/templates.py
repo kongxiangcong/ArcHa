@@ -14,3 +14,17 @@ MAX_ROUNDS: {max_rounds}
 
 ## 5. Latest cognitive update
 '''
+
+PIM_GOAL = GOAL + '''
+## PIM investigation context (optional)
+<!-- Record simulator/source entry, workload and mapping, hardware assumptions,
+measurement command and correctness checks when relevant to this objective.
+Check the critical path or benefit bound before choosing a costly experiment.
+Verify that each proposed intervention actually changes the intended mechanism. -->
+'''
+
+
+def goal_template(name):
+    if name not in {'default', 'pim'}:
+        raise ValueError('unknown topic template: ' + name)
+    return PIM_GOAL if name == 'pim' else GOAL

@@ -81,7 +81,8 @@ def invoke(workspace, role, prompt, state_file, output_file, log_file):
     if spec.get('preset') == 'scripted':
         if role.startswith('expert'):
             state_file.write_text((workspace.path / 'STATE.md').read_text() + '\nPrepared one focused evidence question.\n')
-            output_file.write_text('# Probe\n\nCheck the supplied evidence for:\n' + (workspace.path / 'GOAL.md').read_text())
+            if role != 'expert_finalize':
+                output_file.write_text('# Probe\n\nCheck the supplied evidence for:\n' + (workspace.path / 'GOAL.md').read_text())
         else:
             output_file.write_text('# Result\n\nObserved the current probe:\n' + (output_file.parent / 'probe.md').read_text())
         log_file.write_text('Deterministic ' + role + ' completed.\n')

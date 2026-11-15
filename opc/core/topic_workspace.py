@@ -7,7 +7,7 @@ import re
 import shutil
 
 from .platform import lock_writer, unlock_writer
-from ..scaffold.templates import GOAL, STATE
+from ..scaffold.templates import STATE, goal_template
 
 STATUSES = {'IN_PROGRESS', 'COMPLETED', 'BLOCKED', 'BUDGET_EXHAUSTED'}
 
@@ -69,14 +69,15 @@ class TopicWorkspace:
                 unlock_writer(fd)
             os.close(fd)
 
-    def initialize(self, goal='', max_rounds=10):
+    def initialize(self, goal='', max_rounds=10, template='default'):
         if max_rounds <= 0:
             raise ValueError('MAX_ROUNDS must be a positive integer')
+        goal_text = goal_template(template).format(goal=goal)
         with self.writer():
             self.path.mkdir(parents=True, exist_ok=True)
             (self.path / 'steps').mkdir(exist_ok=True)
             defaults = json.loads((Path(__file__).parents[1] / 'scaffold/topic_workers.json').read_text())
-            files = {self.path / 'GOAL.md': GOAL.format(goal=goal),
+            files = {self.path / 'GOAL.md': goal_text,
                      self.path / 'STATE.md': STATE.format(max_rounds=max_rounds),
                      self.control / 'workers.json': json.dumps(defaults, indent=2) + '\n'}
             for path, text in files.items():
@@ -121,8 +122,32 @@ class TopicWorkspace:
         from .topic_control import activity
         return dict(**activity(self), topic=self.topic, status=state, max_rounds=budget,
                     completed_rounds=completed, next_action=action,
-                    current_round=len(rounds) if action == 'executor' else completed + 1,
+                    current_round=(len(rounds) if action in {'executor', 'expert_finalize'} or state != 'IN_PROGRESS'
+                                   else completed + 1),
                     publishing=any((self.path / 'steps').glob('step-*/.staging.commit')))
+
+    def resume(self, add_rounds=None):
+        """Update user authorization under the caller's execution lifecycle lock."""
+        if add_rounds is not None and (type(add_rounds) is not int or add_rounds <= 0):
+            raise ValueError('add-rounds must be a positive integer')
+        status = self.status()
+        if status['status'] == 'COMPLETED':
+            if add_rounds is not None:
+                raise ValueError('COMPLETED topic cannot accept additional rounds')
+            return
+        state = status['status']
+        if state == 'BLOCKED' or (state == 'BUDGET_EXHAUSTED' and add_rounds is not None):
+            state = 'IN_PROGRESS'
+        budget = status['max_rounds'] + (add_rounds or 0)
+        if state == status['status'] and budget == status['max_rounds']:
+            return
+        path = self.path / 'STATE.md'
+        lines = path.read_text(encoding='utf-8').splitlines(keepends=True)
+        end = next((i for i, line in enumerate(lines[1:], 1) if not line.strip()), len(lines))
+        temporary = self.path / '.STATE.resume.md'
+        temporary.write_text(f'# Exploration State\nSTATUS: {state}\nMAX_ROUNDS: {budget}\n'
+                             + ''.join(lines[end:]), encoding='utf-8')
+        os.replace(temporary, path)
 
     def commit_expert(self, directory, max_rounds, *, finalize=False):
         """Validate the complete draft before entering recoverable publication."""

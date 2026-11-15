@@ -5,11 +5,13 @@ import subprocess
 import sys
 import time
 
+import pytest
+
 from opc.tests.test_topic_cli import cli, project, scripted
 
 
-def start(project, topic='research'):
-    return subprocess.Popen([sys.executable, str(project / '.archa/archa.py'), 'step',
+def start(project, topic='research', command='step'):
+    return subprocess.Popen([sys.executable, str(project / '.archa/archa.py'), command,
                              '-p', str(project), '--topic', topic],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
@@ -36,7 +38,7 @@ def wait_running(project):
 
 def test_stop_waits_then_edit_pending_probe_and_retry(project):
     long_executor(project)
-    process = start(project)
+    process = start(project, command='run')
     try:
         assert wait_running(project)['activity'] == 'running'
         stopped = cli(project, 'stop')
@@ -48,7 +50,14 @@ def test_stop_waits_then_edit_pending_probe_and_retry(project):
         probe = project / '.archa/topics/research/steps/step-01/probe.md'
         probe.write_text('Human corrected question')
         scripted(project)
-        assert cli(project, 'step')['completed_rounds'] == 1
+        state = project / '.archa/topics/research/STATE.md'
+        state.write_text(state.read_text().replace('MAX_ROUNDS: 10', 'MAX_ROUNDS: 1'))
+        resumed = subprocess.run([sys.executable, str(project / '.archa/archa.py'), 'resume',
+                                  '-p', str(project), '--topic', 'research'],
+                                 capture_output=True, text=True)
+        assert resumed.returncode == 5, resumed.stderr
+        assert json.loads(resumed.stdout)['completed_rounds'] == 1
+        assert json.loads(resumed.stdout)['activity'] == 'idle'
         assert 'Human corrected question' in probe.with_name('result.md').read_text()
         assert (project / 'side-effect').read_text() == 'preserved'
     finally:
@@ -57,6 +66,7 @@ def test_stop_waits_then_edit_pending_probe_and_retry(project):
             process.wait()
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux verified orphan recovery")
 def test_crashed_controller_recovers_owned_worker_before_retry(project):
     long_executor(project)
     process = start(project)
@@ -104,6 +114,7 @@ stop(TopicWorkspace(sys.argv[2], 'research'), execution_id=sys.argv[3])
             process.wait()
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux inherited ownership token")
 def test_unknown_ownership_refuses_cleanup_and_dispatch(project):
     long_executor(project)
     process = start(project)
