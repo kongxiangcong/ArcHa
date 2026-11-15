@@ -1,6 +1,6 @@
 # ArcHa：讨论定锚与执行循环的两入口减法重构
 
-Status: ready-for-agent
+Status: resolved
 
 ## Problem Statement
 
@@ -101,3 +101,9 @@ Status: ready-for-agent
 - 清理对象为 `archa-p0p1-plan.md`、`archa-refactor-plan.md` 和 `.scratch/s1..s5`。后者事项均已结束；前者中的 `archa-refactor-plan.md` 仍承载有效协议，不能先删后补。原始实验材料和 `.scratch/topic-workspace-refactor` 保留。
 - 当前工作树已有提前产生且未提交的技能、安装器、提示与测试修改，只能作为候选实现核对，不能据此缩小本规格范围或宣称全部完成。此前自动回归为 97 项通过、3 项跳过；不代表真实技能多轮交互或全部文档清理已验收。
 - 需求与架构决定已完成 grilling；测试入口已按用户反馈确定：开放探索与明确任务均需讨论准备条件，以真实技能交互为主验收。本规格标记为 `ready-for-agent`，无需额外分诊；本次不提前拆分实现事项。
+
+## Answer
+
+2026-11-15：四项实现均已解决，集成分支为 `integration/discuss-run-workflow`。实现与验收分别见 [01](issues/01-discuss-prepare-run.md)、[02](issues/02-global-model-optimization.md)、[03](issues/03-correct-resume-report.md)、[04](issues/04-docs-cleanup-readme.md)；上文发布时的状态及工作树说明保留为历史背景。
+
+完整回归：99 passed、3 Windows 专属 skipped、12 subtests passed。开放探索、明确任务及纠偏恢复已通过真实 Agent 对话与 Codex Worker 验收，离线报告保持既有材料不变；优化分支的协议审阅与实际执行证据在事项中分别说明。以 `3889439` 为基点审查至 `d559fd3`，Standards 与 Spec 两轴均无发现。Windows 专属测试仍待对应环境执行。
