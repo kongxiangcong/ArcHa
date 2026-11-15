@@ -1,5 +1,7 @@
 # S5：沉浸式工作台、观察接口与运行控制
 
+> 本规格保留为旧实现的历史记录。本次重构的替代范围见 [ArcHa 重构方案](../../archa-refactor-plan.md#7-重构清单与旧规格替代)，后续重构以该方案为准。
+
 **Status:** resolved
 
 需求、原型、测试边界及六票粒度与阻塞关系均已获用户确认（2026-11-01）。六票已按编号与依赖实施、验收并 resolved；最终组合路径、回归、双轴审查及未验证范围见 [06 验收记录](issues/06-stop-and-unknown-execution.md#answer)。集成分支为 `feat/s5-debugging-workbench`，变更未提交。

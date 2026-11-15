@@ -1,5 +1,7 @@
 # S2：Attempt、Worker 交接与恢复
 
+> 本规格保留为旧实现的历史记录。本次重构的替代范围见 [ArcHa 重构方案](../../archa-refactor-plan.md#7-重构清单与旧规格替代)，后续重构以该方案为准。
+
 **Status:** resolved
 
 ## Problem Statement
