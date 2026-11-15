@@ -4,6 +4,10 @@
 
 ArcHa 用持续专题组织研究：人定义目标，Expert 消化证据并选择下一问，Executor 核查资料或完成最小实验。目标、当前认知状态与逐轮探针/结果保存在目标工程的 `.archa/topics/<topic>/`，停止后可以修改并继续。
 
+![ArcHa 原版框架示意图：用户定义目标，专家提出假设，通过执行与证据反馈持续迭代](docs/assets/archa-framework.png)
+
+*原版框架插画。图中的 `archa-map`、`archa-task`、`archa-loop` 和独立审核交付链属于旧版设计；当前采用下述 `archa-discuss` / `archa-run` 两个入口与 Expert / Executor 专题循环，具体流程见[引擎说明](opc/README.md)。*
+
 Python 发行包为 `archa-opc`，命令为 `opc`，要求 Python 3.10+。Worker 通过命令数组接入外部 CLI 或脚本；默认 Codex 配置需要本机已有可用的 Codex CLI 和授权。
 
 使用两个流程技能：
