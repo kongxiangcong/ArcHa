@@ -33,7 +33,7 @@ python tools/install_research_skills.py --destination /path/to/skills
 
 讨论会把研究目标、环境入口、必要准备和反馈约定写入现有目标及环境说明。安装完成、配置可读或 `check` 通过都不能替代任务环境就绪。目标、准备、反馈回路确认且已有执行授权后即可交接；技术未知由循环内探针调查，不要求预先拆出完整方向清单。未立项讨论留在会话，跨会话继续需带入已有摘要。
 
-目标工程由已安装的 `archa-discuss/scripts/initialize.py --project PROJECT` 部署 `.archa/archa.py` 和固定快照 runtime；后续通过 `python PROJECT/.archa/archa.py ...` 调用，不依赖全局安装。安装新技能不会隐式升级既有工程；仅在停止后显式加 `--update` 升级并备份旧快照。升级保留 `.archa/workers.json`；自定义 Codex 命令若含 `-o {output_file}`，须显式移除，避免最终聊天摘要覆盖 Worker 写出的协议文件。
+目标工程由已安装的 `archa-discuss/scripts/initialize.py --project PROJECT` 部署 `.archa/archa.py` 和固定快照 runtime；后续通过 `python PROJECT/.archa/archa.py ...` 调用，不依赖全局安装。安装新技能不会隐式升级既有工程；仅在停止后显式加 `--update` 升级并备份旧快照。升级保留 `.archa/workers.json`；旧配置须按[人工迁移说明](opc/README.md#worker-configuration-migration)调整后再运行。
 
 运行中可让 `/archa-run` 停止、继续或查看进展。普通恢复使用已有待执行探针；若要改变关注点，交给 `/archa-discuss` 正常停止并完成提交恢复，再更新目标及受影响认知，处理最后一个尚无结果的探针，让 Expert 重新出题。仅编辑目标不会自动替换旧探针，也不会撤销工程副作用；已完成轮次与预算保留，额外轮数须有授权，实质换题新建专题，已完成专题不重开。
 
