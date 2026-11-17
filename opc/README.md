@@ -41,7 +41,7 @@
 
 ## Worker 协议
 
-配置直接包含 `expert`、`executor`；各角色必须指定 `provider`（`codex` 或 `custom`）。可选 `model`（空字符串表示 CLI 默认值）、`timeout_seconds`（默认 1800 秒，正的有限数值）、字符串映射 `env`。`reasoning_effort` 只适用于 Codex；`command` 只适用于 custom，必须是非空 argv 数组。未知字段、不支持的选项、错误类型与不可用变量直接报错。`check` 只校验配置，不调用模型，也不证明任务环境就绪。
+配置直接包含 `expert`、`executor`；各角色必须指定 `provider`（`codex`、`dsh` 或 `custom`）。可选 `model`（空字符串表示 CLI 默认值）、`timeout_seconds`（默认 1800 秒，正的有限数值）、字符串映射 `env`。`reasoning_effort` 只适用于 Codex；`command` 只适用于 custom，必须是非空 argv 数组。未知字段、不支持的选项、错误类型与不可用变量直接报错。`check` 只校验配置，不调用模型，也不证明任务环境就绪。
 
 | custom 命令模板变量 | 含义 |
 | --- | --- |
@@ -52,7 +52,7 @@
 | `{state_file}` | Expert 临时状态；Executor 读取的正式状态 |
 | `{model}` | 必须明确配置非空模型；不使用此变量时无需填写 |
 
-模板按 argv 元素渲染，不提供 shell 转义；字面大括号写作 `{{` 与 `}}`。显式调用 shell 时由配置者负责引用。所有 Provider 完整继承宿主环境并叠加 `env`，沿用本机 HOME、登录与工具链。Codex 使用无状态、非交互 `exec --ephemeral --json`，继承用户 CLI 权限配置；权限不足直接失败，不自动放宽重试。不要将 Codex `-o` 指向协议文件，它会用最终聊天摘要覆盖文件。
+模板按 argv 元素渲染，不提供 shell 转义；字面大括号写作 `{{` 与 `}}`。显式调用 shell 时由配置者负责引用。所有 Provider 完整继承宿主环境并叠加 `env`，沿用本机 HOME、登录与工具链。Codex 使用无状态、非交互 `exec --ephemeral --json`，继承用户 CLI 权限配置；权限不足直接失败，不自动放宽重试。DSH 使用 `dsh --profile headless --json -`，指定模型时通过临时 `--patch` 覆盖 `agent-default-model.config.model`，调用结束删除补丁；模型为空不传补丁，继承本机配置。仅选择 DSH 时才需要安装和配置它。DSH headless 默认使用 API-key 路由，不默认启用交互登录存储；请按本机 DSH 配置设置认证。引擎不复制 HOME、登录文件或 CLI 会话，也不自动改变认证及权限配置。后续轮次可直接切换 Provider，继续读取专题权威材料。不要将 Codex `-o` 指向协议文件，它会用最终聊天摘要覆盖文件。
 
 Expert 写完整临时状态，继续探索时还写探针；完成或阻塞时不要求新探针。Worker 不删除调用方准备的状态草稿。输出只有在退出码零、未超时、必需内容非空且归属后代进程结束后才允许发布。创建、登记、等待和异常都在进程生命周期内；登记失败也收回已启动进程。stdout/stderr 直接写入同一原始日志，中断保留内容，不从日志回填产物。重试覆盖同轮同角色日志，重拟与收尾分别写 `.expert_revise.log`、`.expert_finalize.log`，不承诺完整调用审计。失败即停，无自动重试。
 

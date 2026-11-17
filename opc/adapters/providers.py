@@ -26,6 +26,7 @@ class Launch:
     argv: list[str]
     cwd: Path
     env: dict[str, str]
+    cleanup_paths: tuple[Path, ...] = ()
 
 
 def configuration(workspace):
@@ -42,9 +43,9 @@ def configuration(workspace):
         if {'preset', 'input_mode', 'output_mode'} & raw.keys():
             raise ValueError(role + ': obsolete preset/input_mode/output_mode. ' + MIGRATION)
         provider = raw.get('provider')
-        if provider not in ('codex', 'custom'):
-            raise ValueError(role + ': unknown provider; expected codex or custom')
-        allowed = COMMON | ({'reasoning_effort'} if provider == 'codex' else {'command'})
+        if provider not in ('codex', 'dsh', 'custom'):
+            raise ValueError(role + ': unknown provider; expected codex, dsh or custom')
+        allowed = COMMON | {'codex': {'reasoning_effort'}, 'dsh': set(), 'custom': {'command'}}[provider]
         if raw.keys() - allowed:
             raise ValueError(role + ': unknown fields or unsupported provider options: ' + ', '.join(sorted(raw.keys() - allowed)))
         spec = {'timeout_seconds': 1800, 'model': '', 'env': {}, **raw}
@@ -72,6 +73,7 @@ def configuration(workspace):
 
 def launch(request):
     spec = request.config
+    cleanup_paths = ()
     if spec['provider'] == 'codex':
         argv = ['codex', 'exec', '--ephemeral', '--json', '--skip-git-repo-check', '-C', str(request.project)]
         if spec['model']:
@@ -79,9 +81,18 @@ def launch(request):
         if 'reasoning_effort' in spec:
             argv.extend(['-c', 'model_reasoning_effort=' + json.dumps(spec['reasoning_effort'])])
         argv.append('-')
+    elif spec['provider'] == 'dsh':
+        argv = ['dsh', '--profile', 'headless']
+        if spec['model']:
+            patch = request.prompt_file.with_suffix('.provider.yml')
+            patch.write_text('- id: agent-default-model\n  config:\n    model: '
+                             + json.dumps(spec['model']) + '\n', encoding='utf-8')
+            cleanup_paths = (patch,)
+            argv.extend(['--patch', str(patch)])
+        argv.extend(['--json', '-'])
     else:
         values = dict(workdir=str(request.project), topic_dir=str(request.topic),
                       prompt_file=str(request.prompt_file), state_file=str(request.state_file),
                       output_file=str(request.output_file), model=spec['model'])
         argv = [arg.format_map(values) for arg in spec['command']]
-    return Launch(argv, request.project, spec['env'])
+    return Launch(argv, request.project, spec['env'], cleanup_paths)
