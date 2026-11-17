@@ -73,6 +73,11 @@ output.write_text('# ' + role + ' material\n\n[Original](../../../../../evidence
                 expect(page.get_by_text('运行中', exact=True)).to_be_visible()
                 page.get_by_text('Expert · stdout / stderr', exact=True).click()
                 expect(page.locator('pre').filter(has_text='expert live stdout')).to_contain_text('expert live stderr')
+                assert page.get_by_label('调用事件').count() == 0
+                page.get_by_text('执行 Trace', exact=True).click()
+                expect(page.get_by_label('调用事件')).to_contain_text('started')
+                expect(page.get_by_label('调用事件')).to_contain_text('custom')
+                assert page.get_by_label('Trace 角色').locator('option').count() == 4
                 assert process.poll() is None, 'must observe stdout while worker is alive'
                 (root / 'release-expert').touch()
                 page.get_by_role('button', name='关闭材料').click()
@@ -99,6 +104,49 @@ output.write_text('# ' + role + ' material\n\n[Original](../../../../../evidence
                 assert process.wait(timeout=10) != 0
                 expect(page.get_by_text('空闲', exact=True)).to_be_visible()
                 expect(page.get_by_role('alert')).to_contain_text('interrupted')
+                assert page.get_by_label('调用事件').count() == 0, 'failure must not expand Trace'
+                page.get_by_text('执行 Trace', exact=True).click()
+                expect(page.get_by_label('调用事件')).to_contain_text('cancelled')
+                step = root / '.archa/topics/research/steps/step-01'
+                def publish_trace(label, count):
+                    log = step / '.expert_finalize.log'
+                    temporary_log = step / '.trace-log.tmp'
+                    temporary_log.write_text(label + ' raw log\n')
+                    temporary_log.replace(log)
+                    events = step / '.expert_finalize.events.jsonl'
+                    temporary_events = step / '.trace-events.tmp'
+                    temporary_events.write_text(''.join(json.dumps(dict(seq=n, ts=label, kind='lifecycle', title='started' if n == 1 else label + str(n), status='running', detail=label)) + '\n' for n in range(1, count + 1)))
+                    temporary_events.replace(events)
+                publish_trace('old', 100)
+                expect(page.get_by_label('调用事件').locator('li')).to_have_count(100)
+                page.get_by_label('Trace 角色').focus()
+                page.evaluate('window.traceSelect = document.activeElement; window.traceDrawer = document.querySelector("#material-reader")')
+                for label, count in [('short', 3), ('long', 205)]:
+                    publish_trace(label, count)
+                    expect(page.get_by_label('调用事件').locator('li')).to_have_count(count)
+                    expect(page.get_by_label('调用事件').locator('li').first).to_contain_text(label)
+                    expect(page.get_by_label('Trace 原始日志')).to_have_text(label + ' raw log\n')
+                    assert page.evaluate('document.activeElement === window.traceSelect && document.querySelector("#material-reader") === window.traceDrawer')
+                    expect(page.get_by_label('Trace 角色')).to_have_value('expert_finalize')
+                page.context.set_offline(True)
+                publish_trace('lost', 4)
+                publish_trace('current', 5)
+                page.context.set_offline(False)
+                page.evaluate('dispatchEvent(new Event("online"))')
+                expect(page.get_by_label('调用事件').locator('li')).to_have_count(5)
+                expect(page.get_by_label('调用事件')).not_to_contain_text('lost')
+                expect(page.get_by_label('Trace 原始日志')).to_have_text('current raw log\n')
+                page.get_by_label('Trace 角色').select_option('expert_revise')
+                expect(page.get_by_text('此调用无结构化事件', exact=True)).to_be_visible()
+                page.get_by_label('Trace 角色').select_option('executor')
+                expect(page.get_by_label('调用事件')).to_contain_text('completed')
+                page.reload()
+                expect(page.get_by_role('dialog')).to_have_count(0)
+                page.get_by_text('Expert · 收尾消化 · stdout / stderr', exact=True).click()
+                page.get_by_text('执行 Trace', exact=True).click()
+                expect(page.get_by_label('调用事件').locator('li')).to_have_count(5)
+                expect(page.get_by_label('Trace 原始日志')).to_have_text('current raw log\n')
+                print('PASS L2 lifecycle, 200 pagination, short/long reset, role switch, reconnect, refresh and focus')
                 # Original project material, HTML safety, navigation and path boundaries.
                 (root / 'evidence.md').write_text('# Original evidence\n\n```python\nimport pathlib\n```\n\n<script>window.__pwned = true</script>\n\n[Raw HTML](raw.html)\n\n' + ('Original evidence paragraph. ' * 20 + '\n\n') * 600 + '\nEND OF ORIGINAL')
                 (root / 'raw.html').write_text('<script>window.__pwned = true</script>')

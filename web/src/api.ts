@@ -1,4 +1,4 @@
-import type { Content, Overview, TopicDetail, Topic } from "./types";
+import type { Content, Overview, TopicDetail, Topic, Role, EventBatch } from "./types";
 const prefix = "/api/observer/v1";
 async function read<T>(path: string, body?: object): Promise<T> {
   const response = await fetch(prefix + path, {
@@ -17,6 +17,9 @@ async function read<T>(path: string, body?: object): Promise<T> {
   return value;
 }
 export const api = {
+  events: (topic: string, step: number, role: Role, after_seq = 0, stream: string | null = null) =>
+    read<EventBatch>(`/topics/${encodeURIComponent(topic)}/steps/${step}/events?` +
+      new URLSearchParams({role, after_seq: String(after_seq), ...(stream === null ? {} : {stream})})),
   resume: (topic: string, add_rounds?: number, debug_probes?: boolean) =>
     read<{ accepted: boolean }>(
       "/topics/" + encodeURIComponent(topic) + "/resume",

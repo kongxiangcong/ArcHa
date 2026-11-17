@@ -579,3 +579,55 @@ def test_deployed_lifecycle_distinguishes_process_and_publication(project):
     assert events[-1]['title'] == 'completed'
     assert 'exit_code=0' in events[-1]['detail']
     assert not (step / 'result.md').exists()
+
+
+@pytest.mark.parametrize(('body', 'outcome'), [
+    ('import sys; sys.exit(7)', 'failed'),
+    ('import time; time.sleep(10)', 'timed_out'),
+])
+def test_deployed_process_failure_trace(project, body, outcome):
+    cli(project, 'init', '--goal', 'Trace failures')
+    (project / '.archa/workers.json').write_text(json.dumps({
+        'expert': {'provider': 'custom', 'command': [sys.executable, '-c', body], 'timeout_seconds': .1},
+        'executor': custom()}))
+    cli(project, 'step', ok=False)
+    step = project / '.archa/topics/research/steps/step-01'
+    events = [json.loads(line) for line in (step / '.expert.events.jsonl').read_text().splitlines()]
+    assert events[-1]['title'] == outcome and events[-1]['status'] == 'error'
+    assert not (step / 'probe.md').exists()
+
+
+def test_deployed_trace_failure_does_not_prevent_publication(project):
+    cli(project, 'init', '--goal', 'Trace fault')
+    scripted(project)
+    step = project / '.archa/topics/research/steps/step-01'
+    step.mkdir()
+    # File boundary failure: the event destination cannot be atomically replaced.
+    (step / '.expert.events.jsonl').mkdir()
+    result = subprocess.run([sys.executable, str(project / '.archa/archa.py'), 'step', '-p', str(project), '--topic', 'research'], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert 'Telemetry incomplete:' in result.stderr
+    assert 'Telemetry incomplete:' in (step / '.expert.log').read_text()
+    assert (step / 'probe.md').exists()
+
+
+def test_deployed_four_roles_replace_only_their_own_stream(project):
+    cli(project, 'init', '--goal', 'Four roles', '--max-rounds', '1')
+    scripted(project)
+    cli(project, 'run', '--debug-probes')
+    step = project / '.archa/topics/research/steps/step-01'
+    expert = (step / '.expert.events.jsonl').read_bytes()
+    for attempt in range(2):
+        cli(project, 'revise', '--feedback', 'Keep the baseline')
+        events = [json.loads(line) for line in (step / '.expert_revise.events.jsonl').read_text().splitlines()]
+        assert [event['seq'] for event in events] == [1, 2]
+        if attempt:
+            assert events[0]['ts'] != previous
+        previous = events[0]['ts']
+    cli(project, 'step')
+    cli(project, 'step')
+    assert (step / '.expert.events.jsonl').read_bytes() == expert
+    for role in ('expert', 'executor', 'expert_revise', 'expert_finalize'):
+        events = [json.loads(line) for line in (step / f'.{role}.events.jsonl').read_text().splitlines()]
+        assert events[-1]['title'] == 'completed'
+    assert not (step.parent / 'step-02').exists()

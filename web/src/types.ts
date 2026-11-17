@@ -56,3 +56,11 @@ export type Content = {
   next_offset: number;
   more: boolean;
 };
+export type AgentEvent = {
+  seq: number; ts: string; kind: string; title: string;
+  status: string; detail: string | null;
+};
+export type EventBatch = {
+  stream: string | null; reset: boolean; events: AgentEvent[];
+  next_seq: number; more: boolean; diagnostic: string | null;
+};

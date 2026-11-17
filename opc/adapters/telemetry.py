@@ -16,6 +16,7 @@ class Telemetry:
     def __init__(self, log_file, role, provider):
         self.log_file = log_file
         self.path = log_file.with_suffix('.events.jsonl')
+        self.published = False
         self.seq = 0
         self.stream = None
         self.started = time.monotonic()
@@ -26,18 +27,25 @@ class Telemetry:
             self.event('started', 'running', f'role={role}; provider={provider}')
             if self.stream is not None:
                 os.replace(temporary, self.path)
+                self.published = True
         except OSError as exc:
             self.failure(exc)
         finally:
             if temporary and os.path.exists(temporary):
-                os.unlink(temporary)
+                try:
+                    os.unlink(temporary)
+                except OSError as exc:
+                    self.failure(exc)
 
     def failure(self, exc):
-        message = f'Telemetry incomplete: {self.path.name}: {exc}'
+        message = f'Telemetry incomplete: {"unpublished stream: " if not self.published else ""}{self.path.name}: {exc}'
         print(message, file=sys.stderr)
-        if self.stream is not None:
-            self.stream.close()
-            self.stream = None
+        stream, self.stream = self.stream, None
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError as close_error:
+                print(f'{message}; close failed: {close_error}', file=sys.stderr)
         try:
             with self.log_file.open('ab') as log:
                 log.write(('\n' + message + '\n').encode('utf-8'))
@@ -60,4 +68,7 @@ class Telemetry:
                    f'exit_code={code}; elapsed_seconds={time.monotonic() - self.started:.3f}' +
                    (f'; {context}' if context else ''))
         if self.stream is not None:
-            self.stream.close()
+            try:
+                self.stream.close()
+            except OSError as exc:
+                self.failure(exc)

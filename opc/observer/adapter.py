@@ -128,7 +128,7 @@ class ObserverAdapter:
                            if line.startswith('Telemetry incomplete:')]
             diagnostic = diagnostics[-1] if diagnostics else None
         current, selected, more, cursor = None, [], False, 0
-        if path.exists():
+        if path.exists() and not (diagnostic and 'unpublished stream:' in diagnostic):
             path = self.readable_path(path.relative_to(self.root), events=True)
             # One open descriptor pins one invocation across atomic replacement.
             with path.open('rb') as source:

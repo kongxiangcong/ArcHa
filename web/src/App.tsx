@@ -10,6 +10,7 @@ import type {
   Role,
   Material,
   Excerpt,
+  AgentEvent,
 } from "./types";
 
 const roles: Record<Role, string> = {
@@ -158,6 +159,64 @@ function Reader({
     </>
   );
 }
+function Trace({ topic, step, path }: { topic: string; step: number; path: string }) {
+  const initialRole = Object.keys(roles).find(role => path.endsWith(`.${role}.log`)) as Role | undefined;
+  const [role, setRole] = useState<Role>(initialRole || 'expert');
+  const [events, setEvents] = useState<AgentEvent[]>([]);
+  const [log, setLog] = useState('');
+  const [diagnostic, setDiagnostic] = useState('');
+  const [error, setError] = useState('');
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let active = true, stream: string | null = null, seq = 0, offset = 0;
+    let collected: AgentEvent[] = [], text = '';
+    setEvents([]); setLog(''); setLoaded(false); setError(''); setDiagnostic('');
+    const logPath = path.slice(0, path.lastIndexOf('/') + 1) + `.${role}.log`;
+    const cancel = poll(async () => {
+      try {
+        let more = true;
+        while (active && more) {
+          const batch = await api.events(topic, step, role, seq, stream);
+          if (!active) return;
+          if (batch.reset) { collected = []; text = ''; offset = 0; }
+          stream = batch.stream; seq = batch.next_seq;
+          collected = [...collected, ...batch.events]; more = batch.more;
+          setEvents(collected); setLog(text); setDiagnostic(batch.diagnostic || ''); setLoaded(true);
+        }
+        try {
+          const chunk = await api.material(logPath, offset);
+          if (!active) return;
+          // A replacement during the log request invalidates that response too.
+          const check = await api.events(topic, step, role, seq, stream);
+          if (!active) return;
+          if (check.reset) return;
+          text = chunk.offset > 0 ? text + chunk.text : chunk.text;
+          offset = chunk.next_offset; setLog(text);
+        } catch (failure) {
+          if (!String(failure).includes('Material not found')) throw failure;
+        }
+        setError('');
+      } catch (failure) { if (active) setError(String(failure)); }
+    }, 700);
+    return () => { active = false; cancel(); };
+  }, [topic, step, role, path]);
+  return <section aria-label="执行 Trace 内容">
+    <label>调用角色 <select aria-label="Trace 角色" value={role} onChange={event => setRole(event.target.value as Role)}>
+      {Object.entries(roles).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+    </select></label>
+    <p className="muted">进程结果不代表研究产物已提交；仅保留各角色最近一次调用。</p>
+    {error && <p role="alert">{error}</p>}
+    {diagnostic && <p role="alert">Trace 不完整：{diagnostic}</p>}
+    {loaded && !events.length && !diagnostic && <p>此调用无结构化事件</p>}
+    <ol aria-label="调用事件">{events.map(event => <li key={event.seq}>
+      <strong>{event.title}</strong> · {event.status} <time>{event.ts}</time>
+      {event.detail && <p>{event.detail}</p>}
+    </li>)}</ol>
+    {loaded && events.length > 0 && !events.some(event => ['completed', 'failed', 'timed_out', 'cancelled'].includes(event.title)) &&
+      <p className="muted">尚无终止事件：调用可能仍在运行，或 Trace 不完整。</p>}
+    <h3>原始日志</h3><pre className="plain-output" aria-label="Trace 原始日志">{log || '尚无输出'}</pre>
+  </section>;
+}
 function Controls({ detail }: { detail: TopicDetail }) {
   const [pending, setPending] = useState("");
   const [message, setMessage] = useState("");
@@ -305,6 +364,7 @@ export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const opener = useRef<HTMLElement | null>(null);
   const drawer = useRef<HTMLElement | null>(null);
+  const [traceOpen, setTraceOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [material, setMaterial] = useState("");
   const [error, setError] = useState("");
@@ -371,6 +431,7 @@ export default function App() {
   };
   const open = (path: string) => {
     if (!drawerOpen) opener.current = document.activeElement as HTMLElement;
+    setTraceOpen(false);
     setMaterial(path);
     setCopied(false);
     setDrawerOpen(true);
@@ -628,11 +689,15 @@ export default function App() {
           >
             {copied ? "已复制路径" : "复制路径"}
           </button>
-          <Reader
+          {/\/steps\/step-([0-9]+)\//.test(material) && <details open={traceOpen} onToggle={event => setTraceOpen(event.currentTarget.open)}>
+            <summary>执行 Trace</summary>
+            {traceOpen && <Trace topic={topic} step={Number(material.match(/\/step-([0-9]+)\//)![1])} path={material} />}
+          </details>}
+          {!(traceOpen && material.endsWith('.log')) && <Reader
             path={material}
             onOpen={open}
             live={material.endsWith(".log")}
-          />
+          />}
         </aside>
       )}
     </>

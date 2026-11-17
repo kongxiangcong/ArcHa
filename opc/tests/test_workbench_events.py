@@ -45,3 +45,16 @@ def test_incremental_stream_pagination_replacement_and_partial_lines(tmp_path):
         outside.write_text('{}\n')
         path.symlink_to(outside)
         assert client.get(url, params=dict(role='expert')).status_code == 403
+
+
+def test_observation_failure_is_not_legacy_empty_trace(tmp_path):
+    workspace = TopicWorkspace(tmp_path, 'trace')
+    workspace.initialize('Trace', 2)
+    step = workspace.path / 'steps/step-01'
+    step.mkdir()
+    (step / '.expert.events.jsonl').mkdir()
+    (step / '.expert.log').write_text('Telemetry incomplete: unpublished stream: permission denied\nvalid worker output\n')
+    with TestClient(create_app(tmp_path)) as client:
+        value = client.get('/api/observer/v1/topics/trace/steps/1/events', params=dict(role='expert')).json()
+        assert value['stream'] is None and value['events'] == []
+        assert 'permission denied' in value['diagnostic']
