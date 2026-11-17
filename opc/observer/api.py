@@ -1,5 +1,6 @@
 """Topic observation HTTP boundary; every GET is read-only."""
 from pathlib import Path
+from typing import Literal
 from fastapi import FastAPI, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictBool
 from .control import resume, revise
@@ -60,6 +61,11 @@ def create_app(root: Path | str, demo=False, *, control=False, topics=None):
     @app.get(prefix + '/materials')
     def material(path: str, offset: int = Query(0, ge=0), limit: int = Query(262144, ge=1, le=1048576)):
         return adapter.content(path, offset, limit)
+
+    @app.get(prefix + '/topics/{topic}/steps/{step}/events')
+    def events(topic: str, step: int, role: Literal['expert', 'executor', 'expert_revise', 'expert_finalize'],
+               after_seq: int = Query(0, ge=0), stream: str | None = None):
+        return adapter.events(topic, step, role, after_seq, stream)
 
     def controlled_workspace(topic):
         if not control or demo:

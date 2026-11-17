@@ -561,3 +561,21 @@ pathlib.Path(sys.argv[2]).write_text('Long stdin probe')
     assert cli(project, 'step')['next_action'] == 'executor'
     assert not list(topic.rglob('*.prompt.md'))
     assert (topic / 'steps/step-01/probe.md').read_text() == 'Long stdin probe'
+
+
+def test_deployed_lifecycle_distinguishes_process_and_publication(project):
+    cli(project, 'init', '--goal', 'Lifecycle', '--max-rounds', '1')
+    scripted(project)
+    cli(project, 'step')
+    step = project / '.archa/topics/research/steps/step-01'
+    events = [json.loads(line) for line in (step / '.expert.events.jsonl').read_text().splitlines()]
+    assert [event['title'] for event in events] == ['started', 'completed']
+    assert set(events[0]) == {'seq', 'ts', 'kind', 'title', 'status', 'detail'}
+    assert 'custom' in events[0]['detail']
+    config = {'expert': custom(), 'executor': {'provider': 'custom', 'command': [sys.executable, '-c', 'print("no artifact")']}}
+    (project / '.archa/workers.json').write_text(json.dumps(config))
+    assert 'missing or blank' in cli(project, 'step', ok=False)
+    events = [json.loads(line) for line in (step / '.executor.events.jsonl').read_text().splitlines()]
+    assert events[-1]['title'] == 'completed'
+    assert 'exit_code=0' in events[-1]['detail']
+    assert not (step / 'result.md').exists()
