@@ -1,4 +1,5 @@
 """Round scheduling through the deployed project-local CLI."""
+from opc.tests.worker_fixture import custom
 from opc.tests.test_topic_cli import project, cli, scripted
 
 
@@ -74,10 +75,10 @@ def worker(project, body):
     script.write_text('import sys\nfrom pathlib import Path\n'
                       'state, output, topic = map(Path, sys.argv[1:])\n'
                       'prompt = sys.stdin.read()\n' + body)
-    (project / '.archa/workers.json').write_text(json.dumps({'roles': {
-        'expert': {'command': [sys.executable, str(script), '{state_file}', '{output_file}', '{topic_dir}'],
-                   'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5},
-        'executor': {'preset': 'scripted'}}}))
+    (project / '.archa/workers.json').write_text(json.dumps({
+        'expert': {'provider': 'custom', 'command': [sys.executable, str(script), '{state_file}', '{output_file}', '{topic_dir}'],
+                   'timeout_seconds': 5},
+        'executor': custom()}))
 
 
 def test_blocked_topic_requires_explicit_resume_and_completed_topic_stays_closed(project):
@@ -157,8 +158,8 @@ if state != output:
     import sys
     config_path = project / '.archa/workers.json'
     config = json.loads(config_path.read_text())
-    config['roles']['executor'] = {'command': [sys.executable, '-c', "print('Negative observation: intervention did not improve the result.')"],
-                                   'input_mode': 'stdin', 'output_mode': 'stdout', 'timeout_seconds': 5}
+    config['executor'] = {'provider': 'custom', 'command': [sys.executable, '-c', "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('Negative observation: intervention did not improve the result.')", '{output_file}'],
+                                   'timeout_seconds': 5}
     config_path.write_text(json.dumps(config))
     execute(project, 'run', code=5)
     topic = project / '.archa/topics/research'

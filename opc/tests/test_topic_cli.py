@@ -1,4 +1,5 @@
 """Topic behavior through the independently deployed project-local CLI."""
+from opc.tests.worker_fixture import custom
 import json
 import os
 from pathlib import Path
@@ -34,7 +35,7 @@ def cli(project, *args, ok=True):
 
 
 def scripted(project):
-    config = {'roles': {role: {'preset': 'scripted'} for role in ('expert', 'executor')}}
+    config = {role: custom() for role in ('expert', 'executor')}
     (project / '.archa/workers.json').write_text(json.dumps(config))
 
 
@@ -142,7 +143,7 @@ def test_topic_launcher_cannot_dispatch_legacy_commands(project):
     assert 'invalid choice' in result.stderr
 
 
-def test_commands_accept_prompt_files_and_stdout_results(project):
+def test_commands_accept_prompt_path_and_stdin_with_file_results(project):
     cli(project, 'init', '--goal', 'Investigate evidence')
     script = project / 'worker.py'
     script.write_text("""import pathlib, sys
@@ -154,13 +155,13 @@ if role == 'expert':
     pathlib.Path(state).write_text(current + '\\nEvidence reviewed.\\n')
     pathlib.Path(output).write_text('One focused question')
 else:
-    print('Actual observation')
+    pathlib.Path(output).write_text('Actual observation\\n')
+    print('Final chat is diagnostic only')
     print('Diagnostic only', file=sys.stderr)
 """)
-    config = {'roles': {role: {'command': [sys.executable, str(script), role,
-                '{state_file}', '{output_file}', '{prompt_file}', '{topic_dir}'], 'input_mode': 'file',
-                'output_mode': 'file' if role == 'expert' else 'stdout', 'timeout_seconds': 5}
-                for role in ('expert', 'executor')}}
+    config = {role: {'provider': 'custom', 'command': [sys.executable, str(script), role,
+                '{state_file}', '{output_file}', '{prompt_file}', '{topic_dir}'], 'timeout_seconds': 5}
+                for role in ('expert', 'executor')}
     (project / '.archa/workers.json').write_text(json.dumps(config))
     assert cli(project, 'step')['next_action'] == 'executor'
     assert cli(project, 'step')['completed_rounds'] == 1
@@ -170,7 +171,12 @@ else:
 
 
 @pytest.mark.parametrize(('change', 'message'), [
-    ({'preset': 'unknown'}, 'unknown preset'),
+    ({'preset': 'unknown'}, 'manual migration'),
+    ({'provider': 'unknown'}, 'unknown provider'),
+    ({'reasoning_effort': 'high'}, 'unsupported provider options'),
+    ({'model': None}, 'model'),
+    ({'timeout_seconds': float('inf')}, 'timeout_seconds'),
+    ({'command': ['{model.attr}']}, 'unavailable template variable'),
     ({'command': []}, 'nonempty string argv'),
     ({'legacy': 'codex'}, 'unknown fields'),
     ({'input_mode': 'invalid'}, 'input_mode'),
@@ -183,13 +189,13 @@ else:
 ])
 def test_invalid_worker_configuration_fails_before_dispatch(project, change, message):
     cli(project, 'init', '--goal', 'Check evidence')
-    spec = {'command': [sys.executable, '-c', 'raise Exception("must not run")'],
-            'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5}
+    spec = {'provider': 'custom', 'command': [sys.executable, '-c', 'raise Exception("must not run")'],
+            'timeout_seconds': 5}
     if 'preset' in change:
         spec.pop('command')
     spec.update(change)
-    (project / '.archa/workers.json').write_text(json.dumps({'roles': {
-        'expert': spec, 'executor': {'preset': 'scripted'}}}))
+    (project / '.archa/workers.json').write_text(json.dumps({
+        'expert': spec, 'executor': custom()}))
     assert message in cli(project, 'step', ok=False)
     assert cli(project, 'status')['next_action'] == 'expert'
 
@@ -204,10 +210,10 @@ def test_executor_failures_preserve_logs_without_publishing(project, body, messa
     cli(project, 'init', '--goal', 'Check evidence')
     scripted(project)
     cli(project, 'step')
-    spec = {'command': [sys.executable, '-c', 'import pathlib, sys, time; ' + body, '{output_file}'],
-            'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': .2}
-    (project / '.archa/workers.json').write_text(json.dumps({'roles': {
-        'expert': {'preset': 'scripted'}, 'executor': spec}}))
+    spec = {'provider': 'custom', 'command': [sys.executable, '-c', 'import pathlib, sys, time; ' + body, '{output_file}'],
+            'timeout_seconds': .2}
+    (project / '.archa/workers.json').write_text(json.dumps({
+        'expert': custom(), 'executor': spec}))
     assert message in cli(project, 'step', ok=False)
     status = cli(project, 'status')
     assert status['next_action'] == 'executor'
@@ -222,13 +228,13 @@ def test_retry_cannot_publish_previous_failed_result(project):
     cli(project, 'init', '--goal', 'Check evidence')
     scripted(project)
     cli(project, 'step')
-    config = {'roles': {'expert': {'preset': 'scripted'}, 'executor': {
+    config = {'expert': custom(), 'executor': {'provider': 'custom',
         'command': [sys.executable, '-c', "import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('failed output'); sys.exit(1)", '{output_file}'],
-        'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5}}}
+        'timeout_seconds': 5}}
     path = project / '.archa/workers.json'
     path.write_text(json.dumps(config))
     cli(project, 'step', ok=False)
-    config['roles']['executor']['command'] = [sys.executable, '-c', 'pass']
+    config['executor']['command'] = [sys.executable, '-c', 'pass']
     path.write_text(json.dumps(config))
     assert 'missing' in cli(project, 'step', ok=False)
 
@@ -249,9 +255,9 @@ def test_streamed_logs_and_descendants_finish_before_result_publish(project, par
                       "print('diagnostic', file=sys.stderr, flush=True)\n"
                       "pathlib.Path(sys.argv[1]).write_text('Observation')\n"
                       f"time.sleep({.5 if parent_exits else 10})\n")
-    config = {'roles': {'expert': {'preset': 'scripted'}, 'executor': {
+    config = {'expert': custom(), 'executor': {'provider': 'custom',
         'command': [sys.executable, str(script), '{output_file}'],
-        'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 1}}}
+        'timeout_seconds': 1}}
     (project / '.archa/workers.json').write_text(json.dumps(config))
     process = subprocess.Popen([sys.executable, str(project / '.archa/archa.py'), 'step',
                                 '-p', str(project), '--topic', 'research'],
@@ -278,7 +284,7 @@ def test_streamed_logs_and_descendants_finish_before_result_publish(project, par
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX executable fixture; Windows native argv tested separately")
-def test_missing_project_config_uses_distributed_codex_preset(project):
+def test_missing_project_config_uses_distributed_codex_provider(project):
     cli(project, 'init', '--goal', 'Check evidence')
     scripted(project)
     cli(project, 'step')
@@ -288,7 +294,8 @@ def test_missing_project_config_uses_distributed_codex_preset(project):
     binary.write_text('#!' + sys.executable + '\n' + "import pathlib,re,sys\n"
                       "assert sys.argv[1] == 'exec'\n"
                       "assert '--ephemeral' in sys.argv\n"
-                      "assert 'workspace-write' in sys.argv\n"
+                      "assert '--json' in sys.argv\n"
+                      "assert '-s' not in sys.argv\n"
                       "prompt = sys.stdin.read()\n"
                       "assert 'Check evidence' in prompt\n"
                       "output = re.search(r'Write complete result to (.+)\\.', prompt)[1]\n"
@@ -326,10 +333,10 @@ def test_expert_must_write_state_before_publishing(project, finalize):
     body = "print('Expert exited without updating state', flush=True)"
     if not finalize:
         body += "; import pathlib,sys; pathlib.Path(sys.argv[1]).write_text('Probe only')"
-    spec = {'command': [sys.executable, '-c', body, '{output_file}'],
-            'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5}
-    (project / '.archa/workers.json').write_text(json.dumps({'roles': {
-        'expert': spec, 'executor': {'preset': 'scripted'}}}))
+    spec = {'provider': 'custom', 'command': [sys.executable, '-c', body, '{output_file}'],
+            'timeout_seconds': 5}
+    (project / '.archa/workers.json').write_text(json.dumps({
+        'expert': spec, 'executor': custom()}))
     assert 'missing or blank required output' in cli(project, 'step', ok=False)
     assert (topic / 'STATE.md').read_bytes() == before
     status = cli(project, 'status')
@@ -342,12 +349,30 @@ def test_expert_must_write_state_before_publishing(project, finalize):
     assert 'Expert exited without updating state' in log.read_text()
 
 
-def test_codex_file_outputs_survive_final_chat_summary(project, tmp_path, monkeypatch):
+@pytest.mark.parametrize('configured', [False, True])
+def test_codex_file_outputs_survive_final_chat_summary(project, tmp_path, monkeypatch, configured):
     """Codex's final chat message must not replace Worker-authored documents."""
     executable = tmp_path / 'bin'
     executable.mkdir()
     worker = executable / 'worker.py'
-    worker.write_text('''import pathlib, re, sys
+    expected = '''import os, sys
+assert os.environ['ARCHA_HOST_TEST'] == 'inherited'
+assert '--json' in sys.argv and '-s' not in sys.argv
+'''
+    if configured:
+        expected += '''assert sys.argv[sys.argv.index('--model') + 1] == 'test-model'
+assert sys.argv[sys.argv.index('-c') + 1] == 'model_reasoning_effort=\"high\"'
+assert os.environ['ARCHA_OVERRIDE_TEST'] == 'configured'
+'''
+    else:
+        expected += "assert '--model' not in sys.argv and '-c' not in sys.argv\n"
+    monkeypatch.setenv('ARCHA_HOST_TEST', 'inherited')
+    monkeypatch.setenv('ARCHA_OVERRIDE_TEST', 'host')
+    if configured:
+        config = {role: {'provider': 'codex', 'model': 'test-model', 'reasoning_effort': 'high',
+                  'env': {'ARCHA_OVERRIDE_TEST': 'configured'}} for role in ('expert', 'executor')}
+        (project / '.archa/workers.json').write_text(json.dumps(config))
+    worker.write_text(expected + '''import pathlib, re, sys
 prompt = sys.stdin.read()
 role = prompt.splitlines()[0]
 state = re.search(r"Write complete state to (.+)\\.", prompt)
@@ -405,11 +430,11 @@ def test_deployed_probe_breakpoints_continue_and_finalize(project):
 def test_debug_probes_preserves_expert_terminal_decision(project, terminal):
     cli(project, 'init', '--goal', 'Inspect evidence')
     body = "import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text(pathlib.Path(sys.argv[2]).read_text().replace('IN_PROGRESS', sys.argv[3]))"
-    (project / '.archa/workers.json').write_text(json.dumps({'roles': {
-        'expert': {'command': [sys.executable, '-c', body, '{state_file}',
+    (project / '.archa/workers.json').write_text(json.dumps({
+        'expert': {'provider': 'custom', 'command': [sys.executable, '-c', body, '{state_file}',
                               '{topic_dir}/STATE.md', terminal],
-                   'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5},
-        'executor': {'preset': 'scripted'}}}))
+                   'timeout_seconds': 5},
+        'executor': custom()}))
     result = subprocess.run([sys.executable, str(project / '.archa/archa.py'), 'run',
                              '-p', str(project), '--topic', 'research', '--debug-probes'],
                             capture_output=True, text=True)
@@ -446,10 +471,10 @@ assert 'already reflected in STATE' in text
 state.write_text(state.parents[3].joinpath('STATE.md').read_text())
 output.write_text('Revised baseline probe')
 """)
-    (project / '.archa/workers.json').write_text(json.dumps({'roles': {
-        'expert': {'command': [sys.executable, str(worker), '{state_file}', '{output_file}'],
-                   'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5},
-        'executor': {'preset': 'scripted'}}}))
+    (project / '.archa/workers.json').write_text(json.dumps({
+        'expert': {'provider': 'custom', 'command': [sys.executable, str(worker), '{state_file}', '{output_file}'],
+                   'timeout_seconds': 5},
+        'executor': custom()}))
     revised = cli(project, 'revise', '--feedback', 'Focus on the baseline')
     assert revised['probe_breakpoint'] and revised['current_round'] == 1
     assert revised['completed_rounds'] == 0 and revised['max_rounds'] == 3
@@ -476,10 +501,63 @@ output.write_text('# Hypothesis\\nFloat conversion loses integer precision.\\n\\
                   '## Evidence\\nBaseline 9007199254740993 became 9007199254740992.\\n\\n'
                   '## Probe\\nCompare exact integer addition with the baseline.')
 """)
-    (project / '.archa/workers.json').write_text(json.dumps({'roles': {
-        'expert': {'command': [sys.executable, str(worker), '{state_file}', '{output_file}', '{topic_dir}'],
-                   'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5},
-        'executor': {'preset': 'scripted'}}}))
+    (project / '.archa/workers.json').write_text(json.dumps({
+        'expert': {'provider': 'custom', 'command': [sys.executable, str(worker), '{state_file}', '{output_file}', '{topic_dir}'],
+                   'timeout_seconds': 5},
+        'executor': custom()}))
     assert cli(project, 'run', '--debug-probes')['probe_breakpoint']
     assert cli(project, 'revise', '--feedback', 'Keep the measured baseline')['probe_breakpoint']
     assert cli(project, 'resume')['current_round'] == 2
+
+
+def test_custom_provider_uses_stdin_and_file_outputs(project):
+    cli(project, 'init', '--goal', 'Check evidence')
+    body = "import pathlib,sys; text=sys.stdin.read(); assert 'Check evidence' in text; pathlib.Path(sys.argv[1]).write_text(pathlib.Path(sys.argv[3]).read_text()); pathlib.Path(sys.argv[2]).write_text('Probe from stdin')"
+    config = {role: {'provider': 'custom', 'command': [sys.executable, '-c', body,
+              '{state_file}', '{output_file}', '{topic_dir}/STATE.md']} for role in ('expert', 'executor')}
+    (project / '.archa/workers.json').write_text(json.dumps(config))
+    assert cli(project, 'step')['next_action'] == 'executor'
+    assert cli(project, 'step')['completed_rounds'] == 1
+    assert not list((project / '.archa/topics').rglob('*.prompt.md'))
+
+
+@pytest.mark.parametrize('legacy', [
+    {'roles': {'expert': {'preset': 'codex'}, 'executor': {'preset': 'codex'}}},
+    {'expert': {'preset': 'scripted'}, 'executor': {'preset': 'scripted'}},
+])
+def test_old_worker_configuration_requires_manual_migration(project, legacy):
+    cli(project, 'init', '--goal', 'Check evidence')
+    path = project / '.archa/workers.json'
+    path.write_text(json.dumps(legacy))
+    original = path.read_bytes()
+    assert 'manual migration' in cli(project, 'check', ok=False)
+    assert 'manual migration' in cli(project, 'step', ok=False)
+    assert path.read_bytes() == original
+    assert not list((project / '.archa/topics').rglob('probe.md'))
+
+
+def test_custom_long_stdin_environment_model_and_prompt_cleanup(project, monkeypatch):
+    cli(project, 'init', '--goal', 'Long evidence')
+    topic = project / '.archa/topics/research'
+    (topic / 'GOAL.md').write_text('Long evidence\n' + '证据' * 70000)
+    monkeypatch.setenv('ARCHA_HOST_TEST', 'inherited')
+    monkeypatch.setenv('ARCHA_OVERRIDE_TEST', 'host')
+    worker = project / 'long.py'
+    worker.write_text("""import os, pathlib, sys
+text = sys.stdin.read()
+assert len(text.encode()) > 131072 and '证据' in text
+assert text == pathlib.Path(sys.argv[4]).read_text()
+assert sys.argv[5] == 'chosen-model'
+assert os.environ['ARCHA_HOST_TEST'] == 'inherited'
+assert os.environ['ARCHA_OVERRIDE_TEST'] == 'configured'
+assert pathlib.Path.cwd() == pathlib.Path(sys.argv[6])
+pathlib.Path(sys.argv[1]).write_text(pathlib.Path(sys.argv[3]).read_text())
+pathlib.Path(sys.argv[2]).write_text('Long stdin probe')
+""")
+    spec = {'provider': 'custom', 'model': 'chosen-model', 'env': {'ARCHA_OVERRIDE_TEST': 'configured'},
+            'command': [sys.executable, str(worker), '{state_file}', '{output_file}',
+                        '{topic_dir}/STATE.md', '{prompt_file}', '{model}', '{workdir}']}
+    (project / '.archa/workers.json').write_text(json.dumps({'expert': spec, 'executor': custom()}))
+    assert cli(project, 'step')['next_action'] == 'executor'
+    assert not list(topic.rglob('*.prompt.md'))
+    assert (topic / 'steps/step-01/probe.md').read_text() == 'Long stdin probe'

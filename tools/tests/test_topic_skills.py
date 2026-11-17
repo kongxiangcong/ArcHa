@@ -1,4 +1,5 @@
 """Installed skills use only the independently deployed topic runtime."""
+from opc.tests.worker_fixture import custom
 import json
 from pathlib import Path
 import subprocess
@@ -24,7 +25,7 @@ def test_installed_skills_deploy_init_run_and_report(tmp_path):
     call(skills / 'archa-discuss/scripts/initialize.py', '--project', project)
     entry = project / '.archa/archa.py'
     call(entry, 'init', '-p', project, '--topic', 'evidence', '--goal', 'Explain observations', '--max-rounds', 1)
-    (project / '.archa/workers.json').write_text(json.dumps({'roles': {r: {'preset': 'scripted'} for r in ('expert', 'executor')}}))
+    (project / '.archa/workers.json').write_text(json.dumps({r: custom() for r in ('expert', 'executor')}))
     args = ['-p', project, '--topic', 'evidence']
     result = call(entry, 'run', *args, code=5, cwd=tmp_path)
     assert result['completed_rounds'] == 1
@@ -62,12 +63,12 @@ def test_installed_stop_resume_preserves_pending_probe_and_reports_offline(tmp_p
     args = ['-p', project, '--topic', 'intervene']
     call(entry, 'init', *args, '--goal', 'Check evidence', '--max-rounds', 1)
     config = project / '.archa/workers.json'
-    roles = {r: {'preset': 'scripted'} for r in ('expert', 'executor')}
-    config.write_text(json.dumps({'roles': roles}))
+    roles = {r: custom() for r in ('expert', 'executor')}
+    config.write_text(json.dumps(roles))
     call(entry, 'step', *args)
-    roles['executor'] = {'command': [sys.executable, '-c', "import pathlib,time; pathlib.Path('started').touch(); print('visible progress',flush=True); time.sleep(30)"],
-                         'input_mode': 'stdin', 'output_mode': 'stdout', 'timeout_seconds': 40}
-    config.write_text(json.dumps({'roles': roles}))
+    roles['executor'] = {'provider': 'custom', 'command': [sys.executable, '-c', "import pathlib,time; pathlib.Path('started').touch(); print('visible progress',flush=True); time.sleep(30)"],
+                         'timeout_seconds': 40}
+    config.write_text(json.dumps(roles))
     running = subprocess.Popen([sys.executable, str(entry), 'run', *map(str, args)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         deadline = time.monotonic() + 8
@@ -80,8 +81,8 @@ def test_installed_stop_resume_preserves_pending_probe_and_reports_offline(tmp_p
         probe = topic / 'steps/step-01/probe.md'
         assert 'visible progress' in probe.with_name('.executor.log').read_text()
         original_probe = probe.read_bytes()
-        roles['executor'] = {'preset': 'scripted'}
-        config.write_text(json.dumps({'roles': roles}))
+        roles['executor'] = custom()
+        config.write_text(json.dumps(roles))
         assert call(entry, 'resume', *args, code=5)['completed_rounds'] == 1
         assert probe.read_bytes() == original_probe
         assert original_probe.decode() in probe.with_name('result.md').read_text()
@@ -101,7 +102,7 @@ def test_deployed_explicit_correction_reissues_probe_preserving_evidence_and_bud
     args = ['-p', tmp_path, '--topic', 'correct']
     call(entry, 'init', *args, '--goal', 'Investigate input order', '--max-rounds', 2)
     config = tmp_path / '.archa/workers.json'
-    config.write_text(json.dumps({'roles': {r: {'preset': 'scripted'} for r in ('expert', 'executor')}}))
+    config.write_text(json.dumps({r: custom() for r in ('expert', 'executor')}))
     call(entry, 'step', *args)
     call(entry, 'step', *args)
     call(entry, 'step', *args)
@@ -133,3 +134,24 @@ def test_deployed_explicit_correction_reissues_probe_preserving_evidence_and_bud
     assert 'Investigate cancellation at 2**53' in Path(report['report']).read_text()
     assert all(p.read_bytes() == data for p, data in authoritative.items())
     assert {p for p in topic.rglob('*') if p.is_file()} - authoritative.keys() == {Path(report['report'])}
+
+
+def test_runtime_upgrade_preserves_legacy_config_then_manual_migration_runs(tmp_path):
+    project = tmp_path / 'project'
+    project.mkdir()
+    initializer = ROOT / 'skills/archa-discuss/scripts/initialize.py'
+    call(initializer, '--project', project)
+    entry = project / '.archa/archa.py'
+    args = ['-p', project, '--topic', 'migration']
+    call(entry, 'init', *args, '--goal', 'Check preserved evidence', '--max-rounds', 1)
+    config = project / '.archa/workers.json'
+    config.write_text('{"roles":{"expert":{"preset":"codex"},"executor":{"preset":"codex"}}}')
+    topic = project / '.archa/topics/migration'
+    before = {p: p.read_bytes() for p in [config, topic / 'GOAL.md', topic / 'STATE.md']}
+    call(initializer, '--project', project, '--update')
+    assert all(p.read_bytes() == body for p, body in before.items())
+    rejected = subprocess.run([sys.executable, str(entry), 'check', *map(str, args)], capture_output=True, text=True)
+    assert rejected.returncode == 2 and 'manual migration' in rejected.stderr
+    config.write_text(json.dumps({role: custom() for role in ('expert', 'executor')}))
+    assert call(entry, 'run', *args, code=5)['completed_rounds'] == 1
+    assert 'Check preserved evidence' in (topic / 'steps/step-01/result.md').read_text()
