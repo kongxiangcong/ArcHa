@@ -28,7 +28,7 @@ mode = os.environ.get''')
     events = trace['events']
     assert [e['kind'] for e in events] == ['lifecycle', 'tool', 'tool', 'usage', 'lifecycle']
     assert [e['status'] for e in events[1:3]] == ['running', 'ok']
-    assert 'shell' in events[2]['title']
+    assert 'one' in events[2]['title']
     assert '中文' in events[1]['detail']
     assert 'inputTokens' in events[3]['detail']
     assert events[-1]['title'] == 'completed'
@@ -154,7 +154,7 @@ mode = os.environ.get'''))
             (project / 'release').touch()
             stdout, stderr = process.communicate(timeout=10)
             assert process.returncode == 0, stderr
-            expect(rows).to_contain_text('shell ended')
+            expect(rows).to_contain_text('one ended')
             expect(rows.locator('li')).to_have_count(4)
             assert page.evaluate('window.firstTool === document.querySelectorAll("[aria-label=调用事件] li")[1]')
             expect(rows).to_contain_text('exit_code=0')
