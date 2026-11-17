@@ -5,6 +5,7 @@ import subprocess
 from ..core.platform import Process
 from .providers import ProviderRequest, configuration, launch
 from .telemetry import Telemetry
+from .log_tail import LogTail
 
 
 def invoke(workspace, role, prompt, state_file, output_file, log_file):
@@ -19,6 +20,7 @@ def invoke(workspace, role, prompt, state_file, output_file, log_file):
         with log_file.open('wb'):
             pass
         telemetry = Telemetry(log_file, role, spec['provider'])
+        tail = LogTail(telemetry, spec['provider'])
         outcome, code, context = 'failed', None, None
         try:
             command = launch(ProviderRequest(role, workspace.project, workspace.path, prompt_file,
@@ -46,6 +48,7 @@ def invoke(workspace, role, prompt, state_file, output_file, log_file):
                 outcome = 'cancelled'
             raise
         finally:
+            tail.finish()
             telemetry.finish(outcome, code, context)
         required = state_file if role.startswith('expert') else output_file
         if not required.is_file() or not required.read_text(encoding='utf-8').strip():

@@ -55,6 +55,8 @@ RUNTIME_FILES = (
     'opc/adapters/worker.py',
     'opc/adapters/providers.py',
     'opc/adapters/telemetry.py',
+    'opc/adapters/native_events.py',
+    'opc/adapters/log_tail.py',
     'opc/scaffold/templates.py',
     'opc/scaffold/workers.json',
     'opc/core/platform.py',
