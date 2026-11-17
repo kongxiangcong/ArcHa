@@ -58,7 +58,7 @@ if role == 'expert':
     state.write_text((root / '.archa/topics/research/STATE.md').read_text() + '\nCurrent evidence remains uncertain.\n')
 output.write_text('# ' + role + ' material\n\n[Original](../../../../../evidence.md)')
 """)
-            config = {'roles': {role: {'command': [sys.executable, str(worker), role, '{state_file}', '{output_file}', str(root)], 'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 60} for role in ('expert', 'executor')}}
+            config = {role: {'provider': 'custom', 'command': [sys.executable, str(worker), role, '{state_file}', '{output_file}', str(root)], 'timeout_seconds': 60} for role in ('expert', 'executor')}
             (root / '.archa/workers.json').write_text(json.dumps(config))
             process = subprocess.Popen([sys.executable, '-m', 'opc', 'run', '-p', str(root), '--topic', 'research'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             from playwright.sync_api import sync_playwright, expect
@@ -186,10 +186,11 @@ else:
     assert expected in text
     output.write_text('Observed negative integer mismatch from revised probe.')
 """)
-                (root / '.archa/workers.json').write_text(json.dumps({'roles': {role: {
+                (root / '.archa/workers.json').write_text(json.dumps({role: {
+                    'provider': 'custom',
                     'command': [sys.executable, str(worker), role, '{state_file}', '{output_file}', '{topic_dir}'],
-                    'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 10,
-                } for role in ('expert', 'executor')}}))
+                    'timeout_seconds': 10,
+                } for role in ('expert', 'executor')}))
                 page.goto(origin + '?topic=debug')
                 page.get_by_label('探针断点调试', exact=True).check()
                 page.get_by_role('button', name='启用调试并继续', exact=True).click()

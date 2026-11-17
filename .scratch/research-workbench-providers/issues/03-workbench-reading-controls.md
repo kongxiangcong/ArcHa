@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-Status: ready-for-agent
+Status: resolved
 
 **规格：** [Research Workbench 与多 Provider 执行](../spec.md)。本票交付 L0／L1 与阅读、控制和视觉规则；L2 的结构化事件由 04、05 交付，期间保留现有原始日志阅读入口。
 
@@ -31,4 +31,4 @@ L0 使用 Observer 原文摘录与稳定轮次键，按最新轮次在前呈现�
 - `/tmp/archa-results-venv/bin/python -m pytest opc/tests/test_workbench_reading.py opc/tests/test_workbench_control.py -q`：6 passed。摘录测试先在 HTTP 边界失败，再实现；验证 Unicode 长度、Objective、STATE 小节、空正文及未提交结果。材料仍沿用工程路径边界。
 - 两条真实 Chromium／HTTP／子进程链 `tools/observer_browser_smoke.py`、`tools/workbench_control_smoke.py` 均通过：长文分段、原件／证据导航、代码着色与路径复制，轮询后实际 300px 滚动和焦点保留，抽屉关闭立即 inert、焦点返回、主题、减少动态效果与窄屏；轮次排序、停止／恢复、预算追加、BLOCKED、unknown、失败、完成不可重开，断点重拟与轮次预算，禁用控制和演示只读。
 
-浏览器配置暂保留开工时格式；整合 01 后由整合分支迁移为 `custom` 并重跑，不将这次替身进程验收记为真实 Codex／DSH 联调。
+整合 01 后，三个浏览器配置已迁移为 `custom`，前端构建及两条浏览器链再次通过（52a06fd）；这些替身进程验收不构成真实 Codex／DSH 联调。

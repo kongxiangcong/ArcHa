@@ -29,7 +29,7 @@ if state.parent.name == '.staging.expert':
     state.write_text((root / '.archa/topics/research/STATE.md').read_text() + '\\nEvidence reviewed.\\n')
 if state != output: output.write_text('Original evidence')
 ''')
-        config = {'roles': {role: {'command': [sys.executable, str(worker), '{state_file}', '{output_file}', str(root)], 'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 30} for role in ('expert', 'executor')}}
+        config = {role: {'provider': 'custom', 'command': [sys.executable, str(worker), '{state_file}', '{output_file}', str(root)], 'timeout_seconds': 30} for role in ('expert', 'executor')}
         (root / '.archa/workers.json').write_text(json.dumps(config))
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
