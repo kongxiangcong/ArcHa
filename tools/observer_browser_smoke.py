@@ -151,7 +151,7 @@ output.write_text('# ' + role + ' material\n\n[Original](../../../../../evidence
                 expect(page.get_by_label('Trace 原始日志')).to_have_text('current raw log\n')
                 print('PASS L2 lifecycle, 200 pagination, short/long reset, role switch, reconnect, refresh and focus')
                 # Original project material, HTML safety, navigation and path boundaries.
-                (root / 'evidence.md').write_text('# Original evidence\n\n```python\nimport pathlib\n```\n\n<script>window.__pwned = true</script>\n\n[Raw HTML](raw.html)\n\n' + ('Original evidence paragraph. ' * 20 + '\n\n') * 600 + '\nEND OF ORIGINAL')
+                (root / 'evidence.md').write_text('# Original evidence\n\n```python\nimport pathlib\n```\n\n<script>window.__pwned = true</script>\n\n[Raw HTML](raw.html)\n\n[Second](other/second.md)\n\n' + ('Original evidence paragraph. ' * 20 + '\n\n') * 600 + '\nEND OF ORIGINAL')
                 (root / 'raw.html').write_text('<script>window.__pwned = true</script>')
                 (root / 'escape').symlink_to('/etc/passwd')
                 page.get_by_role('button', name='关闭材料').click()
@@ -159,8 +159,37 @@ output.write_text('# ' + role + ' material\n\n[Original](../../../../../evidence
                 page.get_by_role('button', name='Original', exact=True).click()
                 expect(page.get_by_role('heading', name='Original evidence')).to_be_visible()
                 expect(page.locator('.code-keyword')).to_have_text('import')
+                # Hold a real paginated HTTP response while navigating to another material.
+                (root / 'other').mkdir()
+                (root / 'other/second.md').write_text('# Second material\n\n[Child](child.md)')
+                (root / 'other/child.md').write_text('# Correct relative child')
+                pending = []
+                def hold_page(route):
+                    pending.append((route, route.fetch()))
+                page.route('**/materials?path=*evidence.md&offset=262144', hold_page)
+                with page.expect_request('**/materials?path=*evidence.md&offset=262144'):
+                    page.get_by_role('button', name='读取更多').click()
+                page.get_by_role('button', name='Second', exact=True).click()
+                expect(page.get_by_role('heading', name='Second material')).to_be_visible()
+                assert len(pending) == 1
+                with page.expect_response('**/materials?path=*evidence.md&offset=262144'):
+                    pending[0][0].fulfill(response=pending[0][1])
+                page.evaluate('async () => { await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); }')
+                expect(page.get_by_role('heading', name='Second material')).to_be_visible()
+                expect(page.locator('#material-reader')).not_to_contain_text('END OF ORIGINAL')
+                page.get_by_role('button', name='Child', exact=True).click()
+                expect(page.get_by_role('heading', name='Correct relative child')).to_be_visible()
+                page.unroute('**/materials?path=*evidence.md&offset=262144', hold_page)
+                page.get_by_role('button', name='关闭材料').click()
+                page.get_by_role('button').filter(has=page.locator('.source', has_text='result.md')).click()
+                page.get_by_role('button', name='Original', exact=True).click()
+                expect(page.get_by_role('heading', name='Original evidence')).to_be_visible()
                 page.get_by_role('button', name='读取更多').click()
                 expect(page.locator('#material-reader')).to_contain_text('END OF ORIGINAL')
+                page.get_by_role('button', name='Raw HTML', exact=True).focus()
+                page.evaluate('window.materialLink = document.activeElement')
+                page.wait_for_timeout(1600)  # Cross UI clock and observer polling.
+                assert page.evaluate('window.materialLink.isConnected && document.activeElement === window.materialLink'), 'material link lost DOM identity or focus across polling'
                 page.get_by_role('button', name='复制路径').focus()
                 page.locator('#material-reader').evaluate('(el) => el.scrollTop = 300')
                 page.wait_for_timeout(1600)  # Cross scheduled refreshes while reading a long original.

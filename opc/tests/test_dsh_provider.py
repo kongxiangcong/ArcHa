@@ -147,3 +147,16 @@ def test_native_dsh_override_preserves_provider_and_effort(project, monkeypatch)
     assert 'a task is required' in log, log
     assert 'MODEL_CONFIG_NOT_PRESERVED' not in log
     assert not list(topic.rglob('*.provider.*'))
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux /dev/full write failure")
+def test_dsh_patch_write_failure_cleans_up_and_preserves_error(project, monkeypatch):
+    cli(project, 'init', '--goal', 'Evidence')
+    providers(project, monkeypatch, 'dsh')
+    topic = project / '.archa/topics/research'
+    step = topic / 'steps/step-01'
+    step.mkdir(parents=True, exist_ok=True)
+    (step / '.expert.prompt.provider.yml').symlink_to('/dev/full')
+    assert 'No space left on device' in cli(project, 'step', ok=False)
+    assert not list(topic.rglob('*.provider.*'))
+    assert not (step / 'probe.md').exists()

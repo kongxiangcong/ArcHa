@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import Markdown from "react-markdown";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
+import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "./api";
 import { poll } from "./poll";
@@ -25,6 +25,66 @@ const activities = {
   stopping: "停止中",
   unknown: "未知执行",
 };
+const ReaderNavigation = createContext({
+  path: "",
+  onOpen: (_path: string) => {},
+});
+const markdownComponents: Components = {
+  code: ({ className, children }) => (
+    <code className={className}>
+      {className?.startsWith("language-")
+        ? String(children)
+            .split(
+              /("[^"\n]*"|'[^'\n]*'|\b(?:def|class|return|import|from|if|else|for|while|const|let|function|true|false|None|True|False)\b)/g,
+            )
+            .map((part, index) => (
+              <span
+                key={index}
+                className={
+                  /^['"]/.test(part)
+                    ? "code-string"
+                    : /^(def|class|return|import|from|if|else|for|while|const|let|function|true|false|None|True|False)$/.test(
+                          part,
+                        )
+                      ? "code-keyword"
+                      : undefined
+                }
+              >
+                {part}
+              </span>
+            ))
+        : children}
+    </code>
+  ),
+  img: ({ alt }) => <span>[图片：{alt}]</span>,
+  a: function MaterialLink({ href, children }) {
+    const { path, onOpen } = useContext(ReaderNavigation);
+    if (!href) return <span>{children}</span>;
+    if (/^https?:\/\//i.test(href))
+      return (
+        <a href={href} target="_blank" rel="noreferrer">
+          {children}
+        </a>
+      );
+    if (/^[a-z]+:/i.test(href) || href.startsWith("//"))
+      return <span>{children}</span>;
+    return (
+      <button
+        className="text-link"
+        onClick={() => {
+          const parent = path.slice(0, path.lastIndexOf("/") + 1);
+          onOpen(
+            decodeURIComponent(
+              href.startsWith("/") ? href : parent + href.split("#")[0],
+            ),
+          );
+        }}
+      >
+        {children}
+      </button>
+    );
+  },
+};
 function Reader({
   path,
   onOpen,
@@ -37,6 +97,7 @@ function Reader({
   const [content, setContent] = useState<Content>();
   const [error, setError] = useState("");
   const log = path.endsWith(".log");
+  const generation = useRef(0);
   useEffect(() => {
     let active = true;
     let offset = 0;
@@ -63,16 +124,19 @@ function Reader({
     );
     return () => {
       active = false;
+      generation.current += 1;
       cancel();
     };
   }, [path, live, log]);
   const more = async () => {
     if (!content) return;
+    const requestedGeneration = generation.current;
     try {
       const next = await api.material(path, content.next_offset);
-      setContent({ ...next, text: content.text + next.text });
+      if (generation.current === requestedGeneration)
+        setContent({ ...next, text: content.text + next.text });
     } catch (error) {
-      setError(String(error));
+      if (generation.current === requestedGeneration) setError(String(error));
     }
   };
   return (
@@ -85,72 +149,15 @@ function Reader({
             <pre className="plain-output">{content.text || "尚无输出"}</pre>
           ) : (
             <div className="markdown">
-              <Markdown
-                remarkPlugins={[remarkGfm]}
-                skipHtml
-                components={{
-                  code: ({ className, children }) => (
-                    <code className={className}>
-                      {className?.startsWith("language-")
-                        ? String(children)
-                            .split(
-                              /("[^"\n]*"|'[^'\n]*'|\b(?:def|class|return|import|from|if|else|for|while|const|let|function|true|false|None|True|False)\b)/g,
-                            )
-                            .map((part, index) => (
-                              <span
-                                key={index}
-                                className={
-                                  /^['"]/.test(part)
-                                    ? "code-string"
-                                    : /^(def|class|return|import|from|if|else|for|while|const|let|function|true|false|None|True|False)$/.test(
-                                          part,
-                                        )
-                                      ? "code-keyword"
-                                      : undefined
-                                }
-                              >
-                                {part}
-                              </span>
-                            ))
-                        : children}
-                    </code>
-                  ),
-                  img: ({ alt }) => <span>[图片：{alt}]</span>,
-                  a: ({ href, children }) => {
-                    if (!href) return <span>{children}</span>;
-                    if (/^https?:\/\//i.test(href))
-                      return (
-                        <a href={href} target="_blank" rel="noreferrer">
-                          {children}
-                        </a>
-                      );
-                    if (/^[a-z]+:/i.test(href) || href.startsWith("//"))
-                      return <span>{children}</span>;
-                    return (
-                      <button
-                        className="text-link"
-                        onClick={() => {
-                          const parent = path.slice(
-                            0,
-                            path.lastIndexOf("/") + 1,
-                          );
-                          onOpen(
-                            decodeURIComponent(
-                              href.startsWith("/")
-                                ? href
-                                : parent + href.split("#")[0],
-                            ),
-                          );
-                        }}
-                      >
-                        {children}
-                      </button>
-                    );
-                  },
-                }}
-              >
-                {content.text}
-              </Markdown>
+              <ReaderNavigation.Provider value={{ path, onOpen }}>
+                <Markdown
+                  remarkPlugins={[remarkGfm]}
+                  skipHtml
+                  components={markdownComponents}
+                >
+                  {content.text}
+                </Markdown>
+              </ReaderNavigation.Provider>
             </div>
           )}
           {content.more && !live && <button onClick={more}>读取更多</button>}

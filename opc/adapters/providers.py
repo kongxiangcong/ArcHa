@@ -4,6 +4,7 @@ import json
 import math
 from pathlib import Path
 import string
+import sys
 
 # DSH patches replace config objects. Intercept the resolved config so local
 # provider/effort and native !!js expressions survive the model override.
@@ -98,11 +99,19 @@ def launch(request):
         if spec['model']:
             patch = request.prompt_file.with_suffix('.provider.yml')
             plugin = patch.with_suffix('.mjs')
-            plugin.write_text(DSH_MODEL_OVERRIDE, encoding='utf-8')
-            patch.write_text('- insert:\n    - id: archa-model-override\n      name: '
-                             + json.dumps(plugin.as_uri()) + '\n      config:\n        model: '
-                             + json.dumps(spec['model'])
-                             + '\n- id: agent-default-model\n  inject: [archaModelOverride]\n', encoding='utf-8')
+            try:
+                plugin.write_text(DSH_MODEL_OVERRIDE, encoding='utf-8')
+                patch.write_text('- insert:\n    - id: archa-model-override\n      name: '
+                                 + json.dumps(plugin.as_uri()) + '\n      config:\n        model: '
+                                 + json.dumps(spec['model'])
+                                 + '\n- id: agent-default-model\n  inject: [archaModelOverride]\n', encoding='utf-8')
+            except OSError:
+                for temporary in (patch, plugin):
+                    try:
+                        temporary.unlink(missing_ok=True)
+                    except OSError as cleanup_error:
+                        print(f'Could not remove {temporary}: {cleanup_error}', file=sys.stderr)
+                raise
             cleanup_paths = (patch, plugin)
             argv.extend(['--patch', str(patch)])
         argv.extend(['--json', '-'])
