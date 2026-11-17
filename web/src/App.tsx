@@ -1,9 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "./api";
 import { poll } from "./poll";
-import type { Content, Overview, TopicDetail, Role } from "./types";
+import type {
+  Content,
+  Overview,
+  TopicDetail,
+  Role,
+  Material,
+  Excerpt,
+} from "./types";
 
 const roles: Record<Role, string> = {
   expert: "Expert",
@@ -81,6 +88,32 @@ function Reader({
                 remarkPlugins={[remarkGfm]}
                 skipHtml
                 components={{
+                  code: ({ className, children }) => (
+                    <code className={className}>
+                      {className?.startsWith("language-")
+                        ? String(children)
+                            .split(
+                              /("[^"\n]*"|'[^'\n]*'|\b(?:def|class|return|import|from|if|else|for|while|const|let|function|true|false|None|True|False)\b)/g,
+                            )
+                            .map((part, index) => (
+                              <span
+                                key={index}
+                                className={
+                                  /^['"]/.test(part)
+                                    ? "code-string"
+                                    : /^(def|class|return|import|from|if|else|for|while|const|let|function|true|false|None|True|False)$/.test(
+                                          part,
+                                        )
+                                      ? "code-keyword"
+                                      : undefined
+                                }
+                              >
+                                {part}
+                              </span>
+                            ))
+                        : children}
+                    </code>
+                  ),
                   img: ({ alt }) => <span>[图片：{alt}]</span>,
                   a: ({ href, children }) => {
                     if (!href) return <span>{children}</span>;
@@ -268,7 +301,11 @@ export default function App() {
     new URLSearchParams(location.search).get("topic") || "",
   );
   const [detail, setDetail] = useState<TopicDetail>();
-  const [round, setRound] = useState<number>();
+  const [navOpen, setNavOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const opener = useRef<HTMLElement | null>(null);
+  const drawer = useRef<HTMLElement | null>(null);
+  const [copied, setCopied] = useState(false);
   const [material, setMaterial] = useState("");
   const [error, setError] = useState("");
   const [now, setNow] = useState(Date.now());
@@ -302,7 +339,7 @@ export default function App() {
   useEffect(() => {
     setDetail(undefined);
     setMaterial("");
-    setRound(undefined);
+    setDrawerOpen(false);
     if (!topic) return;
     history.replaceState(null, "", "?" + new URLSearchParams({ topic }));
     let active = true;
@@ -326,17 +363,41 @@ export default function App() {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
-  const selected =
-    detail?.rounds.find((item) => item.number === round) ||
-    detail?.rounds.at(-1);
   const execution = detail?.execution;
-  const currentState = detail?.materials.find(
-    (item) => item.name === "STATE.md",
-  );
-  const open = (path: string) => {
-    setMaterial(path);
-    document.getElementById("material-reader")?.focus();
+  const close = () => {
+    setDrawerOpen(false);
+    opener.current?.focus();
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) setMaterial("");
   };
+  const open = (path: string) => {
+    if (!drawerOpen) opener.current = document.activeElement as HTMLElement;
+    setMaterial(path);
+    setCopied(false);
+    setDrawerOpen(true);
+  };
+  useEffect(() => {
+    if (drawerOpen) drawer.current?.focus();
+  }, [drawerOpen]);
+  const preview = (value: Excerpt) => (
+    <>
+      <h3>{value.title}</h3>
+      <p>{value.empty ? "暂无内容（正文为空）" : value.text}</p>
+      <small className="muted">
+        原文摘录{value.truncated || value.title_truncated ? " · 已截断" : ""}
+      </small>
+    </>
+  );
+  const card = (item: Material | undefined, name: string) =>
+    item ? (
+      <button className="excerpt" onClick={() => open(item.path)}>
+        <span className="source">{item.name}</span>
+        {item.excerpt && preview(item.excerpt)}
+      </button>
+    ) : (
+      <p className="muted">
+        {name} · {name === "result.md" ? "尚未提交" : "材料缺失"}
+      </p>
+    );
   return (
     <>
       <a className="skip-link" href="#main">
@@ -360,6 +421,31 @@ export default function App() {
           </select>
         </label>
       </header>
+      <button
+        className="nav-toggle"
+        aria-expanded={navOpen}
+        onClick={() => setNavOpen(!navOpen)}
+      >
+        专题导航
+      </button>
+      <aside
+        className={`topic-nav ${navOpen ? "expanded" : ""}`}
+        aria-label="专题导航"
+      >
+        <h2>探索专题</h2>
+        {overview?.topics.map((item) => (
+          <button
+            key={item.topic}
+            aria-current={topic === item.topic ? "page" : undefined}
+            onClick={() => {
+              setTopic(item.topic);
+              setNavOpen(false);
+            }}
+          >
+            {item.topic}
+          </button>
+        ))}
+      </aside>
       <main id="main">
         <div className="heading">
           <div>
@@ -395,13 +481,10 @@ export default function App() {
               </p>
               <p>
                 执行活动{" "}
-                <strong>
-                  {detail.probe_breakpoint
-                    ? "探针断点等待"
-                    : activities[detail.activity || "unknown"]}
-                </strong>
+                <strong>{activities[detail.activity || "unknown"]}</strong>
                 {detail.publishing && " · 成果提交中"}
               </p>
+              {detail.probe_breakpoint && <p>探针断点等待</p>}
               {execution && (
                 <p>
                   {roles[execution.role]} · 第 {execution.round} 轮 · 开始{" "}
@@ -416,88 +499,142 @@ export default function App() {
                   秒
                 </p>
               )}
-              {detail.error && <p role="alert">{detail.error}</p>}
+              {detail.error && <p role="alert">最近错误：{detail.error}</p>}
             </section>
             {overview?.control && <Controls key={topic} detail={detail} />}
-            {detail.current_probe && (
-              <section aria-label="当前探针">
-                <h2>第 {detail.current_round} 轮 · 待执行探针</h2>
-                <Reader path={detail.current_probe.path} onOpen={open} live />
-              </section>
-            )}
-            <details>
-              <summary>输入与认知状态</summary>
-              <p className="muted">STATE.md 是当前认知，不是历史轮次快照。</p>
-              <div className="material-buttons">
-                {detail.materials
-                  .filter((item) => item.name !== "STATE.md")
-                  .map((item) => (
-                    <button key={item.path} onClick={() => open(item.path)}>
-                      {item.name}
-                    </button>
-                  ))}
-              </div>
-              {currentState && (
-                <Reader path={currentState.path} onOpen={open} live />
-              )}
-            </details>
-            <details>
-              <summary>轮次历史与日志</summary>
-              <nav aria-label="轮次">
-                {detail.rounds.map((item) => (
-                  <button
-                    key={item.number}
-                    aria-pressed={selected?.number === item.number}
-                    onClick={() => setRound(item.number)}
-                  >
-                    第 {item.number} 轮{item.completed ? " · 已完成" : ""}
-                  </button>
-                ))}
-              </nav>
-              {selected ? (
-                <>
-                  <h3>第 {selected.number} 轮</h3>
-                  <div className="material-buttons">
-                    {selected.materials
-                      .filter(
-                        (item) => item.path !== detail.current_probe?.path,
-                      )
-                      .map((item) => (
-                        <button key={item.path} onClick={() => open(item.path)}>
-                          {item.name}
-                        </button>
-                      ))}
-                  </div>
-                  {selected.logs.map((log) => (
-                    <details key={log.path}>
-                      <summary>{roles[log.role]} · stdout / stderr</summary>
-                      <Reader
-                        key={execution?.id || "idle"}
-                        path={log.path}
-                        onOpen={open}
-                        live
-                      />
-                    </details>
-                  ))}
-                </>
-              ) : (
-                <p>尚无轮次材料</p>
-              )}
-            </details>
-            <section id="material-reader" tabIndex={-1} aria-label="材料阅读">
-              <h2>材料阅读</h2>
-              {material ? (
-                <>
-                  <p className="material-path">{material}</p>
-                  <Reader key={material} path={material} onOpen={open} />
-                </>
-              ) : (
-                <p>选择轮次材料或专题材料查看原件。</p>
+            <section aria-label="目标">
+              <h2>探索目标</h2>
+              {card(
+                detail.materials.find((item) => item.name === "GOAL.md"),
+                "GOAL.md",
               )}
             </section>
+            <section aria-label="认知状态">
+              <h2>当前认知状态</h2>
+              <p className="muted">STATE.md 是当前认知，不是历史轮次快照。</p>
+              {(() => {
+                const state = detail.materials.find(
+                  (item) => item.name === "STATE.md",
+                );
+                return state ? (
+                  <>
+                    <button onClick={() => open(state.path)}>
+                      STATE.md · 阅读原件
+                    </button>
+                    {state.sections?.length
+                      ? state.sections.map((section, index) => (
+                          <div key={index} className="state-section">
+                            {preview(section)}
+                          </div>
+                        ))
+                      : state.excerpt && preview(state.excerpt)}
+                  </>
+                ) : (
+                  <p>STATE.md · 材料缺失</p>
+                );
+              })()}
+              {detail.materials
+                .filter((item) => !["GOAL.md", "STATE.md"].includes(item.name))
+                .map((item) => (
+                  <button key={item.path} onClick={() => open(item.path)}>
+                    {item.name}
+                  </button>
+                ))}
+            </section>
+            <div aria-label="探索轮次">
+              {[...detail.rounds].reverse().map((item) => (
+                <section
+                  key={item.number}
+                  aria-label={
+                    item.number === detail.current_round && !item.completed
+                      ? "当前探针"
+                      : `第 ${item.number} 轮`
+                  }
+                >
+                  <h2>
+                    第 {item.number} 轮 ·{" "}
+                    {item.completed ? "结果已提交" : "待执行探针"}
+                  </h2>
+                  {card(
+                    item.materials.find((value) => value.name === "probe.md"),
+                    "probe.md",
+                  )}
+                  {card(
+                    item.materials.find((value) => value.name === "result.md"),
+                    "result.md",
+                  )}
+                  <div className="material-buttons">
+                    {item.materials
+                      .filter(
+                        (value) =>
+                          !["probe.md", "result.md"].includes(value.name),
+                      )
+                      .map((value) => (
+                        <button
+                          key={value.path}
+                          onClick={() => open(value.path)}
+                        >
+                          {value.name}
+                        </button>
+                      ))}
+                    {item.logs.map((log) => (
+                      <button key={log.path} onClick={() => open(log.path)}>
+                        {roles[log.role]} · stdout / stderr
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ))}
+              {!detail.rounds.length && <p>尚无轮次材料</p>}
+            </div>
           </>
         )}
       </main>
+      {material && (
+        <aside
+          ref={drawer}
+          id="material-reader"
+          className={`reader-drawer ${drawerOpen ? "open" : ""}`}
+          role="dialog"
+          aria-label="材料阅读"
+          aria-hidden={!drawerOpen}
+          inert={!drawerOpen}
+          tabIndex={-1}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              close();
+            }
+          }}
+          onTransitionEnd={(event) => {
+            if (event.target === event.currentTarget && !drawerOpen)
+              setMaterial("");
+          }}
+        >
+          <div className="drawer-actions">
+            <h2>材料阅读</h2>
+            <button onClick={close}>关闭材料</button>
+          </div>
+          <p className="material-path">{material}</p>
+          <button
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(material);
+                setCopied(true);
+              } catch (error) {
+                setError(String(error));
+              }
+            }}
+          >
+            {copied ? "已复制路径" : "复制路径"}
+          </button>
+          <Reader
+            path={material}
+            onOpen={open}
+            live={material.endsWith(".log")}
+          />
+        </aside>
+      )}
     </>
   );
 }

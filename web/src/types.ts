@@ -1,6 +1,18 @@
 export type Activity = "idle" | "running" | "stopping" | "unknown";
 export type Role = "expert" | "executor" | "expert_finalize" | "expert_revise";
-export type Material = { name: string; path: string };
+export type Excerpt = {
+  title: string;
+  title_truncated: boolean;
+  text: string;
+  truncated: boolean;
+  empty: boolean;
+};
+export type Material = {
+  name: string;
+  path: string;
+  excerpt?: Excerpt;
+  sections?: Excerpt[];
+};
 export type Topic = {
   topic: string;
   status?: string;
