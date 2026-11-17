@@ -27,3 +27,5 @@ Status: ready-for-agent
 - 源码核查：本机 DSH 0.2.2-rc.1 的 headless 输入契约及默认模型插件；原生 `--patch` 位于 `--json -` 前，模型使用 JSON 引号转义的 YAML 字符串。此项不等于真实模型验收。
 - 替身进程：通过安装后的 `.archa/archa.py` 启动真实可执行子进程；两种交叉组合、132,000 字节以上 stdin、模型／环境覆盖、空模型、Expert 重拟／收尾继承、同专题切换 Provider 保留轮数和材料、非零／缺失／非法状态／超时失败恢复及补丁清理均覆盖。
 - 真实联调尚未执行：自动审批拒绝使用原生认证向 Codex／DSH 服务发送任务与状态，理由为现有授权未明确覆盖敏感外发。待明确允许仅发送临时合成任务／状态后，验证两种组合、指定 `gpt-6.1-sol`／`deepseek-flash`、长 stdin、Agent 内部 `python3 --version` 和精确整数求和命令及提交产物。未读取或复制任何凭据，未绕过拒绝；本票未完成。
+
+验证：`/tmp/archa-results-venv/bin/python -m pytest opc/tests/test_topic_cli.py opc/tests/test_topic_rounds.py opc/tests/test_topic_recovery.py opc/tests/test_topic_process.py opc/tests/test_dsh_provider.py tools/tests/test_skill_installer.py -q` → 93 passed, 1 skipped；合入最新集成分支后 DSH 专项复跑 7 passed。
