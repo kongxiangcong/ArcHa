@@ -1,9 +1,39 @@
 """Read-only projection of authoritative topic documents and runtime logs."""
 import codecs
 import os
+import re
 from pathlib import Path
 
 from ..core.workspace import TopicWorkspace
+
+
+def excerpt(text, title=""):
+    body = " ".join(re.sub(r"^\s*#{1,6}\s+", "", line).strip()
+                    for line in text.splitlines()
+                    if line.strip() and not re.match(r"^(STATUS|MAX_ROUNDS):", line))
+    body = " ".join(body.split())
+    return dict(title=title[:120] + ("…" if len(title) > 120 else ""),
+                title_truncated=len(title) > 120,
+                text=body[:240] + ("…" if len(body) > 240 else ""),
+                truncated=len(body) > 240, empty=not body)
+
+
+def reading(path):
+    text = path.read_text(encoding="utf-8")
+    headings = list(re.finditer(r"^#{1,6} +(.+)$", text, re.M))
+    title = headings[0][1] if headings else path.name
+    body = text[headings[0].end():] if headings else text
+    sections = []
+    for index, heading in enumerate(headings):
+        if heading[0].startswith("# "):
+            continue
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
+        sections.append(excerpt(text[heading.end():end], heading[1]))
+    if path.name == "GOAL.md":
+        objective = next((part for part in sections if part['title'].lower() == 'objective'), None)
+        if objective is not None:
+            return dict(excerpt=objective)
+    return dict(excerpt=excerpt(body, title), **(dict(sections=sections) if path.name == 'STATE.md' else {}))
 
 
 class ObserverError(Exception):
@@ -60,9 +90,10 @@ class ObserverAdapter:
                                if (workspace.path / name).is_file()])
 
     def material(self, path):
-        return dict(name=path.name, path=path.relative_to(self.root).as_posix())
+        return dict(name=path.name, path=path.relative_to(self.root).as_posix(),
+                    **(reading(self.readable_path(path.relative_to(self.root))) if path.suffix.lower() == '.md' else {}))
 
-    def content(self, path, offset=0, limit=262144):
+    def readable_path(self, path):
         candidate = (self.root / path).resolve()
         if not candidate.is_relative_to(self.root) or candidate == self.root:
             raise ObserverError(403, 'outside_material_roots', 'Material must stay within the project')
@@ -75,6 +106,11 @@ class ObserverAdapter:
                 raise ObserverError(403, 'outside_material_roots', 'Unpublished runtime files are not materials')
         if not candidate.is_file():
             raise ObserverError(404, 'not_found', 'Material not found')
+        return candidate
+
+    def content(self, path, offset=0, limit=262144):
+        candidate = self.readable_path(path)
+        relative = candidate.relative_to(self.root)
         with candidate.open('rb') as stream:
             if offset > os.fstat(stream.fileno()).st_size:
                 offset = 0  # A new invocation can replace this role's log.
