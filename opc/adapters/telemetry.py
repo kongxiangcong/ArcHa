@@ -17,8 +17,10 @@ class Telemetry:
         self.log_file = log_file
         self.path = log_file.with_suffix('.events.jsonl')
         self.published = False
+        self.diagnostic = None
         self.seq = 0
         self.stream = None
+        self.finished = False
         self.started = time.monotonic()
         temporary = None
         try:
@@ -38,19 +40,27 @@ class Telemetry:
                     self.failure(exc)
 
     def failure(self, exc):
+        if self.finished:
+            return
         message = f'Telemetry incomplete: {"unpublished stream: " if not self.published else ""}{self.path.name}: {exc}'
-        print(message, file=sys.stderr)
+        self.incomplete(message)
         stream, self.stream = self.stream, None
         if stream is not None:
             try:
                 stream.close()
             except OSError as close_error:
                 print(f'{message}; close failed: {close_error}', file=sys.stderr)
+
+    def incomplete(self, message):
+        self.diagnostic = message
+        print(message, file=sys.stderr)
+
+    def write_diagnostic(self):
         try:
             with self.log_file.open('ab') as log:
-                log.write(('\n' + message + '\n').encode('utf-8'))
+                log.write(('\n' + self.diagnostic + '\n').encode('utf-8'))
         except OSError as log_error:
-            print(f'{message}; log diagnostic failed: {log_error}', file=sys.stderr)
+            print(f'{self.diagnostic}; log diagnostic failed: {log_error}', file=sys.stderr)
 
     def event(self, title, status, detail=None, kind='lifecycle'):
         if self.stream is None:
@@ -72,3 +82,9 @@ class Telemetry:
                 self.stream.close()
             except OSError as exc:
                 self.failure(exc)
+        # Only the invocation owner writes diagnostics to the raw log, after
+        # output and observation end, so a late tail cannot write into a retry.
+        if self.diagnostic:
+            self.write_diagnostic()
+        self.finished = True
+        self.stream = None

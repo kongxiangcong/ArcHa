@@ -9,7 +9,6 @@ def text(value):
 class NativeEvents:
     def __init__(self, provider):
         self.provider = provider
-        self.calls = {}
 
     def parse(self, line):
         try:
@@ -26,11 +25,10 @@ class NativeEvents:
                 raise ValueError(f'DSH {kind}: native event truncated')
             if kind == 'tool_call':
                 name = value['tool']
-                self.calls[value['callId']] = name
                 return ('tool', f'{name} started', 'running', text(value['input']))
             if kind == 'tool_result':
                 call = value['callId']
-                name = self.calls.pop(call, call)
+                name = call
                 status = value['status']
                 if status not in ('completed', 'error'):
                     raise ValueError('DSH tool_result: invalid status')
