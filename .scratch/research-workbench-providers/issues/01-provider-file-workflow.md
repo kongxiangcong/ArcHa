@@ -27,3 +27,4 @@ Status: ready-for-agent
 - 安装清单包含 Provider 模块；人工迁移说明位于 `opc/README.md#worker-configuration-migration`。既有测试的 scripted 预设已替换为 `opc/tests/worker_fixture.py` 真实脚本进程。
 - TDD 首个已安装 CLI 测试先因旧 `roles` 边界失败，切换后通过。专项 `test_topic_cli.py`：52 passed，包含默认／显式 Codex 参数、文件产物不被最终聊天覆盖、超过 128 KiB UTF-8 stdin、环境覆盖、旧配置拒绝、失败与重试；Codex 使用替身可执行文件，未声称真实模型验收。
 - HTTP 控制回归：5 passed（2.23 秒）。受限沙箱中 TestClient 卡在 AnyIO portal 启动；退出本次卡住进程后，在允许 HTTP 测试运行的环境验证通过。浏览器脚本和实际浏览器验证由 03 集成，故相关组合检查项暂不勾选。
+- 完整回归：`/tmp/archa-results-venv/bin/python -m pytest -q`，118 passed、3 skipped、12 subtests passed（91.73 秒）；包括安装升级保留旧配置与专题原件、明确拒绝旧配置、人工迁移后完成文件协议轮次。仅有现有 AnyIO 弃用警告。
