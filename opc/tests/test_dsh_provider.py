@@ -23,7 +23,8 @@ if provider == 'dsh':
     assert '--model' not in sys.argv
     if os.environ['EXPECTED_MODEL']:
         patch = pathlib.Path(sys.argv[sys.argv.index('--patch') + 1]).read_text()
-        assert patch == '- id: agent-default-model\\n  config:\\n    model: ' + json.dumps(os.environ['EXPECTED_MODEL']) + '\\n'
+        assert 'model: ' + json.dumps(os.environ['EXPECTED_MODEL']) in patch
+        assert 'inject: [archaModelOverride]' in patch
     else:
         assert '--patch' not in sys.argv
 prompt = sys.stdin.read()
@@ -79,6 +80,7 @@ def test_cross_provider_long_stdin_revise_finalize_and_switch(project, monkeypat
     assert 'Absorbed prior evidence.' in (topic / 'STATE.md').read_text()
     assert not list(topic.rglob('*.prompt.md'))
     assert not list(topic.rglob('*.provider.yml'))
+    assert not list(topic.rglob('*.provider.mjs'))
 
 
 @pytest.mark.parametrize(('failure', 'message'), [('exit', 'code 7'), ('missing', 'missing'),
@@ -97,6 +99,7 @@ def test_dsh_failures_preserve_state_and_recover(project, monkeypatch, failure, 
     assert cli(project, 'status')['status'] == 'IN_PROGRESS'
     assert not (topic / 'steps/step-01/probe.md').exists()
     assert not list(topic.rglob('*.provider.yml'))
+    assert not list(topic.rglob('*.provider.mjs'))
     assert 'Diagnostic only' in (topic / 'steps/step-01/.expert.log').read_text()
     providers(project, monkeypatch, 'dsh')
     assert cli(project, 'step')['next_action'] == 'executor'
@@ -108,3 +111,39 @@ def test_dsh_rejects_codex_only_option_before_dispatch(project):
         'expert': {'provider': 'dsh', 'reasoning_effort': 'high'},
         'executor': {'provider': 'codex'}}))
     assert 'expert: unknown fields or unsupported provider options: reasoning_effort' in cli(project, 'check', ok=False)
+
+
+@pytest.mark.skipif(not os.environ.get('ARCHA_TEST_DSH'), reason='opt-in native DSH startup, no model request')
+def test_native_dsh_override_preserves_provider_and_effort(project, monkeypatch):
+    cli(project, 'init', '--goal', 'Synthetic native config smoke')
+    baseline = project / 'baseline.yml'
+    baseline.write_text('''- id: agent-default-model
+  config:
+    provider: fixture-provider
+    model: original-model
+    reasoningEffort: fixture-effort
+- id: headless-runner
+  config:
+    json: true
+    task: !!js |
+      (() => {
+        const value = ctx.agentDefaultModel.currentSelection();
+        if (value.provider !== 'fixture-provider' || value.reasoningEffort !== 'fixture-effort' || value.model !== 'chosen-model') throw new Error('MODEL_CONFIG_NOT_PRESERVED');
+        return '';
+      })()
+''')
+    binary = project / 'dsh'
+    binary.write_text('#!' + sys.executable + '\nimport subprocess,sys\n'
+                      'sys.stdin.read()\n'
+                      + f'raise SystemExit(subprocess.call([{os.environ["ARCHA_TEST_DSH"]!r}, "--patch", {str(baseline)!r}, *sys.argv[1:]], stdin=subprocess.DEVNULL))\n')
+    binary.chmod(0o755)
+    monkeypatch.setenv('PATH', str(project) + os.pathsep + os.environ['PATH'])
+    (project / '.archa/workers.json').write_text(json.dumps({
+        'expert': {'provider': 'dsh', 'model': 'chosen-model', 'timeout_seconds': 30},
+        'executor': {'provider': 'codex'}}))
+    assert 'code 1' in cli(project, 'step', ok=False)
+    topic = project / '.archa/topics/research'
+    log = (topic / 'steps/step-01/.expert.log').read_text()
+    assert 'a task is required' in log, log
+    assert 'MODEL_CONFIG_NOT_PRESERVED' not in log
+    assert not list(topic.rglob('*.provider.*'))

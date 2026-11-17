@@ -5,6 +5,18 @@ import math
 from pathlib import Path
 import string
 
+# DSH patches replace config objects. Intercept the resolved config so local
+# provider/effort and native !!js expressions survive the model override.
+DSH_MODEL_OVERRIDE = """export default function override(ctx, config) {
+  ctx.on('internal/config', (fiber, next) => {
+    const value = next();
+    return fiber.entry?.options.id === 'agent-default-model'
+      ? { ...value, model: config.model } : value;
+  });
+  ctx.provide('archaModelOverride', {});
+}
+"""
+
 MIGRATION = 'See opc/README.md#worker-configuration-migration for manual migration.'
 COMMON = {'provider', 'model', 'timeout_seconds', 'env'}
 VARIABLES = {'workdir', 'topic_dir', 'prompt_file', 'output_file', 'state_file', 'model'}
@@ -85,9 +97,13 @@ def launch(request):
         argv = ['dsh', '--profile', 'headless']
         if spec['model']:
             patch = request.prompt_file.with_suffix('.provider.yml')
-            patch.write_text('- id: agent-default-model\n  config:\n    model: '
-                             + json.dumps(spec['model']) + '\n', encoding='utf-8')
-            cleanup_paths = (patch,)
+            plugin = patch.with_suffix('.mjs')
+            plugin.write_text(DSH_MODEL_OVERRIDE, encoding='utf-8')
+            patch.write_text('- insert:\n    - id: archa-model-override\n      name: '
+                             + json.dumps(plugin.as_uri()) + '\n      config:\n        model: '
+                             + json.dumps(spec['model'])
+                             + '\n- id: agent-default-model\n  inject: [archaModelOverride]\n', encoding='utf-8')
+            cleanup_paths = (patch, plugin)
             argv.extend(['--patch', str(patch)])
         argv.extend(['--json', '-'])
     else:
