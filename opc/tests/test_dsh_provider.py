@@ -119,7 +119,7 @@ def test_native_dsh_override_preserves_provider_and_effort(project, monkeypatch)
     baseline = project / 'baseline.yml'
     baseline.write_text('''- id: agent-default-model
   config:
-    provider: fixture-provider
+    provider: !!js "'fixture-provider'"
     model: original-model
     reasoningEffort: fixture-effort
 - id: headless-runner
