@@ -4,7 +4,7 @@
 
 **Blocked by:** 05 — 在 L2 实时观察 Codex／DSH 工具事件。
 
-Status: ready-for-agent
+Status: resolved
 
 **规格：** [Research Workbench 与多 Provider 执行](../spec.md)。本票交付受限资源和故障条件下的端到端行为，不替代前序各票自己的正常路径测试与验收。
 

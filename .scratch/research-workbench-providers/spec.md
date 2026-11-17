@@ -1,6 +1,10 @@
 # ArcHa：Research Workbench 与多 Provider 执行
 
-Status: ready-for-agent
+Status: resolved
+
+## Answer
+
+六项实现及三项审查修复已集成到 `implement/research-workbench-providers`。最终全量回归为 `150 passed, 4 skipped, 12 subtests passed`（跳过项未执行）；生产构建、两条浏览器 smoke 及原生 DSH／Provider／事件定向回归（15 passed）通过，详见 [06 的验收证据](issues/06-observation-fault-control.md#implementation-evidence)。真实 Codex／DSH 双向组合、模型与内部工具验证，以及联调范围事件及处理记录，统一参见 [02 的原始记录](issues/02-dsh-cross-provider-research.md#comments)。
 
 ## Problem Statement
 
