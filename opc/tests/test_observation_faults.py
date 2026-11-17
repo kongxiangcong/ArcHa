@@ -11,6 +11,8 @@ from opc.observer.api import create_app
 from opc.tests.test_topic_cli import cli, project
 from opc.tests.test_dsh_provider import providers
 
+pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="Linux process and resource-limit fault acceptance")
+
 
 def native_project(project, monkeypatch, payload):
     cli(project, 'init', '--goal', 'Evidence')
