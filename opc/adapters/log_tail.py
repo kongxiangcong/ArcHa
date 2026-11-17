@@ -59,11 +59,7 @@ class LogTail:
                     for line in lines:
                         if self.stopped.is_set() or self.expired():
                             return
-                        if len(line) > self.LINE_LIMIT:
-                            raise ValueError('native log line exceeds 1 MiB parsing limit')
                         self.line(line)
-                    if len(pending) > self.LINE_LIMIT:
-                        raise ValueError('native log line exceeds 1 MiB parsing limit')
                     if not self.ended.is_set():
                         self.ended.wait(.2)
         except Exception as exc:
