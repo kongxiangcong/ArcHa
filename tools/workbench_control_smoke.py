@@ -29,7 +29,7 @@ if state.parent.name == '.staging.expert':
     state.write_text((root / '.archa/topics/research/STATE.md').read_text() + '\\nEvidence reviewed.\\n')
 if state != output: output.write_text('Original evidence')
 ''')
-        config = {'roles': {role: {'command': [sys.executable, str(worker), '{state_file}', '{output_file}', str(root)], 'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 30} for role in ('expert', 'executor')}}
+        config = {role: {'provider': 'custom', 'command': [sys.executable, str(worker), '{state_file}', '{output_file}', str(root)], 'timeout_seconds': 30} for role in ('expert', 'executor')}
         (root / '.archa/workers.json').write_text(json.dumps(config))
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
@@ -44,14 +44,15 @@ if state != output: output.write_text('Original evidence')
                 time.sleep(.02)
             with sync_playwright() as pw:
                 browser = pw.chromium.launch(args=['--no-sandbox'])
-                page = browser.new_page()
+                page = browser.new_page(viewport={'width': 1920, 'height': 1080})
                 page.goto(f'http://127.0.0.1:{port}/?topic=research')
-                page.get_by_role('button', name='GOAL.md', exact=True).click()
+                page.get_by_role('button').filter(has=page.locator('.source', has_text='GOAL.md')).click()
                 reader = page.get_by_label('材料阅读', exact=True)
                 expect(reader).to_contain_text('Read original evidence')
                 page.get_by_role('button', name='继续', exact=True).click()
                 expect(page.get_by_text('运行中', exact=True)).to_be_visible()
-                expect(page.locator('pre').filter(has_text='Worker live output')).to_be_visible()
+                expect(reader).to_contain_text('Read original evidence')
+                assert page.locator('pre').count() == 0  # Running must not open logs.
                 execution_id = page.request.get(f'http://127.0.0.1:{port}/api/observer/v1/topics/research').json()['execution']['id']
                 other = browser.new_page()
                 other.goto(page.url)
@@ -72,6 +73,7 @@ if state != output: output.write_text('Original evidence')
                 page.get_by_role('button', name='追加并继续', exact=True).click()
                 expect(page.get_by_label('专题与执行状态')).to_contain_text('2 / 2')
                 expect(page.get_by_text('空闲', exact=True)).to_be_visible()
+                assert page.get_by_label('探索轮次').get_by_role('heading', level=2).all_text_contents()[:2] == ['第 2 轮 · 结果已提交', '第 1 轮 · 结果已提交']
                 # Worker failure preserves current reader and shared diagnostics.
                 (root / 'fail').touch()
                 page.get_by_role('button', name='追加并继续', exact=True).click()
@@ -89,6 +91,26 @@ if state != output: output.write_text('Original evidence')
                 state.write_text(state.read_text().replace('IN_PROGRESS', 'COMPLETED'))
                 expect(page.get_by_text('研究已完成，不能自动重开。', exact=True)).to_be_visible()
                 expect(page.get_by_role('button', name='追加并继续', exact=True)).to_have_count(0)
+                for demo, control in ((False, False), (True, True)):
+                    with socket.socket() as sock:
+                        sock.bind(('127.0.0.1', 0))
+                        readonly_port = sock.getsockname()[1]
+                    readonly = uvicorn.Server(uvicorn.Config(create_app(root, demo=demo, control=control), host='127.0.0.1', port=readonly_port, log_level='warning'))
+                    readonly_thread = threading.Thread(target=readonly.run, daemon=True)
+                    readonly_thread.start()
+                    try:
+                        deadline = time.monotonic() + 10
+                        while not readonly.started:
+                            assert time.monotonic() < deadline
+                            time.sleep(.02)
+                        page.goto(f'http://127.0.0.1:{readonly_port}/?topic=research')
+                        expect(page.get_by_role('heading', name='探索目标')).to_be_visible()
+                        assert page.get_by_label('专题控制').count() == 0
+                        page.get_by_role('button').filter(has=page.locator('.source', has_text='GOAL.md')).click()
+                        expect(page.get_by_role('dialog')).to_contain_text('Read original evidence')
+                    finally:
+                        readonly.should_exit = True
+                        readonly_thread.join(5)
                 browser.close()
                 print('PASS browser run/stop/resume, two pages, blocked, budget, failure, unknown, completed; reader retained')
         finally:

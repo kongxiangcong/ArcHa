@@ -58,7 +58,7 @@ if role == 'expert':
     state.write_text((root / '.archa/topics/research/STATE.md').read_text() + '\nCurrent evidence remains uncertain.\n')
 output.write_text('# ' + role + ' material\n\n[Original](../../../../../evidence.md)')
 """)
-            config = {'roles': {role: {'command': [sys.executable, str(worker), role, '{state_file}', '{output_file}', str(root)], 'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 60} for role in ('expert', 'executor')}}
+            config = {role: {'provider': 'custom', 'command': [sys.executable, str(worker), role, '{state_file}', '{output_file}', str(root)], 'timeout_seconds': 60} for role in ('expert', 'executor')}
             (root / '.archa/workers.json').write_text(json.dumps(config))
             process = subprocess.Popen([sys.executable, '-m', 'opc', 'run', '-p', str(root), '--topic', 'research'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             from playwright.sync_api import sync_playwright, expect
@@ -67,18 +67,20 @@ output.write_text('# ' + role + ' material\n\n[Original](../../../../../evidence
                 page = browser.new_page()
                 page.goto(origin + '?topic=research')
                 expect(page.get_by_label('选择专题')).to_have_value('research')
-                expect(page.get_by_text('输入与认知状态', exact=True)).to_be_visible()
+                expect(page.get_by_role('heading', name='当前认知状态')).to_be_visible()
+                assert page.get_by_role('dialog').count() == 0
                 expect(page.get_by_text('IN_PROGRESS', exact=True)).to_be_visible()
                 expect(page.get_by_text('运行中', exact=True)).to_be_visible()
-                page.get_by_text('轮次历史与日志', exact=True).click()
                 page.get_by_text('Expert · stdout / stderr', exact=True).click()
                 expect(page.locator('pre').filter(has_text='expert live stdout')).to_contain_text('expert live stderr')
                 assert process.poll() is None, 'must observe stdout while worker is alive'
                 (root / 'release-expert').touch()
+                page.get_by_role('button', name='关闭材料').click()
                 page.get_by_text('Executor · stdout / stderr', exact=True).click()
                 expect(page.locator('pre').filter(has_text='executor live stdout')).to_contain_text('executor live stderr', timeout=10000)
                 expect(page.get_by_label('当前探针', exact=True)).to_contain_text('expert material')
                 (root / 'release-executor').touch()
+                page.get_by_role('button', name='关闭材料').click()
                 page.get_by_text('Expert · 收尾消化 · stdout / stderr', exact=True).click()
                 expect(page.locator('pre').filter(has_text='expert_finalize live stdout')).to_contain_text('expert_finalize live stderr', timeout=10000)
                 expect(page.get_by_text('Expert · 收尾消化 · stdout / stderr', exact=True)).to_be_visible()
@@ -86,7 +88,6 @@ output.write_text('# ' + role + ' material\n\n[Original](../../../../../evidence
                 assert process.wait(timeout=10) != 0
                 expect(page.get_by_text('空闲', exact=True)).to_be_visible()
                 expect(page.get_by_role('alert')).to_contain_text('exited with code 9')
-                expect(page.locator('pre').filter(has_text='expert live stdout')).to_be_visible()
                 expect(page.locator('pre').filter(has_text='expert_finalize live stdout')).to_be_visible()
                 # A new invocation can be interrupted; retained logs remain readable.
                 (root / 'release-expert_finalize').unlink()
@@ -99,12 +100,25 @@ output.write_text('# ' + role + ' material\n\n[Original](../../../../../evidence
                 expect(page.get_by_text('空闲', exact=True)).to_be_visible()
                 expect(page.get_by_role('alert')).to_contain_text('interrupted')
                 # Original project material, HTML safety, navigation and path boundaries.
-                (root / 'evidence.md').write_text('# Original evidence\n\n<script>window.__pwned = true</script>\n\n[Raw HTML](raw.html)')
+                (root / 'evidence.md').write_text('# Original evidence\n\n```python\nimport pathlib\n```\n\n<script>window.__pwned = true</script>\n\n[Raw HTML](raw.html)\n\n' + ('Original evidence paragraph. ' * 20 + '\n\n') * 600 + '\nEND OF ORIGINAL')
                 (root / 'raw.html').write_text('<script>window.__pwned = true</script>')
                 (root / 'escape').symlink_to('/etc/passwd')
-                page.get_by_role('button', name='result.md', exact=True).click()
+                page.get_by_role('button', name='关闭材料').click()
+                page.get_by_role('button').filter(has=page.locator('.source', has_text='result.md')).click()
                 page.get_by_role('button', name='Original', exact=True).click()
                 expect(page.get_by_role('heading', name='Original evidence')).to_be_visible()
+                expect(page.locator('.code-keyword')).to_have_text('import')
+                page.get_by_role('button', name='读取更多').click()
+                expect(page.locator('#material-reader')).to_contain_text('END OF ORIGINAL')
+                page.get_by_role('button', name='复制路径').focus()
+                page.locator('#material-reader').evaluate('(el) => el.scrollTop = 300')
+                page.wait_for_timeout(1600)  # Cross scheduled refreshes while reading a long original.
+                assert page.locator('#material-reader').evaluate('(el) => el.scrollTop') == 300
+                assert page.evaluate('document.activeElement.textContent') == '复制路径'
+                page.context.grant_permissions(['clipboard-read', 'clipboard-write'])
+                page.get_by_role('button', name='复制路径').click()
+                expect(page.get_by_role('button', name='已复制路径')).to_be_visible()
+                assert page.evaluate('navigator.clipboard.readText()').endswith('evidence.md')
                 page.get_by_role('button', name='Raw HTML', exact=True).click()
                 expect(page.locator('#material-reader pre')).to_contain_text('<script>')
                 assert page.evaluate('window.__pwned') is None
@@ -119,12 +133,32 @@ output.write_text('# ' + role + ' material\n\n[Original](../../../../../evidence
                     assert page.request.get(origin + '/api/observer/v1/topics/research').ok
                 assert (staging / 'untouched').read_text() == 'Keep failed staging'
                 assert not (root / '.archa/topics/research/steps/step-01/.expert_finalize.prompt.md').exists()
+                page.get_by_role('button', name='复制路径').focus()
+                page.locator('#material-reader').evaluate('(el) => {el.scrollTop = 30; el.dataset.before = String(el.scrollTop)}')
+                expect(page.get_by_text('空闲', exact=True)).to_be_visible()
+                page.wait_for_timeout(1600)  # Cross two scheduled UI refreshes, not a process-state wait.
+                assert page.evaluate('document.activeElement.textContent') == '复制路径'
+                assert page.locator('#material-reader').evaluate('(el) => el.scrollTop === Number(el.dataset.before)')
+                page.keyboard.press('Escape')
+                assert page.locator('#material-reader').get_attribute('inert') is not None
+                expect(page.get_by_role('dialog')).to_have_count(0)
+                assert page.evaluate('document.activeElement.classList.contains("excerpt")')
                 page.get_by_label('主题', exact=True).select_option('dark')
                 assert page.locator('html').get_attribute('data-theme') == 'dark'
                 page.reload()
                 expect(page.get_by_label('主题', exact=True)).to_have_value('dark')
                 page.set_viewport_size({'width': 390, 'height': 844})
+                page.get_by_role('button', name='专题导航', exact=True).click()
+                expect(page.get_by_label('专题导航', exact=True)).to_be_visible()
+                page.get_by_role('button', name='专题导航', exact=True).click()
+                page.emulate_media(reduced_motion='reduce')
+                page.get_by_role('button').filter(has=page.locator('.source', has_text='GOAL.md')).click()
+                assert page.get_by_role('dialog').evaluate('(el) => el.getBoundingClientRect().width') <= 390
+                assert page.get_by_role('dialog').evaluate('(el) => getComputedStyle(el).transitionDuration') == '0s'
+                page.keyboard.press('Escape')
+                expect(page.get_by_role('dialog')).to_have_count(0)
                 assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+                page.reload()
                 page.keyboard.press('Tab')
                 assert page.evaluate('document.activeElement.tagName') == 'A'
                 assert page.get_by_role('button', name='暂停').count() == 0
@@ -152,16 +186,16 @@ else:
     assert expected in text
     output.write_text('Observed negative integer mismatch from revised probe.')
 """)
-                (root / '.archa/workers.json').write_text(json.dumps({'roles': {role: {
+                (root / '.archa/workers.json').write_text(json.dumps({role: {
+                    'provider': 'custom',
                     'command': [sys.executable, str(worker), role, '{state_file}', '{output_file}', '{topic_dir}'],
-                    'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 10,
-                } for role in ('expert', 'executor')}}))
+                    'timeout_seconds': 10,
+                } for role in ('expert', 'executor')}))
                 page.goto(origin + '?topic=debug')
                 page.get_by_label('探针断点调试', exact=True).check()
                 page.get_by_role('button', name='启用调试并继续', exact=True).click()
                 expect(page.get_by_text('探针断点等待', exact=True)).to_be_visible(timeout=10000)
                 expect(page.get_by_role('heading', name='Hypothesis and evidence')).to_be_visible()
-                expect(page.get_by_role('heading', name='Probe design')).to_be_visible()
                 expect(page.get_by_label('当前探针', exact=True)).to_contain_text('Hypothesis: float conversion loses integer precision.')
                 expect(page.get_by_label('当前探针', exact=True)).to_contain_text('Evidence: baseline input 9007199254740993 produced 9007199254740992.')
                 endpoint = origin + '/api/observer/v1/topics/debug'
@@ -169,12 +203,12 @@ else:
                 page.reload()
                 expect(page.get_by_text('探针断点等待', exact=True)).to_be_visible()
                 assert page.request.get(endpoint).json()['completed_rounds'] == 0
-                page.get_by_text('轮次历史与日志', exact=True).click()
                 page.get_by_text('Expert · stdout / stderr', exact=True).click()
                 expect(page.locator('pre').filter(has_text='expert diagnostic output')).to_be_visible()
-                page.get_by_text('输入与认知状态', exact=True).click()
-                page.get_by_role('button', name='GOAL.md', exact=True).click()
+                page.get_by_role('button', name='关闭材料').click()
+                page.get_by_role('button').filter(has=page.locator('.source', has_text='GOAL.md')).click()
                 expect(page.locator('#material-reader')).to_contain_text('Inspect hypothesis evidence')
+                page.get_by_role('button', name='关闭材料').click()
                 page.get_by_label('当前探针方向意见', exact=True).fill('Focus on negative integers')
                 page.get_by_role('button', name='提交意见并重拟', exact=True).click()
                 expect(page.get_by_label('专题与执行状态')).to_contain_text('Expert · 调整探针')
@@ -184,6 +218,7 @@ else:
                 assert revised['completed_rounds'] == 0 and revised['max_rounds'] == 3
                 page.get_by_role('button', name='feedback.md', exact=True).click()
                 expect(page.locator('#material-reader')).to_contain_text('Focus on negative integers')
+                page.get_by_role('button', name='关闭材料').click()
                 page.get_by_label('当前探针方向意见', exact=True).fill('Unsent direction for round one')
                 page.get_by_role('button', name='执行当前探针并继续', exact=True).click()
                 expect(page.get_by_text('第 2 轮 · 待执行探针', exact=True)).to_be_visible(timeout=10000)
