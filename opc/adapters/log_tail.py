@@ -1,5 +1,4 @@
 """Independent, bounded observation of direct-to-file process output."""
-import sys
 import threading
 import time
 
@@ -17,19 +16,19 @@ class LogTail:
         self.stopped = threading.Event()
         self.deadline = None
         self.thread = None
+        self.error = None
         if provider in ('codex', 'dsh') and telemetry.stream is not None:
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
 
     def diagnostic(self, message):
+        if self.stopped.is_set():
+            return
         self.telemetry.event('Trace incomplete', 'error', message, kind='diagnostic')
-        message = f'Telemetry incomplete: {message}'
-        print(message, file=sys.stderr)
-        try:
-            with self.telemetry.log_file.open('ab') as log:
-                log.write(('\n' + message + '\n').encode('utf-8'))
-        except OSError as exc:
-            print(f'{message}; log diagnostic failed: {exc}', file=sys.stderr)
+        self.error = message
+
+    def expired(self):
+        return self.deadline is not None and time.monotonic() >= self.deadline
 
     def line(self, data):
         event = self.parser.parse(data.decode('utf-8'))
@@ -42,8 +41,7 @@ class LogTail:
         try:
             with self.telemetry.log_file.open('rb') as source:
                 while not self.stopped.is_set() and self.telemetry.stream is not None:
-                    if self.deadline is not None and time.monotonic() >= self.deadline:
-                        self.diagnostic('log tail exceeded 2 second finalization budget')
+                    if self.expired():
                         return
                     data = source.read(self.BATCH)
                     if not data:
@@ -53,11 +51,13 @@ class LogTail:
                             return
                         self.ended.wait(.2)
                         continue
-                    pending += data
-                    lines = pending.split(b'\n')
+                    lines = data.split(b'\n')
+                    if len(pending) + len(lines[0]) > self.LINE_LIMIT:
+                        raise ValueError('native log line exceeds 1 MiB parsing limit')
+                    lines[0] = pending + lines[0]
                     pending = lines.pop()
                     for line in lines:
-                        if self.stopped.is_set():
+                        if self.stopped.is_set() or self.expired():
                             return
                         if len(line) > self.LINE_LIMIT:
                             raise ValueError('native log line exceeds 1 MiB parsing limit')
@@ -75,6 +75,10 @@ class LogTail:
         self.deadline = time.monotonic() + 2
         self.ended.set()
         self.thread.join(2)
+        expired = self.thread.is_alive() or self.expired()
         self.stopped.set()
-        if self.thread.is_alive():
-            self.diagnostic('log tail exceeded 2 second finalization budget')
+        if expired:
+            self.error = 'log tail exceeded 2 second finalization budget'
+            self.telemetry.event('Trace incomplete', 'error', self.error, kind='diagnostic')
+        if self.error:
+            self.telemetry.incomplete(f'Telemetry incomplete: {self.error}')

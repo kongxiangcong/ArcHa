@@ -144,6 +144,8 @@ class ObserverAdapter:
                                 raise ValueError('missing start event')
                             current = event['ts']
                             cursor = after_seq if stream == current else 0
+                        if event['kind'] == 'diagnostic' and event['title'] == 'Trace incomplete':
+                            diagnostic = f'Trace incomplete: {event["detail"]}'
                         if event['seq'] <= cursor:
                             continue
                         if len(selected) == 200:
