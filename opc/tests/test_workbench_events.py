@@ -58,3 +58,30 @@ def test_observation_failure_is_not_legacy_empty_trace(tmp_path):
         value = client.get('/api/observer/v1/topics/trace/steps/1/events', params=dict(role='expert')).json()
         assert value['stream'] is None and value['events'] == []
         assert 'permission denied' in value['diagnostic']
+
+
+def test_atomic_replacement_never_joins_invocations(tmp_path):
+    import threading
+    workspace = TopicWorkspace(tmp_path, 'trace')
+    workspace.initialize('Atomic streams', 1)
+    step = workspace.path / 'steps/step-01'
+    step.mkdir()
+    path = step / '.expert.events.jsonl'
+    publish(path, 'initial', 205)
+    stop = threading.Event()
+    def replace():
+        generation = 0
+        while not stop.is_set():
+            generation += 1
+            publish(path, str(generation), 205)
+    writer = threading.Thread(target=replace)
+    writer.start()
+    try:
+        with TestClient(create_app(tmp_path)) as client:
+            for _ in range(20):
+                value = client.get('/api/observer/v1/topics/trace/steps/1/events', params=dict(role='expert')).json()
+                assert len(value['events']) == 200 and value['more']
+                assert {event['ts'] for event in value['events']} == {value['stream']}
+    finally:
+        stop.set()
+        writer.join()

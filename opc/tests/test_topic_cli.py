@@ -631,3 +631,14 @@ def test_deployed_four_roles_replace_only_their_own_stream(project):
         events = [json.loads(line) for line in (step / f'.{role}.events.jsonl').read_text().splitlines()]
         assert events[-1]['title'] == 'completed'
     assert not (step.parent / 'step-02').exists()
+
+
+def test_deployed_startup_failure_has_actual_context(project):
+    cli(project, 'init', '--goal', 'Startup failure')
+    (project / '.archa/workers.json').write_text(json.dumps({
+        'expert': {'provider': 'custom', 'command': [str(project / 'missing-worker')]},
+        'executor': custom()}))
+    assert 'missing-worker' in cli(project, 'step', ok=False)
+    events = [json.loads(line) for line in (project / '.archa/topics/research/steps/step-01/.expert.events.jsonl').read_text().splitlines()]
+    assert events[-1]['title'] == 'failed'
+    assert 'missing-worker' in events[-1]['detail']
