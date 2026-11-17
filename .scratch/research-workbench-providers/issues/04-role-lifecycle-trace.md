@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — 通过新 Provider 配置完成 Codex／custom 研究闭环；03 — 通过 L0／L1 阅读并控制探索专题。
 
-Status: ready-for-agent
+Status: resolved
 
 **规格：** [Research Workbench 与多 Provider 执行](../spec.md)。本票贯通调用事件落盘、Observer 增量协议与 L2；验收使用 Codex／custom 生命周期，不以 DSH 或原生日志解析为前提。
 
