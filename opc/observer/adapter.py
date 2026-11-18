@@ -1,9 +1,40 @@
 """Read-only projection of authoritative topic documents and runtime logs."""
 import codecs
+import json
 import os
+import re
 from pathlib import Path
 
 from ..core.workspace import TopicWorkspace
+
+
+def excerpt(text, title=""):
+    body = " ".join(re.sub(r"^\s*#{1,6}\s+", "", line).strip()
+                    for line in text.splitlines()
+                    if line.strip() and not re.match(r"^(STATUS|MAX_ROUNDS):", line))
+    body = " ".join(body.split())
+    return dict(title=title[:120] + ("…" if len(title) > 120 else ""),
+                title_truncated=len(title) > 120,
+                text=body[:240] + ("…" if len(body) > 240 else ""),
+                truncated=len(body) > 240, empty=not body)
+
+
+def reading(path):
+    text = path.read_text(encoding="utf-8")
+    headings = list(re.finditer(r"^#{1,6} +(.+)$", text, re.M))
+    title = headings[0][1] if headings else path.name
+    body = text[headings[0].end():] if headings else text
+    sections = []
+    for index, heading in enumerate(headings):
+        if heading[0].startswith("# "):
+            continue
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
+        sections.append(excerpt(text[heading.end():end], heading[1]))
+    if path.name == "GOAL.md":
+        objective = next((part for part in sections if part['title'].lower() == 'objective'), None)
+        if objective is not None:
+            return dict(excerpt=objective)
+    return dict(excerpt=excerpt(body, title), **(dict(sections=sections) if path.name == 'STATE.md' else {}))
 
 
 class ObserverError(Exception):
@@ -60,9 +91,10 @@ class ObserverAdapter:
                                if (workspace.path / name).is_file()])
 
     def material(self, path):
-        return dict(name=path.name, path=path.relative_to(self.root).as_posix())
+        return dict(name=path.name, path=path.relative_to(self.root).as_posix(),
+                    **(reading(self.readable_path(path.relative_to(self.root))) if path.suffix.lower() == '.md' else {}))
 
-    def content(self, path, offset=0, limit=262144):
+    def readable_path(self, path, *, events=False):
         candidate = (self.root / path).resolve()
         if not candidate.is_relative_to(self.root) or candidate == self.root:
             raise ObserverError(403, 'outside_material_roots', 'Material must stay within the project')
@@ -71,10 +103,65 @@ class ObserverAdapter:
             raise ObserverError(403, 'outside_material_roots', 'Private runtime files are not materials')
         if relative.parts[0] == '.archa':
             hidden = [part for part in relative.parts[1:] if part.startswith('.')]
-            if hidden and (len(hidden) != 1 or hidden[0] not in {'.expert.log', '.executor.log', '.expert_finalize.log', '.expert_revise.log'}):
+            allowed = {f'.{role}.events.jsonl' for role in ('expert', 'executor', 'expert_revise', 'expert_finalize')} if events else set()
+            if hidden and (len(hidden) != 1 or hidden[0] not in allowed | {'.expert.log', '.executor.log', '.expert_finalize.log', '.expert_revise.log'}):
                 raise ObserverError(403, 'outside_material_roots', 'Unpublished runtime files are not materials')
         if not candidate.is_file():
             raise ObserverError(404, 'not_found', 'Material not found')
+        return candidate
+
+    def events(self, topic, step, role, after_seq=0, stream=None):
+        workspace = self.workspace(topic)
+        directory = workspace.path / 'steps' / f'step-{step:02d}'
+        if step < 1 or not directory.is_dir():
+            raise ObserverError(404, 'not_found', 'Round not found')
+        path = directory / f'.{role}.events.jsonl'
+        diagnostic = None
+        log = directory / f'.{role}.log'
+        if log.exists():
+            log = self.readable_path(log.relative_to(self.root))
+            with log.open('rb') as source:
+                head = source.read(8192)
+                source.seek(max(0, os.fstat(source.fileno()).st_size - 8192))
+                tail = source.read(8192)
+            diagnostics = [line for line in (head + tail).decode('utf-8', errors='replace').splitlines()
+                           if line.startswith('Telemetry incomplete:')]
+            diagnostic = diagnostics[-1] if diagnostics else None
+        current, selected, more, cursor = None, [], False, 0
+        if path.exists() and not (diagnostic and 'unpublished stream:' in diagnostic):
+            path = self.readable_path(path.relative_to(self.root), events=True)
+            # One open descriptor pins one invocation across atomic replacement.
+            with path.open('rb') as source:
+                for raw in source:
+                    if not raw.endswith(b'\n'):
+                        break
+                    try:
+                        event = json.loads(raw)
+                        if set(event) != {'seq', 'ts', 'kind', 'title', 'status', 'detail'} or not isinstance(event['seq'], int):
+                            raise ValueError('invalid event fields')
+                        if current is None:
+                            if event['seq'] != 1 or event['title'] != 'started':
+                                raise ValueError('missing start event')
+                            current = event['ts']
+                            cursor = after_seq if stream == current else 0
+                        if event['kind'] == 'diagnostic' and event['title'] == 'Trace incomplete':
+                            diagnostic = f'Trace incomplete: {event["detail"]}'
+                        if event['seq'] <= cursor:
+                            continue
+                        if len(selected) == 200:
+                            more = True
+                            break
+                        selected.append(event)
+                    except (ValueError, TypeError, UnicodeDecodeError) as exc:
+                        diagnostic = f'Trace incomplete: {path.name}: {exc}'
+                        break
+        return dict(stream=current, reset=stream != current, events=selected,
+                    next_seq=selected[-1]['seq'] if selected else cursor, more=more,
+                    diagnostic=diagnostic)
+
+    def content(self, path, offset=0, limit=262144):
+        candidate = self.readable_path(path)
+        relative = candidate.relative_to(self.root)
         with candidate.open('rb') as stream:
             if offset > os.fstat(stream.fileno()).st_size:
                 offset = 0  # A new invocation can replace this role's log.

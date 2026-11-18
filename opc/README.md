@@ -20,42 +20,51 @@
 
 `--debug-probes` 在专家提交探针后、Executor 派发前正常结束并释放锁。设置保存在专题 `.debug-probes` 标记中；后续 `run`/`resume` 执行当前探针，到下一探针再次停下。首次启用时已有待执行探针也会先停下供检查。`--no-debug-probes` 显式恢复自动运行；`step` 仍只派发一次角色。`status` 的 `debug_probes` 表示选项，`probe_breakpoint` 表示无错误且空闲的探针等待。
 
-工程 `.archa/workers.json` 优先；缺省使用 [分发配置](scaffold/workers.json)。角色为 `expert`、`executor`，可选显式 preset 或命令数组。例如自定义 Executor：
+工程 `.archa/workers.json` 优先；缺省使用 [分发配置](scaffold/workers.json)，两个角色均为 Codex。例如自定义 Executor：
 
 ```json
 {
-  "roles": {
-    "expert": {"preset": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "medium"},
-    "executor": {
-      "command": ["python", "investigate.py", "{prompt_file}"],
-      "input_mode": "file", "output_mode": "stdout", "timeout_seconds": 300
-    }
+  "expert": {"provider": "codex", "model": "gpt-6.1-sol", "reasoning_effort": "medium"},
+  "executor": {
+    "provider": "custom",
+    "command": ["python", "investigate.py", "{output_file}"],
+    "timeout_seconds": 300
   }
 }
 ```
 
-Expert 必须使用文件输出。Executor 可使用文件或纯 stdout 正文；stderr 只进入日志。非零退出、超时或空输出均不发布结果。命令不隐式经过 shell。具体配置与恢复协议见下文。
+所有角色从 stdin 读取任务并自行写入协议文件；stdout/stderr 仅进入原始日志。非零退出、超时或空输出均不发布结果。命令不隐式经过 shell。
 
-运行模块职责：`core/engine.py` 调度与预算，`core/workspace.py` 状态及成果发布，`core/topic_control.py` 工程执行身份与停止，`adapters/worker.py` 通用配置和调用，`adapters/prompts.py` 角色上下文，`log.py` 按需报告。OS 进程树与独占锁由 `core/platform.py` 和 `core/windows.py` 提供。
+运行模块职责：`core/engine.py` 调度与预算，`core/workspace.py` 状态及成果发布，`core/topic_control.py` 工程执行身份与停止，`adapters/worker.py` 暂存产物与调用，`adapters/providers.py` 配置及命令构造，`adapters/prompts.py` 角色上下文，`log.py` 按需报告。OS 进程树与独占锁由 `core/platform.py` 和 `core/windows.py` 提供。
 
 历史数据不迁移；旧契约、Run、账本、Reviewer、晋升、工具拦截及暂停接口已退役。研究完成不意味着独立审核通过、合并或发布。
 
 ## Worker 协议
 
-配置只接受 `roles.expert` 与 `roles.executor`；每个角色在 `command` 和 `preset` 中选择一个，另可指定 `input_mode`、`output_mode`、正数 `timeout_seconds`、字符串映射 `env`、`model`、`reasoning_effort`。输入模式为 `stdin` 或 `file`；文件模式通过命令变量传入提示路径。未知 preset、旧字段、错误类型和不可用变量直接报错，不切换后端或输出模式兜底。`check` 只校验配置，不调用模型，也不证明任务环境就绪。
+配置直接包含 `expert`、`executor`；各角色必须指定 `provider`（`codex`、`dsh` 或 `custom`）。可选 `model`（空字符串表示 CLI 默认值）、`timeout_seconds`（默认 1800 秒，正的有限数值）、字符串映射 `env`。`reasoning_effort` 只适用于 Codex；`command` 只适用于 custom，必须是非空 argv 数组。未知字段、不支持的选项、错误类型与不可用变量直接报错。`check` 只校验配置，不调用模型，也不证明任务环境就绪。
 
-| 命令模板变量 | 含义 |
+| custom 命令模板变量 | 含义 |
 | --- | --- |
 | `{workdir}` | 目标工程目录，也是进程工作目录 |
 | `{topic_dir}` | 专题目录 |
-| `{prompt_file}` | 本次调用提示文件 |
+| `{prompt_file}` | 本次调用提示文件，调用结束清理；任务仍接入 stdin |
 | `{output_file}` | Expert 临时探针、Executor 临时结果；收尾时为临时状态 |
 | `{state_file}` | Expert 临时状态；Executor 读取的正式状态 |
-| `{model}`、`{reasoning_effort}` | 角色配置明确提供的参数；自定义命令不使用时无需填写 |
+| `{model}` | 必须明确配置非空模型；不使用此变量时无需填写 |
 
-模板按 argv 元素渲染，不提供 shell 转义；显式调用 shell 时由配置者负责引用。preset 是命令模板，不解析 CLI 私有日志。默认 Codex 需要本机 CLI 与授权；自定义 Codex 命令中的 `-o {output_file}` 会用最终聊天摘要覆盖协议文件，应显式移除，让 Worker 按提示写文件。
+模板按 argv 元素渲染，不提供 shell 转义；字面大括号写作 `{{` 与 `}}`。显式调用 shell 时由配置者负责引用。所有 Provider 完整继承宿主环境并叠加 `env`，沿用本机 HOME、登录与工具链。Codex 使用无状态、非交互 `exec --ephemeral --json`，继承用户 CLI 权限配置；权限不足直接失败，不自动放宽重试。DSH 使用 `dsh --profile headless --json -`，指定模型时通过临时 `--patch` 加载原生 `internal/config` 钩子，仅覆盖 `agent-default-model` 的 model，保留本机 provider、reasoningEffort 与配置表达式；调用结束删除补丁及模块。DSH 0.2.2-rc.1 的普通补丁会替换整个 config，不能用仅含 model 的补丁模拟深合并；模型为空不传补丁，继承本机配置。仅选择 DSH 时才需要安装和配置它。DSH headless 默认使用 API-key 路由，不默认启用交互登录存储；请按本机 DSH 配置设置认证。引擎不复制 HOME、登录文件或 CLI 会话，也不自动改变认证及权限配置。后续轮次可直接切换 Provider，继续读取专题权威材料。不要将 Codex `-o` 指向协议文件，它会用最终聊天摘要覆盖文件。
 
-Expert 写完整临时状态，继续探索时还写探针；完成或阻塞时不要求新探针。Worker 不删除调用方准备的状态草稿。输出只有在退出码零、未超时、必需内容非空且归属后代进程结束后才允许发布。创建、登记、等待和异常都在进程生命周期内；登记失败也收回已启动进程。stdout/stderr 持续写日志，中断保留已有内容；stdout 结果仅取 stdout 正文。重试可覆盖同轮同角色日志，收尾单独写 `.expert_finalize.log`，不承诺完整调用审计。失败即停，无自动重试。
+Expert 写完整临时状态，继续探索时还写探针；完成或阻塞时不要求新探针。Worker 不删除调用方准备的状态草稿。输出只有在退出码零、未超时、必需内容非空且归属后代进程结束后才允许发布。创建、登记、等待和异常都在进程生命周期内；登记失败也收回已启动进程。stdout/stderr 直接写入同一原始日志，中断保留内容，不从日志回填产物。重试覆盖同轮同角色日志，重拟与收尾分别写 `.expert_revise.log`、`.expert_finalize.log`，不承诺完整调用审计。失败即停，无自动重试。
+
+### Worker configuration migration
+
+升级固定运行时不会覆盖已有工程配置或研究材料。旧配置在派发前拒绝；请手工编辑 `.archa/workers.json`：
+
+1. 删除外层 `roles`，将 `expert`、`executor` 移至顶层。
+2. 将 `preset: "codex"` 改为 `provider: "codex"`。自定义命令增加 `provider: "custom"`；`scripted` 预设已删除，确定性脚本按 custom 文件协议接入。
+3. 删除 `input_mode`、`output_mode`；脚本从 stdin 读取正文，写入 `{output_file}`／`{state_file}`，不能仅打印结果。`{prompt_file}` 仍可作为路径参数。
+4. 保留模型、超时和环境覆盖；`reasoning_effort` 仅保留在 Codex 角色。custom 仅支持上表变量，使用 `{model}` 时须提供非空模型。
+5. 运行 `check` 验证配置，再按原专题的待执行动作继续。迁移不改写历史材料。
 
 ## 专题材料与状态约束
 
@@ -100,4 +109,4 @@ Executor 写 `.staging.result.md`，成功检查后原子替换为 `result.md`�
 
 项目本地部署、固定运行时显式升级及配置保留见 [仓库入口](../README.md)。部署文件清单只维护在 [initialize.py](../skills/archa-discuss/scripts/initialize.py) 的 `RUNTIME_FILES`，安装器复用；包含传递依赖与模板资源。
 
-工作台只显示 Expert、Executor 和收尾的活动、流式日志与已有材料，不推断模型私有活动；当前认知不冒充历史状态快照。控制提供停止、继续、追加预算和探针断点调试（HTTP `resume` 的可选布尔字段 `debug_probes`），请求与实际状态分开展示，服务端独占锁防止重复启动。HTTP `revise` 接收 `feedback` 字符串，共用 CLI 重拟控制；当前轮只保留最近一次 `feedback.md` 与重拟日志。主屏可提交方向意见并查看调整状态，直接读取当前探针，输入与认知状态、历史日志按需展开；专题详情的 `current_probe` 引用权威探针材料。材料读取限制在明确允许的根目录，禁止越界或执行原始 HTML；demo 使用同一专题接口。
+工作台通过 L0 阅读摘录、L1 阅读原件；轮次材料抽屉内主动展开 L2「执行 Trace」，查看 Expert、Executor、重拟与收尾各自最近一次调用的生命周期和原始日志。运行或失败不会自动展开 Trace。每个角色的 `.events.jsonl` 与日志同轮存放，新调用原子替换事件流；旧记录不回填事件。Trace 是派生观测，`completed` 仅代表进程零退出，不代表研究产物提交；观测故障在命令诊断、原始日志与 L2 提示，不阻止合法产物提交。当前认知不冒充历史状态快照。控制提供停止、继续、追加预算和探针断点调试（HTTP `resume` 的可选布尔字段 `debug_probes`），请求与实际状态分开展示，服务端独占锁防止重复启动。HTTP `revise` 接收 `feedback` 字符串，共用 CLI 重拟控制；当前轮只保留最近一次 `feedback.md` 与重拟日志。主屏可提交方向意见并查看调整状态，直接读取当前探针，输入与认知状态、历史日志按需展开；专题详情的 `current_probe` 引用权威探针材料。材料读取限制在明确允许的根目录，禁止越界或执行原始 HTML；demo 使用同一专题接口。

@@ -1,4 +1,5 @@
 """Crash at filesystem publication boundaries; restart the deployed CLI."""
+from opc.tests.worker_fixture import custom
 import json
 import subprocess
 import sys
@@ -59,10 +60,10 @@ def test_restart_finishes_verified_expert_before_dispatch(project, boundary):
     topic = project / '.archa/topics/research'
     assert cli(project, 'status')['publishing'] is True
     # Any repeated Expert would fail: only the committed probe may be executed.
-    config = {'roles': {'expert': {
+    config = {'expert': {'provider': 'custom',
         'command': [sys.executable, '-c', 'raise RuntimeError("replayed")'],
-        'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5},
-        'executor': {'preset': 'scripted'}}}
+        'timeout_seconds': 5},
+        'executor': custom()}
     (project / '.archa/workers.json').write_text(json.dumps(config))
     state = cli(project, 'step')
     assert state['completed_rounds'] == 1
@@ -94,9 +95,9 @@ def test_restart_discards_unverified_expert_and_keeps_logs_and_originals(project
 def test_restart_recovers_terminal_state_without_probe_or_worker(project, terminal, boundary):
     cli(project, 'init', '--goal', 'Check evidence')
     command = "import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text((pathlib.Path(sys.argv[4]) / 'STATE.md').read_text().replace('IN_PROGRESS', sys.argv[3])); pathlib.Path(sys.argv[2]).write_text('must not publish')"
-    config = {'roles': {'expert': {'command': [sys.executable, '-c', command, '{state_file}', '{output_file}', terminal, '{topic_dir}'],
-                                 'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5},
-                        'executor': {'preset': 'scripted'}}}
+    config = {'expert': {'provider': 'custom', 'command': [sys.executable, '-c', command, '{state_file}', '{output_file}', terminal, '{topic_dir}'],
+                                 'timeout_seconds': 5},
+                        'executor': custom()}
     (project / '.archa/workers.json').write_text(json.dumps(config))
     crash_step(project, boundary)
     (project / '.archa/workers.json').write_text('{}')  # Recovery must not call a Worker.
@@ -168,9 +169,9 @@ def test_invalid_expert_draft_is_not_published_and_can_retry(project, mutation, 
     state = project / '.archa/topics/research/STATE.md'
     old = state.read_bytes()
     command = "import pathlib,sys; p=pathlib.Path(sys.argv[1]); text=(pathlib.Path(sys.argv[2]) / 'STATE.md').read_text(); p.write_text(" + mutation + ")"
-    config = {'roles': {'expert': {'command': [sys.executable, '-c', command, '{state_file}', '{topic_dir}'],
-                                 'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5},
-                        'executor': {'preset': 'scripted'}}}
+    config = {'expert': {'provider': 'custom', 'command': [sys.executable, '-c', command, '{state_file}', '{topic_dir}'],
+                                 'timeout_seconds': 5},
+                        'executor': custom()}
     (project / '.archa/workers.json').write_text(json.dumps(config))
     assert error in cli(project, 'step', ok=False)
     assert state.read_bytes() == old

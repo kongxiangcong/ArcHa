@@ -1,4 +1,5 @@
 """Control behavior through deployed CLI and real concurrent processes."""
+from opc.tests.worker_fixture import custom
 import json
 import os
 import subprocess
@@ -21,9 +22,8 @@ def long_executor(project):
     scripted(project)
     cli(project, 'step')
     command = "import pathlib,time; pathlib.Path('side-effect').write_text('preserved'); print('running now', flush=True); time.sleep(30)"
-    config = {'roles': {'expert': {'preset': 'scripted'}, 'executor': {
-        'command': [sys.executable, '-c', command], 'input_mode': 'stdin',
-        'output_mode': 'stdout', 'timeout_seconds': 40}}}
+    config = {'expert': custom(), 'executor': {'provider': 'custom',
+        'command': [sys.executable, '-c', command], 'timeout_seconds': 40}}
     (project / '.archa/workers.json').write_text(json.dumps(config))
 
 
@@ -188,7 +188,7 @@ def test_stop_confirms_descendant_can_no_longer_write(project):
     config = json.loads(config_path.read_text())
     child = "import pathlib,time; p=pathlib.Path('heartbeat');\nwhile True:\n p.write_text(str(time.monotonic())); time.sleep(.01)"
     parent = "import subprocess,sys,pathlib,time; subprocess.Popen([sys.executable,'-c', " + repr(child) + "]); pathlib.Path('side-effect').touch(); time.sleep(30)"
-    config['roles']['executor']['command'] = [sys.executable, '-c', parent]
+    config['executor']['command'] = [sys.executable, '-c', parent]
     config_path.write_text(json.dumps(config))
     process = start(project)
     try:

@@ -1,3 +1,4 @@
+from opc.tests.worker_fixture import custom
 import json
 import sys
 import time
@@ -15,7 +16,7 @@ PREFIX = '/api/observer/v1/topics/research'
 def setup(root):
     w = TopicWorkspace(root, 'research')
     w.initialize('Check evidence', 1)
-    config = {'roles': {'expert': {'command': [sys.executable, '-c', 'import time; print("live",flush=True); time.sleep(30)'], 'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 40}, 'executor': {'preset': 'scripted'}}}
+    config = {'expert': {'provider': 'custom', 'command': [sys.executable, '-c', 'import time; print("live",flush=True); time.sleep(30)'], 'timeout_seconds': 40}, 'executor': custom()}
     (root / '.archa/workers.json').write_text(json.dumps(config))
     return w
 
@@ -45,7 +46,7 @@ def wait_idle(client):
 
 def test_resume_budget_blocked_completed_and_failure(tmp_path):
     w = setup(tmp_path)
-    config = {'roles': {role: {'preset': 'scripted'} for role in ('expert', 'executor')}}
+    config = {role: custom() for role in ('expert', 'executor')}
     (tmp_path / '.archa/workers.json').write_text(json.dumps(config))
     state = w.path / 'STATE.md'
     state.write_text(state.read_text().replace('IN_PROGRESS', 'BLOCKED'))
@@ -63,7 +64,7 @@ def test_resume_budget_blocked_completed_and_failure(tmp_path):
         for invalid in (0, -1, True, '1'):
             assert client.post(PREFIX + '/resume', json={'add_rounds': invalid}).status_code == 422
         state.write_text(state.read_text().replace('COMPLETED', 'IN_PROGRESS'))
-        config['roles']['expert'] = {'command': [sys.executable, '-c', 'import sys; print("failed evidence",flush=True); sys.exit(9)'], 'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 10}
+        config['expert'] = {'provider': 'custom', 'command': [sys.executable, '-c', 'import sys; print("failed evidence",flush=True); sys.exit(9)'], 'timeout_seconds': 10}
         (tmp_path / '.archa/workers.json').write_text(json.dumps(config))
         assert client.post(PREFIX + '/resume', json={}).status_code == 202
         detail = wait_idle(client)
@@ -89,8 +90,7 @@ def test_probe_breakpoint_http_continue_and_read_only_materials(tmp_path):
     w = setup(tmp_path)
     with w.writer():
         w.resume(1)
-    (tmp_path / '.archa/workers.json').write_text(json.dumps({
-        'roles': {role: {'preset': 'scripted'} for role in ('expert', 'executor')}}))
+    (tmp_path / '.archa/workers.json').write_text(json.dumps({role: custom() for role in ('expert', 'executor')}))
     with TestClient(create_app(tmp_path, control=True)) as client:
         assert client.post(PREFIX + '/resume', json={'debug_probes': True}).status_code == 202
         detail = wait_idle(client)
@@ -112,7 +112,7 @@ def test_probe_breakpoint_http_continue_and_read_only_materials(tmp_path):
 
 def test_http_revise_worker_and_failure_keep_current_probe(tmp_path):
     w = setup(tmp_path)
-    config = {'roles': {role: {'preset': 'scripted'} for role in ('expert', 'executor')}}
+    config = {role: custom() for role in ('expert', 'executor')}
     config_path = tmp_path / '.archa/workers.json'
     config_path.write_text(json.dumps(config))
     with TestClient(create_app(tmp_path, control=True)) as client:
@@ -128,7 +128,7 @@ state.write_text((topic / 'STATE.md').read_text())
 probe.write_text('Revised measurement design')
 print('Revision diagnostic', flush=True)
 """)
-        config['roles']['expert'] = {'command': [sys.executable, str(worker), '{state_file}', '{output_file}', '{topic_dir}'], 'input_mode': 'stdin', 'output_mode': 'file', 'timeout_seconds': 5}
+        config['expert'] = {'provider': 'custom', 'command': [sys.executable, str(worker), '{state_file}', '{output_file}', '{topic_dir}'], 'timeout_seconds': 5}
         config_path.write_text(json.dumps(config))
         assert client.post(PREFIX + '/revise', json={'feedback': 'Measure baseline'}).status_code == 202
         detail = wait_idle(client)

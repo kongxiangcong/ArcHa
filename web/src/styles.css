@@ -231,3 +231,138 @@ summary {
     scroll-behavior: auto !important;
   }
 }
+/* Reading workspace: stable single-column flow and an opt-in original reader. */
+:root {
+  --motion: 220ms;
+}
+main {
+  max-width: 980px;
+  margin: 0 auto 0 260px;
+  padding: 24px 30px 64px;
+}
+.topic-nav {
+  position: fixed;
+  top: 78px;
+  bottom: 0;
+  left: 0;
+  width: 260px;
+  padding: 24px;
+  overflow: auto;
+  border-right: 1px solid var(--line);
+}
+.topic-nav button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+.topic-nav [aria-current="page"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.nav-toggle {
+  display: none;
+}
+.excerpt {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 12px;
+  padding: 16px;
+  overflow-wrap: anywhere;
+}
+.excerpt h3 {
+  margin-top: 8px;
+}
+.source {
+  font-family: monospace;
+  color: var(--muted);
+}
+.state-section {
+  border-top: 1px solid var(--line);
+  margin-top: 12px;
+  padding-top: 8px;
+}
+.reader-drawer {
+  position: fixed;
+  z-index: 5;
+  right: 0;
+  top: 0;
+  height: 100dvh;
+  width: min(480px, 100vw);
+  padding: 24px;
+  overflow: auto;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  transform: translateX(100%);
+  transition: transform var(--motion);
+}
+.reader-drawer.open {
+  transform: translateX(0);
+}
+@starting-style {
+  .reader-drawer.open {
+    transform: translateX(100%);
+  }
+}
+.reader-drawer:not(.open) {
+  pointer-events: none;
+}
+.drawer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.reader-drawer .markdown {
+  margin-top: 20px;
+}
+.markdown pre {
+  background: var(--soft);
+  padding: 12px;
+  border-radius: 6px;
+}
+.code-string {
+  color: var(--accent);
+}
+.code-keyword {
+  color: var(--blue);
+  font-weight: 600;
+}
+input,
+textarea {
+  max-width: 100%;
+  font: inherit;
+  color: inherit;
+  background: var(--raised);
+  border: 1px solid var(--line);
+}
+@media (max-width: 760px) {
+  main {
+    margin: 0;
+    padding: 16px;
+  }
+  .nav-toggle {
+    display: block;
+    margin: 12px 16px;
+  }
+  .topic-nav {
+    display: none;
+    position: static;
+    width: 100%;
+    padding: 16px;
+  }
+  .topic-nav.expanded {
+    display: block;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
